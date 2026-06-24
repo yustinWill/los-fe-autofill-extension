@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LOS Form Autofill</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">⚡</span>
+    <h1>LOS Autofill</h1>
+  </header>
+
+  <!-- ── Step 1: Detect ──────────────────────────────────────────────────── -->
+  <section class="step-section">
+    <div class="step-row">
+      <div class="step-num active" id="badge1">1</div>
+      <div class="step-meta">
+        <span class="step-title">Detect Fields</span>
+        <span class="step-sub">Scan page for all fillable fields</span>
+      </div>
+      <button id="detectBtn" class="btn btn-secondary btn-sm">Scan</button>
+      <button id="quickFillBtn" class="btn btn-primary btn-sm">⚡ Quick Fill</button>
+    </div>
+    <div id="fieldsPanel" class="fields-panel hidden">
+      <div class="fields-header">
+        <span class="section-label">Fields <span id="fieldCount" class="hint"></span></span>
+        <button id="closeFieldsBtn" class="btn-icon">✕</button>
+      </div>
+      <div id="fieldsList"></div>
+    </div>
+  </section>
+
+  <!-- ── Step 2: Execute ───────────────────────────────────────────────────── -->
+  <section class="step-section">
+    <div class="step-row">
+      <div class="step-num" id="badge2">2</div>
+      <div class="step-meta">
+        <span class="step-title">Execute</span>
+        <span class="step-sub">Fill fields one by one with smart defaults</span>
+      </div>
+      <button id="executeBtn" class="btn btn-primary btn-sm" disabled>▶ Run</button>
+    </div>
+    <div class="exec-opts">
+      <label class="delay-label">
+        Delay <input id="delayInput" type="number" min="50" max="3000" step="50" value="300" /> ms
+      </label>
+      <div class="tick-row">
+        <label class="toggle-label">
+          <input id="ignoreDisabledCb" type="checkbox" checked />
+          Skip disabled
+        </label>
+        <label class="toggle-label">
+          <input id="skipFilledCb" type="checkbox" />
+          Skip filled
+        </label>
+        <label class="toggle-label">
+          <input id="skipOptionalCb" type="checkbox" />
+          Skip optional
+        </label>
+      </div>
+    </div>
+    <div id="progressWrap" class="hidden">
+      <div class="progress-bar"><div id="progressFill" class="progress-fill" style="width:0%"></div></div>
+      <div id="progressLabel" class="progress-label"></div>
+    </div>
+    <div id="resultStrip" class="result-strip hidden"></div>
+  </section>
+
+  <!-- ── Step 3: Capture JSON ──────────────────────────────────────────────── -->
+  <section class="step-section last">
+    <div class="step-row">
+      <div class="step-num" id="badge3">3</div>
+      <div class="step-meta">
+        <span class="step-title">Capture JSON</span>
+        <span class="step-sub">Read filled values from the form</span>
+      </div>
+      <div class="step-btns">
+        <button id="buildJsonBtn" class="btn btn-primary btn-sm" disabled>Capture</button>
+        <button id="exportBtn" class="btn btn-secondary btn-sm" disabled>Copy</button>
+      </div>
+    </div>
+    <div class="inner-pad top0">
+      <textarea id="jsonInput" rows="12" spellcheck="false"
+        placeholder="Run Execute first, then Capture to see filled values here."></textarea>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
