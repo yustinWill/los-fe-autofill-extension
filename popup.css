@@ -141,6 +141,10 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
 }
 .delay-label input:focus { outline: none; border-color: #4f46e5; }
 
+.scan-opts {
+  padding-top: 6px;
+}
+
 .tick-row {
   display: flex;
   align-items: center;

@@ -10,6 +10,8 @@ const FALLBACK_DATE = (() => {
        + d.getFullYear()
 })()
 
+let lastResults = {}   // populated by execute handler; read by runAllWizardSteps
+
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const jsonInput        = document.getElementById('jsonInput')
 const detectBtn        = document.getElementById('detectBtn')
@@ -17,6 +19,7 @@ const executeBtn       = document.getElementById('executeBtn')
 const buildJsonBtn     = document.getElementById('buildJsonBtn')
 const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
+const allStepsCb       = document.getElementById('allStepsCb')
 const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -906,33 +909,90 @@ function pageReadFieldValues(fieldNames) {
 
 // ─── Step 1: Detect ───────────────────────────────────────────────────────────
 let lastDetectedFields = []
+let lastDetectedFieldsByStep = []   // [{stepIdx, fields}] — set during all-steps scan
+
+// Page-context helper: returns the active wizard step index (skin="filled" avatar).
+function getCurrentStepIndex() {
+  for (const el of document.querySelectorAll('[data-step-index]')) {
+    if (el.querySelector('[skin="filled"]')) {
+      const idx = parseInt(el.getAttribute('data-step-index'), 10)
+      if (!isNaN(idx)) return idx
+    }
+  }
+  const active = document.querySelector('.MuiStep-root.Mui-active')
+  if (active) {
+    const el = active.closest('[data-step-index]')
+    if (el) { const idx = parseInt(el.getAttribute('data-step-index'), 10); if (!isNaN(idx)) return idx }
+  }
+  return 0
+}
+
+// Page-context helper: click the step label at the given index.
+function goToWizardStep(idx) {
+  const label = document.querySelector('[data-step-index="' + idx + '"] .MuiStepLabel-root')
+  if (label) { label.click(); return true }
+  return false
+}
 
 detectBtn.addEventListener('click', async () => {
   detectBtn.disabled = true
-  detectBtn.textContent = '⏳…'
+  executeBtn.disabled = true
+  buildJsonBtn.disabled = true
+  lastDetectedFields = []
+  lastDetectedFieldsByStep = []
 
   try {
     const tab = await getActiveTab()
-    const [{ result: fields }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      func: pageDetect
-    })
 
-    lastDetectedFields = fields || []
+    if (allStepsCb.checked) {
+      // ── Scan all wizard steps ──────────────────────────────────────────────
+      let prevStepIdx = null
+
+      for (let s = 0; s < 20; s++) {
+        detectBtn.textContent = s === 0 ? '⏳…' : `Scan ${s + 1}…`
+
+        const [{ result: stepIdx }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN', func: getCurrentStepIndex
+        })
+        if (prevStepIdx !== null && stepIdx === prevStepIdx) break
+        prevStepIdx = stepIdx
+
+        const [{ result: fields }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN', func: pageDetect
+        })
+        if (fields && fields.length) {
+          lastDetectedFieldsByStep.push({ stepIdx, fields })
+          for (const f of fields) {
+            if (!lastDetectedFields.some(x => x.name === f.name)) lastDetectedFields.push(f)
+          }
+        }
+
+        const [{ result: adv }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN', func: advanceWizardStep
+        })
+        if (adv !== 'clicked') break
+
+        await sleep(800)
+      }
+    } else {
+      // ── Scan current step only ─────────────────────────────────────────────
+      const [{ result: fields }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN', func: pageDetect
+      })
+      lastDetectedFields = fields || []
+    }
+
     renderFieldsPanel(lastDetectedFields)
 
     const disabledCount = lastDetectedFields.filter(f => f.disabled).length
-    fieldCount.textContent = disabledCount > 0
-      ? `${lastDetectedFields.length} fields (${disabledCount} disabled)`
-      : `${lastDetectedFields.length} fields`
+    const stepInfo = lastDetectedFieldsByStep.length > 1 ? ` · ${lastDetectedFieldsByStep.length} steps` : ''
+    fieldCount.textContent = `${lastDetectedFields.length} fields${stepInfo}${disabledCount > 0 ? ` (${disabledCount} disabled)` : ''}`
 
     executeBtn.disabled = lastDetectedFields.length === 0
     buildJsonBtn.disabled = lastDetectedFields.length === 0
     markStepDone(1)
     setStepActive(2)
-
-    showToast(`Detected ${lastDetectedFields.length} field${lastDetectedFields.length !== 1 ? 's' : ''}`, '#4f46e5')
+    showToast(`Detected ${lastDetectedFields.length} fields${stepInfo}`, '#4f46e5')
   } catch (e) {
     showToast('Detect failed: ' + e.message, '#dc2626')
   } finally {
@@ -968,6 +1028,7 @@ executeBtn.addEventListener('click', async () => {
   const lockUI = () => {
     detectBtn.disabled = true
     quickFillBtn.disabled = true
+    allStepsCb.disabled = true
     executeBtn.disabled = true
     buildJsonBtn.disabled = true
     exportBtn.disabled = true
@@ -979,6 +1040,7 @@ executeBtn.addEventListener('click', async () => {
   const unlockUI = () => {
     detectBtn.disabled = false
     quickFillBtn.disabled = false
+    allStepsCb.disabled = false
     executeBtn.disabled = false
     delayInput.disabled = false
     ignoreDisabledCb.disabled = false
@@ -1006,28 +1068,77 @@ executeBtn.addEventListener('click', async () => {
     return
   }
 
-  for (let i = 0; i < fieldOrder.length; i++) {
-    const [name, value] = fieldOrder[i]
-    const pct = Math.round((i / fieldOrder.length) * 100)
-    progressFill.style.width = pct + '%'
-    progressLabel.textContent = `(${i + 1}/${fieldOrder.length})  ${name}…`
+  if (lastDetectedFieldsByStep.length > 0) {
+    // ── Multi-step execute: navigate step-by-step ──────────────────────────
+    // Go back to the first scanned step before filling.
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: goToWizardStep, args: [lastDetectedFieldsByStep[0].stepIdx]
+    })
+    await sleep(800)
 
-    const fieldMeta = lastDetectedFields.find(f => f.name === name)
-    const isOptional = fieldMeta ? !!fieldMeta.optional : true
+    const totalFields = lastDetectedFields.length
+    let filled = 0
 
-    try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: 'MAIN',
-        func: fillSingleField,
-        args: [name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional]
-      })
-      results[name] = result || 'error'
-    } catch (e) {
-      results[name] = 'error'
+    for (let s = 0; s < lastDetectedFieldsByStep.length; s++) {
+      const { stepIdx, fields: stepFields } = lastDetectedFieldsByStep[s]
+      const stepLabel = `Step ${stepIdx + 1}/${lastDetectedFieldsByStep[lastDetectedFieldsByStep.length - 1].stepIdx + 1}`
+
+      for (let i = 0; i < stepFields.length; i++) {
+        const f = stepFields[i]
+        const value = data[f.name] ?? smartDefault(f.name, f.label, f.type, f.options)
+        const isOptional = !!f.optional
+
+        progressFill.style.width = Math.round((filled / totalFields) * 100) + '%'
+        progressLabel.textContent = `${stepLabel}  (${i + 1}/${stepFields.length})  ${f.name}…`
+
+        try {
+          const [{ result }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, world: 'MAIN',
+            func: fillSingleField,
+            args: [f.name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional]
+          })
+          results[f.name] = result || 'error'
+        } catch (e) {
+          results[f.name] = 'error'
+        }
+
+        filled++
+        if (i < stepFields.length - 1) await sleep(delayMs)
+      }
+
+      // Advance to next step unless this is the last
+      if (s < lastDetectedFieldsByStep.length - 1) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN', func: advanceWizardStep
+        })
+        await sleep(800)
+      }
     }
+  } else {
+    // ── Single-step execute ────────────────────────────────────────────────
+    for (let i = 0; i < fieldOrder.length; i++) {
+      const [name, value] = fieldOrder[i]
+      const pct = Math.round((i / fieldOrder.length) * 100)
+      progressFill.style.width = pct + '%'
+      progressLabel.textContent = `(${i + 1}/${fieldOrder.length})  ${name}…`
 
-    if (i < fieldOrder.length - 1) await sleep(delayMs)
+      const fieldMeta = lastDetectedFields.find(f => f.name === name)
+      const isOptional = fieldMeta ? !!fieldMeta.optional : true
+
+      try {
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN',
+          func: fillSingleField,
+          args: [name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional]
+        })
+        results[name] = result || 'error'
+      } catch (e) {
+        results[name] = 'error'
+      }
+
+      if (i < fieldOrder.length - 1) await sleep(delayMs)
+    }
   }
 
   progressFill.style.width = '100%'
@@ -1035,6 +1146,7 @@ executeBtn.addEventListener('click', async () => {
   await sleep(300)
   progressWrap.classList.add('hidden')
 
+  lastResults = { ...results }
   renderResults(results)
   markStepDone(2)
   setStepActive(3)
@@ -1196,33 +1308,100 @@ setStepActive(1)
 
 // ── Persist checkbox prefs ────────────────────────────────────────────────────
 ;(async () => {
-  const prefs = await chrome.storage.local.get(['pref_ignoreDisabled', 'pref_skipFilled', 'pref_skipOptional'])
+  const prefs = await chrome.storage.local.get(['pref_allSteps', 'pref_ignoreDisabled', 'pref_skipFilled', 'pref_skipOptional'])
+  if (prefs.pref_allSteps      !== undefined) allStepsCb.checked      = prefs.pref_allSteps
   if (prefs.pref_ignoreDisabled !== undefined) ignoreDisabledCb.checked = prefs.pref_ignoreDisabled
   if (prefs.pref_skipFilled    !== undefined) skipFilledCb.checked    = prefs.pref_skipFilled
   if (prefs.pref_skipOptional  !== undefined) skipOptionalCb.checked  = prefs.pref_skipOptional
 })()
 
+allStepsCb.addEventListener('change',      () => chrome.storage.local.set({ pref_allSteps:      allStepsCb.checked }))
 ignoreDisabledCb.addEventListener('change', () => chrome.storage.local.set({ pref_ignoreDisabled: ignoreDisabledCb.checked }))
 skipFilledCb.addEventListener('change',    () => chrome.storage.local.set({ pref_skipFilled:    skipFilledCb.checked }))
 skipOptionalCb.addEventListener('change',  () => chrome.storage.local.set({ pref_skipOptional:  skipOptionalCb.checked }))
+
+// ─── Wizard step advancement (runs in page MAIN world) ───────────────────────
+// Strategy 1: look for an explicit Next/Continue button by text.
+// Strategy 2: MUI CustomFormWizard — steps are navigated by clicking the next
+//   step's MuiStepLabel-root. Active step is identified by its avatar having
+//   the attribute skin="filled"; inactive steps have skin="light".
+// Returns 'clicked' or 'no_next'.
+function advanceWizardStep() {
+  // ── Strategy 1: explicit Next button ──────────────────────────────────────
+  const NEXT_RE = /\b(selanjutnya|lanjutkan|lanjut|berikutnya|next|continue|proceed)\b/i
+  const buttons = Array.from(document.querySelectorAll('button:not([disabled])'))
+  for (const btn of buttons) {
+    const text = (btn.textContent || '').trim()
+    if (NEXT_RE.test(text) && text.length < 40) { btn.click(); return 'clicked' }
+  }
+  for (const btn of buttons) {
+    const label = (btn.getAttribute('aria-label') || '').trim()
+    if (NEXT_RE.test(label)) { btn.click(); return 'clicked' }
+  }
+
+  // ── Strategy 2: MUI Stepper label click ───────────────────────────────────
+  const allSteps = Array.from(document.querySelectorAll('[data-step-index]'))
+  if (!allSteps.length) return 'no_next'
+
+  // Active step: its avatar has skin="filled"; all others have skin="light".
+  let currentIdx = -1
+  for (const step of allSteps) {
+    if (step.querySelector('[skin="filled"]')) {
+      const idx = parseInt(step.getAttribute('data-step-index'), 10)
+      if (!isNaN(idx)) { currentIdx = idx; break }
+    }
+  }
+  // Fallback: MUI's own Mui-active class on the step container
+  if (currentIdx === -1) {
+    const active = document.querySelector('.MuiStep-root.Mui-active, [data-step-index].Mui-active')
+    if (active) {
+      const el = active.closest('[data-step-index]') || active
+      const idx = parseInt(el.getAttribute('data-step-index'), 10)
+      if (!isNaN(idx)) currentIdx = idx
+    }
+  }
+  if (currentIdx === -1) return 'no_next'
+
+  const nextLabel = document.querySelector('[data-step-index="' + (currentIdx + 1) + '"] .MuiStepLabel-root')
+  if (!nextLabel) return 'no_next'  // already on last step
+
+  nextLabel.click()
+  return 'clicked'
+}
+
+// ─── Quick Fill orchestrator ──────────────────────────────────────────────────
+// Clicks Scan then Execute. The detect handler handles all-steps scanning;
+// the execute handler handles per-step filling. No manual step loop needed here.
+async function runAllWizardSteps({ onStep } = {}) {
+  const waitEnabled = (btn, ms) => new Promise(resolve => {
+    const t = setInterval(() => { if (!btn.disabled) { clearInterval(t); resolve() } }, 150)
+    setTimeout(() => { clearInterval(t); resolve() }, ms)
+  })
+
+  if (onStep) onStep('Scanning…')
+  detectBtn.click()
+  // All-steps scan visits every step (~800ms each); allow up to 60s for 20 steps.
+  await waitEnabled(executeBtn, 60000)
+  if (executeBtn.disabled) return lastResults
+
+  if (onStep) onStep('Filling…')
+  await sleep(150)
+  executeBtn.click()
+  await sleep(300)
+  // Per-step execution with navigation; allow up to 5 min total.
+  await waitEnabled(executeBtn, 300000)
+
+  return lastResults
+}
 
 // ── Quick Fill button ─────────────────────────────────────────────────────────
 const quickFillBtn = document.getElementById('quickFillBtn')
 quickFillBtn.addEventListener('click', async () => {
   quickFillBtn.disabled = true
-  quickFillBtn.textContent = '⏳…'
   try {
-    detectBtn.click()
-    await new Promise(resolve => {
-      const t = setInterval(() => {
-        if (!executeBtn.disabled) { clearInterval(t); resolve() }
-      }, 150)
-      setTimeout(() => { clearInterval(t); resolve() }, 20000)
+    await runAllWizardSteps({
+      onStep: n => { quickFillBtn.textContent = `Step ${n}…` }
     })
-    if (!executeBtn.disabled) {
-      await sleep(150)
-      executeBtn.click()
-    }
   } finally {
     quickFillBtn.disabled = false
     quickFillBtn.textContent = '⚡ Quick Fill'
@@ -1230,38 +1409,15 @@ quickFillBtn.addEventListener('click', async () => {
 })
 
 // ── Quick Fill auto-run ───────────────────────────────────────────────────────
-// Default left-click opens the popup and auto-runs Quick Fill.
-// Right-click "Open Panel" sets suppressAutoRun so we skip the auto-run.
-// The flag is consumed immediately so it doesn't carry over to the next open.
+// Default left-click opens the popup and auto-runs the full wizard loop.
+// Right-click "Open Panel" sets suppressAutoRun so we skip it.
 ;(async () => {
   const { suppressAutoRun } = await chrome.storage.session.get('suppressAutoRun')
   await chrome.storage.session.remove('suppressAutoRun')
   if (suppressAutoRun) return
 
   await sleep(300)
-  detectBtn.click()
-
-  await new Promise(resolve => {
-    const t = setInterval(() => {
-      if (!executeBtn.disabled) { clearInterval(t); resolve() }
-    }, 150)
-    setTimeout(() => { clearInterval(t); resolve() }, 20000)
-  })
-
-  if (executeBtn.disabled) return
-
-  await sleep(200)
-  executeBtn.click()
-
-  await sleep(300)  // wait for button to go busy before polling for done
-
-  await new Promise(resolve => {
-    const t = setInterval(() => {
-      if (!executeBtn.disabled) { clearInterval(t); resolve() }
-    }, 200)
-    setTimeout(() => { clearInterval(t); resolve() }, 120000)
-  })
-
+  await runAllWizardSteps()
   await sleep(900)
   window.close()
 })()
