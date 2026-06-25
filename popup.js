@@ -76,108 +76,133 @@ const prettyJSON = obj => JSON.stringify(obj, null, 2)
 // Keys = normalized label text (lowercase, trailing * stripped).
 // Date values use DD-MM-YYYY (passed to react-datepicker via fillText which parses → Date object,
 // or passed to Cleave masked date fields as raw digits after stripping dashes).
+
+// Random helpers — used by LABEL_DEFAULTS getters and smartDefault
+const _PICK = arr => arr[Math.floor(Math.random() * arr.length)]
+const _RAMT = (mn, mx, step = 1000000) => String(mn + Math.floor(Math.random() * Math.ceil((mx - mn) / step)) * step)
+const _RD2  = () => String(Math.floor(Math.random() * 90) + 10)  // 2-digit random
+const _R6   = () => String(Math.floor(Math.random() * 900000) + 100000)
+
+const _NAMES_DEBTOR  = ['Budi Santoso', 'Agus Setiawan', 'Hendra Wijaya', 'Reza Pratama', 'Denny Kusuma', 'Eko Prabowo', 'Feri Gunawan', 'Galih Saputra']
+const _NAMES_FEMALE  = ['Dewi Kusuma', 'Sari Wulandari', 'Rina Anggraeni', 'Maya Putri', 'Fitri Rahayu', 'Indah Lestari', 'Yuni Astuti']
+const _NAMES_DAD     = ['Slamet Riyadi', 'Wahyu Santoso', 'Bambang Sutrisno', 'Hadi Wijaya', 'Sugeng Raharjo', 'Joko Widodo', 'Mulyono Prabowo']
+const _NAMES_MOM     = ['Siti Aminah', 'Wati Rahayu', 'Sunarti', 'Purwati', 'Endang Susilowati', 'Sri Mulyani', 'Hartini']
+const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri', 'Galih']
+const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang']
+const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B']
+const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim']
+const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris']
+const _TENORS        = ['12', '18', '24', '36', '48', '60']
+
 const LABEL_DEFAULTS = {
   // ── Identitas ──────────────────────────────────────────────────────────────
-  'nama lengkap':                              'Budi Santoso',
-  'nama alias':                                'Budi',
-  'nomor ktp':                                 '3201012345670001',
-  'nomor npwp':                                '1234567890123456',
-  'nomor nib':                                 '1234567890123',
-  'id privy':                                  'PRV123456',
+  get 'nama lengkap'()       { return _PICK(_NAMES_DEBTOR) },
+  get 'nama alias'()         { return _PICK(_ALIASES) },
+  get 'nomor ktp'()          { return '32' + _RD2() + _RD2() + _R6() + _RD2() + '00' + _RD2() },
+  get 'nomor npwp'()         { return _R6() + _R6() + _RD2() + _RD2() + _RD2() + _RD2() },
+  get 'nomor nib'()          { return '912020' + _R6() + _RD2() },
+  'id privy':                  'PRV123456',
 
   // ── Kontak ─────────────────────────────────────────────────────────────────
-  'nomor handphone':                           '08123456789',
-  'nomor telepon rumah':                       '02112345678',
-  'nomor telepon perusahaan':                  '02112345678',
-  'alamat email':                              'budi.santoso@example.com',
+  get 'nomor handphone'()    { return '0812' + _R6() + _RD2() + _RD2() },
+  get 'nomor telepon rumah'() { return '021' + _R6() + _RD2() },
+  get 'nomor telepon perusahaan'() { return '021' + _R6() + _RD2() },
+  get 'alamat email'()       { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' },
 
   // ── Lahir / pendirian ──────────────────────────────────────────────────────
-  'tanggal lahir':                             '15-01-1990',
-  'tanggal pendirian':                         '20-05-2010',
+  get 'tanggal lahir'()      { const y = 1975 + Math.floor(Math.random() * 25); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y },
+  'tanggal pendirian':         '20-05-2010',
 
   // ── Alamat ─────────────────────────────────────────────────────────────────
-  'alamat tempat tinggal (sesuai ktp)':        'Jl. Sudirman No. 1',
-  'alamat tempat tinggal (domisili)':          'Jl. Sudirman No. 1',
-  'alamat perusahaan':                         'Jl. Thamrin No. 10',
-  'kode pos':                                  '10310',
-  'rw':                                        '002',
-  'rt':                                        '001',
+  get 'alamat tempat tinggal (sesuai ktp)'() { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
+  get 'alamat tempat tinggal (domisili)'()   { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
+  get 'alamat perusahaan'()  { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
+  get 'kode pos'()           { return String(10000 + Math.floor(Math.random() * 89000)) },
+  get 'rw'()                 { return String(Math.floor(Math.random() * 9) + 1).padStart(3, '0') },
+  get 'rt'()                 { return String(Math.floor(Math.random() * 9) + 1).padStart(3, '0') },
 
   // ── Keluarga ───────────────────────────────────────────────────────────────
-  'nama ayah kandung':                         'Slamet Riyadi',
-  'nama ibu kandung':                          'Siti Aminah',
-  'nama pasangan':                             'Dewi Santoso',
-  'jumlah saudara kandung':                    '2',
-  'jumlah tanggungan':                         '1',
-  'nomor kartu keluarga':                      '3201011234560001',
+  get 'nama ayah kandung'()  { return _PICK(_NAMES_DAD) },
+  get 'nama ibu kandung'()   { return _PICK(_NAMES_MOM) },
+  get 'nama pasangan'()      { return _PICK(_NAMES_FEMALE) },
+  get 'jumlah saudara kandung'() { return String(Math.floor(Math.random() * 4)) },
+  get 'jumlah tanggungan'()  { return String(Math.floor(Math.random() * 4)) },
+  get 'nomor kartu keluarga'() { return '32' + _RD2() + _RD2() + _R6() + _R6() },
 
   // ── Pekerjaan ──────────────────────────────────────────────────────────────
-  'jabatan':                                   'Staff',
-  'lama bekerja':                              '5',
-  'nama perusahaan':                           'PT Maju Sejahtera',
-  'nama dagang perusahaan':                    'Maju Sejahtera',
+  get 'jabatan'()            { return _PICK(_POSITIONS) },
+  get 'lama bekerja'()       { return String(1 + Math.floor(Math.random() * 20)) },
+  get 'nama perusahaan'()    { return _PICK(['PT Maju Sejahtera', 'CV Karya Mandiri', 'PT Nusantara Jaya', 'PT Sukses Makmur', 'CV Berkah Abadi']) },
+  get 'nama dagang perusahaan'() { return _PICK(['Maju Sejahtera', 'Karya Mandiri', 'Nusantara Jaya', 'Sukses Makmur', 'Berkah Abadi']) },
 
   // ── Keuangan ───────────────────────────────────────────────────────────────
-  'nominal pendapatan':                        '5000000',
-  'nominal pengeluaran':                       '2000000',
-  'total pendapatan':                          '5000000',
-  'total pengeluaran':                         '2000000',
-  'plafond':                                   '50000000',
-  'tenor':                                     '24',
+  get 'nominal pendapatan'() { return _RAMT(5000000, 50000000) },
+  get 'nominal pengeluaran'(){ return _RAMT(1500000, 20000000, 500000) },
+  get 'total pendapatan'()   { return _RAMT(5000000, 50000000) },
+  get 'total pengeluaran'()  { return _RAMT(1500000, 20000000, 500000) },
+  get 'plafond'()            { return _RAMT(50000000, 500000000, 10000000) },
+  get 'tenor'()              { return _PICK(_TENORS) },
 
   // ── Perusahaan / legal ─────────────────────────────────────────────────────
-  'nama notaris':                              'Budi Notaris, SH',
-  'nomor akta':                                '01',
-  'nomor sk':                                  'AHU-12345.AH.01.01.2020',
-  'nomor nib perusahaan':                      '9120205012345',
+  'nama notaris':              'Budi Notaris, SH',
+  get 'nomor akta'()         { return String(1 + Math.floor(Math.random() * 99)).padStart(2, '0') },
+  get 'nomor sk'()           { return 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10)) },
+  get 'nomor nib perusahaan'(){ return '912020' + _R6() + _RD2() },
+
+  // ── Laporan Keuangan ───────────────────────────────────────────────────────
+  get 'periode tahun'()      { return String(new Date().getFullYear() - 1) },
+  get 'tahun buku'()         { return String(new Date().getFullYear() - 1) },
 }
 
 // Pattern-based fallback — searched against "FIELD_NAME label" lowercased.
+// Values may be () => string functions for randomization.
 const SMART_RULES = [
-  [/\b(ibu kandung|mother name|nama ibu)\b/,                        'Siti Aminah'],
-  [/\b(ayah kandung|father name|nama ayah)\b/,                      'Slamet Riyadi'],
-  [/\b(nama alias|alias name|panggilan)\b/,                         'Budi'],
-  [/\b(nama pasangan|spouse name)\b/,                               'Dewi Santoso'],
-  [/\b(nama lengkap|full name|debtor.*full)\b/,                     'Budi Santoso'],
-  [/\b(nama perusahaan|company name)\b/,                            'PT Maju Sejahtera'],
-  [/\b(nama dagang|trade name)\b/,                                  'Maju Sejahtera'],
-  [/\bnomor ktp\b/,                                                 '3201012345670001'],
-  [/\bnomor npwp\b/,                                                '1234567890123456'],
-  [/\bnomor nib\b/,                                                 '1234567890123'],
-  [/\b(passport|paspor)\b/,                                         'A1234567'],
-  [/\b(kartu keluarga|family card)\b/,                              '3201011234560001'],
-  [/\bprivy\b/,                                                     'PRV123456'],
-  [/\bemail\b/,                                                     'budi.santoso@example.com'],
-  [/\b(handphone|mobile phone|no hp)\b/,                            '08123456789'],
-  [/\b(telepon rumah|home phone)\b/,                                '02112345678'],
-  [/\b(telepon perusahaan|company phone|nomor telepon)\b/,          '02112345678'],
+  [/\b(ibu kandung|mother name|nama ibu)\b/,             () => _PICK(_NAMES_MOM)],
+  [/\b(ayah kandung|father name|nama ayah)\b/,           () => _PICK(_NAMES_DAD)],
+  [/\b(nama alias|alias name|panggilan)\b/,              () => _PICK(_ALIASES)],
+  [/\b(nama pasangan|spouse name)\b/,                    () => _PICK(_NAMES_FEMALE)],
+  [/\b(nama lengkap|full name|debtor.*full)\b/,          () => _PICK(_NAMES_DEBTOR)],
+  [/\b(nama perusahaan|company name)\b/,                 () => _PICK(['PT Maju Sejahtera', 'CV Karya Mandiri', 'PT Nusantara Jaya', 'PT Sukses Makmur'])],
+  [/\b(nama dagang|trade name)\b/,                       () => _PICK(['Maju Sejahtera', 'Karya Mandiri', 'Nusantara Jaya', 'Sukses Makmur'])],
+  [/\bnomor ktp\b/,                                      () => '32' + _RD2() + _RD2() + _R6() + _RD2() + '00' + _RD2()],
+  [/\bnomor npwp\b/,                                     () => _R6() + _R6() + _RD2() + _RD2() + _RD2() + _RD2()],
+  [/\bnomor nib\b/,                                      () => '912020' + _R6() + _RD2()],
+  [/\b(passport|paspor)\b/,                              () => 'A' + (1000000 + Math.floor(Math.random() * 8999999))],
+  [/\b(kartu keluarga|family card)\b/,                   () => '32' + _RD2() + _RD2() + _R6() + _R6()],
+  [/\bprivy\b/,                                                    'PRV123456'],
+  [/\bemail\b/,                                          () => { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' }],
+  [/\b(handphone|mobile phone|no hp)\b/,                 () => '0812' + _R6() + _RD2() + _RD2()],
+  [/\b(telepon rumah|home phone)\b/,                     () => '021' + _R6() + _RD2()],
+  [/\b(telepon perusahaan|company phone|nomor telepon)\b/, () => '021' + _R6() + _RD2()],
   [/\bfax\b/,                                                       '02112345679'],
   [/\b(website|url)\b/,                                             'https://example.com'],
-  [/\b(alamat|full address|address)\b/,                             'Jl. Sudirman No. 1'],
-  [/\b(kelurahan|sub district)\b/,                                  'Menteng'],
-  [/\b(kecamatan|district)\b/,                                      'Menteng'],
-  [/\b(kota|city|kabupaten)\b/,                                     'Jakarta Pusat'],
-  [/\b(provinsi|province)\b/,                                       'DKI Jakarta'],
-  [/\b(kode pos|postal code)\b/,                                    '10310'],
+  [/\b(alamat|full address|address)\b/,                  () => _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS)],
+  [/\b(kelurahan|sub district)\b/,                       () => _PICK(['Menteng', 'Kebayoran', 'Kuningan', 'Senayan', 'Tebet', 'Cikini'])],
+  [/\b(kecamatan|district)\b/,                           () => _PICK(['Menteng', 'Kebayoran Baru', 'Setiabudi', 'Tebet', 'Mampang'])],
+  [/\b(kota|city|kabupaten)\b/,                          () => _PICK(_CITIES)],
+  [/\b(provinsi|province)\b/,                            () => _PICK(['DKI Jakarta', 'Jawa Barat', 'Jawa Timur', 'Jawa Tengah', 'Banten', 'Bali'])],
+  [/\b(kode pos|postal code)\b/,                         () => String(10000 + Math.floor(Math.random() * 89000))],
   [/\b(negara|country)\b/,                                          'Indonesia'],
-  [/(^| )rw( |$)/,                                                  '002'],
-  [/(^| )rt( |$)/,                                                  '001'],
-  [/\b(tempat lahir|birth place|tempat pendirian)\b/,               'Bandung'],
-  [/\b(tanggal lahir|birth date|tanggal pendirian)\b/,              '15-01-1990'],
-  [/\bjabatan\b/,                                                   'Staff'],
-  [/\b(lama bekerja|work duration)\b/,                              '5'],
-  [/\b(jumlah saudara|sibling count)\b/,                            '2'],
-  [/\b(jumlah tanggungan|dependent count)\b/,                       '1'],
-  [/\b(nominal pendapatan|income amount)\b/,                        '5000000'],
-  [/\b(nominal pengeluaran|expense amount)\b/,                      '2000000'],
-  [/\btotal pendapatan\b/,                                          '5000000'],
-  [/\btotal pengeluaran\b/,                                         '2000000'],
-  [/\b(plafond|jumlah pinjaman|loan amount)\b/,                     '50000000'],
-  [/\b(tenor|jangka waktu)\b/,                                      '24'],
-  [/\bnomor sk\b/,                                                  'AHU-12345.AH.01.01.2020'],
-  [/\bnomor akta\b/,                                                '01'],
+  [/(^| )rw( |$)/,                                       () => String(Math.floor(Math.random() * 9) + 1).padStart(3, '0')],
+  [/(^| )rt( |$)/,                                       () => String(Math.floor(Math.random() * 9) + 1).padStart(3, '0')],
+  [/\b(tempat lahir|birth place|tempat pendirian)\b/,    () => _PICK(_CITIES)],
+  [/\b(tanggal lahir|birth date|tanggal pendirian)\b/,   () => { const y = 1970 + Math.floor(Math.random() * 30); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y }],
+  [/\bjabatan\b/,                                        () => _PICK(_POSITIONS)],
+  [/\b(lama bekerja|work duration)\b/,                   () => String(1 + Math.floor(Math.random() * 20))],
+  [/\b(jumlah saudara|sibling count)\b/,                 () => String(Math.floor(Math.random() * 4))],
+  [/\b(jumlah tanggungan|dependent count)\b/,            () => String(Math.floor(Math.random() * 4))],
+  [/\b(nominal pendapatan|income amount)\b/,             () => _RAMT(5000000, 50000000)],
+  [/\b(nominal pengeluaran|expense amount)\b/,           () => _RAMT(1500000, 20000000, 500000)],
+  [/\btotal pendapatan\b/,                               () => _RAMT(5000000, 50000000)],
+  [/\btotal pengeluaran\b/,                              () => _RAMT(1500000, 20000000, 500000)],
+  [/\b(plafond|jumlah pinjaman|loan amount)\b/,          () => _RAMT(50000000, 500000000, 10000000)],
+  [/\b(tenor|jangka waktu)\b/,                           () => _PICK(_TENORS)],
+  [/\bnomor sk\b/,                                       () => 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10))],
+  [/\bnomor akta\b/,                                     () => String(1 + Math.floor(Math.random() * 99)).padStart(2, '0')],
   [/\bnotaris\b/,                                                   'Budi Notaris, SH'],
   [/\b(catatan|keterangan|deskripsi|description|note)\b/,           'Tidak ada keterangan'],
+  // year-only picker fields (e.g. "Periode Tahun", "FR_REPORT_PERIOD_YEAR")
+  [/\b(periode tahun|period year|tahun buku|fiscal year|report.*year|year.*report)\b/, () => String(new Date().getFullYear() - 1)],
   // numeric-hint catch: return '000' before general text fallback
   [/\b(nomor|number|no\.)\b/,                                       '000'],
 ]
@@ -196,6 +221,33 @@ function smartDefault(name, label, type, options = []) {
   if (type === 'checkbox' || type === 'checkbox_group') return false
   if (type === 'time') return ''
 
+  // 0. Table numeric cells stamped by pageDetect scanner
+  if (name.startsWith('__TBL__')) {
+    const lbl = (label || name).toLowerCase()
+    if (/penjualan|pendapatan usaha/.test(lbl))           return _RAMT(500000000, 10000000000, 100000000)
+    if (/harga pokok|hpp/.test(lbl))                       return _RAMT(300000000, 7000000000, 100000000)
+    if (/beban usaha|beban operasional/.test(lbl))         return _RAMT(50000000, 2000000000, 50000000)
+    if (/beban bunga|biaya bunga/.test(lbl))               return _RAMT(5000000, 200000000, 5000000)
+    if (/pajak penghasilan|pph/.test(lbl))                 return _RAMT(10000000, 500000000, 10000000)
+    if (/depresiasi|amortisasi/.test(lbl))                 return _RAMT(10000000, 300000000, 10000000)
+    if (/laba bersih|net income|net profit/.test(lbl))     return _RAMT(50000000, 3000000000, 100000000)
+    if (/laba kotor|gross profit/.test(lbl))               return _RAMT(100000000, 4000000000, 100000000)
+    if (/laba/.test(lbl))                                  return _RAMT(50000000, 2000000000, 100000000)
+    if (/kas dan setara kas|kas/.test(lbl))                return _RAMT(100000000, 2000000000, 50000000)
+    if (/piutang/.test(lbl))                               return _RAMT(50000000, 1500000000, 50000000)
+    if (/persediaan/.test(lbl))                            return _RAMT(100000000, 3000000000, 100000000)
+    if (/investasi/.test(lbl))                             return _RAMT(50000000, 500000000, 50000000)
+    if (/tanah|bangunan|kendaraan|properti/.test(lbl))     return _RAMT(200000000, 5000000000, 100000000)
+    if (/aktiva tetap|aset tetap/.test(lbl))               return _RAMT(200000000, 5000000000, 100000000)
+    if (/total aktiva|total aset/.test(lbl))               return _RAMT(500000000, 10000000000, 500000000)
+    if (/hutang bank|utang bank/.test(lbl))                return _RAMT(100000000, 3000000000, 100000000)
+    if (/hutang dagang|utang usaha/.test(lbl))             return _RAMT(50000000, 1000000000, 50000000)
+    if (/hutang pajak|utang pajak/.test(lbl))              return _RAMT(10000000, 200000000, 10000000)
+    if (/modal disetor/.test(lbl))                         return _RAMT(500000000, 5000000000, 500000000)
+    if (/total pasiva|total ekuitas/.test(lbl))            return _RAMT(500000000, 10000000000, 500000000)
+    return _RAMT(10000000, 500000000, 10000000)
+  }
+
   // 1. Exact label match (highest priority)
   const normLabel = label.replace(/\s*\*\s*$/, '').trim().toLowerCase()
   if (normLabel && normLabel in LABEL_DEFAULTS) return LABEL_DEFAULTS[normLabel]
@@ -208,9 +260,9 @@ function smartDefault(name, label, type, options = []) {
     return ''
   }
 
-  // 3. Regex pattern rules
+  // 3. Regex pattern rules — values may be functions for randomization
   for (const [pattern, defaultVal] of SMART_RULES) {
-    if (pattern.test(searchKey)) return defaultVal
+    if (pattern.test(searchKey)) return typeof defaultVal === 'function' ? defaultVal() : defaultVal
   }
 
   // 4. Fallback — numeric hint → '000', otherwise '{label} DD-MM-YYYY'
@@ -236,13 +288,12 @@ async function pageDetect() {
     t()
   })
 
-  // If one or more MUI dialogs are open, scope field discovery to the topmost visible one.
-  // MUI marks background dialogs with aria-hidden="true" on their root container — the
-  // active (topmost) dialog has no such ancestor. Use .MuiDialog-paper to avoid matching
-  // the react-datepicker calendar which also has role="dialog" aria-modal="true".
-  // Listbox portals always use document directly (they render outside the dialog tree).
-  const allDialogs = Array.from(document.querySelectorAll('.MuiDialog-paper[role="dialog"][aria-modal="true"]'))
-  const modalRoot = allDialogs.find(d => !d.closest('[aria-hidden="true"]')) || null
+  // Detect an open MUI dialog by its backdrop — the only element that is
+  // unconditionally rendered (and only rendered) while a dialog is open.
+  // Class/attribute checks on .MuiDialog-paper are fragile; the backdrop is not.
+  const modalRoot = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+    ? (document.querySelector('.MuiDialog-paper') || null)
+    : null
   const root = modalRoot || document
 
   // Close any open listbox. triggerEl = the element that opened it (Escape goes there first).
@@ -282,6 +333,9 @@ async function pageDetect() {
     const lbl = fc.querySelector && fc.querySelector('.MuiFormLabel-root, .MuiInputLabel-root')
     if (lbl) return lbl.textContent.replace(/\s*\*\s*$/, '').trim()
     if (el.id) { const l = document.querySelector('label[for="' + el.id + '"]'); if (l) return l.textContent.replace(/\s*\*\s*$/, '').trim() }
+    // Fallback for table inputs stamped by the table scanner below
+    const al = el.getAttribute ? el.getAttribute('data-autofill-label') : ''
+    if (al) return al
     return ''
   }
 
@@ -360,7 +414,17 @@ async function pageDetect() {
       : []
     btn.click()
     await waitFor(() => !document.querySelector('[role="listbox"]'), 600)
-    if (document.querySelector('[role="listbox"]')) await closeListbox(btn)
+    if (document.querySelector('[role="listbox"]')) {
+      if (root !== document) {
+        // Modal context: ESC bubbles past the Autocomplete and closes the parent dialog.
+        // Use a body mousedown instead — MUI's click-away handler treats it as "outside".
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await sleep(120)
+      } else {
+        await closeListbox(btn)
+      }
+    }
     await sleep(60)
     return opts
   }
@@ -375,12 +439,22 @@ async function pageDetect() {
     if (!trigger) return []
     trigger.click()
     const lb = await waitFor(() => document.querySelector('[role="listbox"]'), 800)
+    const safeClose = async (el) => {
+      if (root !== document) {
+        // Modal context: skip ESC — it bubbles and closes the parent dialog
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await sleep(120)
+      } else {
+        await closeListbox(el)
+      }
+    }
     if (!lb) {
-      await closeListbox(trigger)
+      await safeClose(trigger)
       return []
     }
     const opts = Array.from(lb.querySelectorAll('[role="option"]')).map(o => ({ value: o.getAttribute('data-value') || o.textContent.trim(), label: o.textContent.trim() }))
-    await closeListbox(trigger)
+    await safeClose(trigger)
     return opts
   }
 
@@ -681,20 +755,11 @@ async function fillSingleField(name, value, delayMs, ignoreDisabled, skipFilled,
 
   async function fillDatePicker(name, value) {
     const strVal = String(value)
-    const m = strVal.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/)
-    if (!m) return false
-
-    const targetDay   = +m[1]
-    const targetMonth = +m[2]  // 1-12
-    const targetYear  = +m[3]
-    const dateObj     = new Date(targetYear, targetMonth - 1, targetDay)
 
     const inp = document.querySelector('input[name="' + name + '"]:not([aria-hidden="true"])')
     if (!inp) return false
 
     // ── Find the DatePicker class instance via fiber walk ─────────────────────
-    // DatePicker has both setOpen() and setSelected(). Walking from the input
-    // fiber upward finds it regardless of portal/dialog boundaries.
     let dpInstance = null
     const fk = Object.keys(inp).find(k => /^__reactFiber\$/.test(k))
     if (fk) {
@@ -709,6 +774,58 @@ async function fillSingleField(name, value, delayMs, ignoreDisabled, skipFilled,
         f = f.return
       }
     }
+
+    // ── Year-only picker (value is a 4-digit year, e.g. "2025") ──────────────
+    if (/^\d{4}$/.test(strVal)) {
+      const targetYear = +strVal
+
+      // Approach A: setSelected with Jan 1 of target year
+      if (dpInstance) {
+        try {
+          dpInstance.setSelected(new Date(targetYear, 0, 1))
+          await sleep(200)
+          if (inp.value.trim()) return true
+        } catch (_) {}
+      }
+
+      // Approach B: open picker and click the year text cell
+      const getPopper = () => {
+        const p = document.querySelector('.react-datepicker-popper')
+        return p && p.getBoundingClientRect().height > 0 ? p : null
+      }
+      if (!getPopper()) {
+        if (dpInstance) { try { dpInstance.setOpen(true) } catch (_) {} await sleep(150) }
+        if (!getPopper()) {
+          inp.focus(); await sleep(80)
+          inp.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+          inp.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }))
+          await sleep(200)
+        }
+      }
+      const popper = await waitFor(getPopper, 1500)
+      if (popper) {
+        const yearEl = popper.querySelector('.react-datepicker__year-text.react-datepicker__year-' + targetYear)
+                    || document.querySelector('.react-datepicker__year-text.react-datepicker__year-' + targetYear)
+        if (yearEl) { yearEl.click(); await sleep(200); return true }
+      }
+
+      // Approach C: type year directly into the input
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(inp, strVal)
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      inp.dispatchEvent(new Event('change', { bubbles: true }))
+      await sleep(100)
+      return inp.value.trim().length > 0
+    }
+
+    // ── Regular date picker (DD-MM-YYYY format) ───────────────────────────────
+    const m = strVal.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/)
+    if (!m) return false
+
+    const targetDay   = +m[1]
+    const targetMonth = +m[2]  // 1-12
+    const targetYear  = +m[3]
+    const dateObj     = new Date(targetYear, targetMonth - 1, targetDay)
 
     // ── Approach 1: setSelected() directly ────────────────────────────────────
     // Bypasses focus/events entirely — works inside MUI dialogs where focus-lock
@@ -845,6 +962,185 @@ async function fillSingleField(name, value, delayMs, ignoreDisabled, skipFilled,
   return filled ? 'ok' : 'not_found'
 }
 
+// ─── Financial table fill (Neraca Keuangan / Laporan Laba Rugi) ──────────────
+// Self-contained: scans AND fills in one injection so there's no coordination
+// gap where React could re-render and wipe any stamped attributes.
+// For Neraca Keuangan: enforces Total Aktiva = Total Pasiva.
+// Strategy: detect input columns dynamically (no fixed index assumptions),
+// split them into aktiva-side and pasiva-side by column midpoint,
+// fill aktiva details → compute sum → distribute that exact sum across pasiva details,
+// then stamp both total cells with the same sum.
+async function fillTableInputsDirect() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const STEP = 1000000
+  const rAmt = (mn, mx, st) => mn + Math.floor(Math.random() * Math.ceil((mx - mn) / (st || STEP))) * (st || STEP)
+
+  function amtForLabel(lbl) {
+    if (/penjualan|pendapatan usaha/.test(lbl))        return rAmt(500000000, 10000000000, 100000000)
+    if (/harga pokok|hpp/.test(lbl))                   return rAmt(300000000, 7000000000, 100000000)
+    if (/beban usaha|beban operasional/.test(lbl))     return rAmt(50000000, 2000000000, 50000000)
+    if (/beban bunga|biaya bunga/.test(lbl))           return rAmt(5000000, 200000000, 5000000)
+    if (/pajak penghasilan|pph/.test(lbl))             return rAmt(10000000, 500000000, 10000000)
+    if (/depresiasi|amortisasi/.test(lbl))             return rAmt(10000000, 300000000, 10000000)
+    if (/laba bersih|net profit|net income/.test(lbl)) return rAmt(50000000, 3000000000, 100000000)
+    if (/laba kotor|gross profit/.test(lbl))           return rAmt(100000000, 4000000000, 100000000)
+    if (/laba/.test(lbl))                              return rAmt(50000000, 2000000000, 100000000)
+    if (/kas/.test(lbl))                               return rAmt(100000000, 2000000000, 50000000)
+    if (/piutang/.test(lbl))                           return rAmt(50000000, 1500000000, 50000000)
+    if (/persediaan/.test(lbl))                        return rAmt(100000000, 3000000000, 100000000)
+    if (/investasi/.test(lbl))                         return rAmt(50000000, 500000000, 50000000)
+    if (/tanah|bangunan|kendaraan|properti/.test(lbl)) return rAmt(200000000, 5000000000, 100000000)
+    if (/aktiva tetap|aset tetap/.test(lbl))           return rAmt(200000000, 5000000000, 100000000)
+    if (/hutang bank|utang bank/.test(lbl))            return rAmt(100000000, 3000000000, 100000000)
+    if (/hutang dagang|utang usaha/.test(lbl))         return rAmt(50000000, 1000000000, 50000000)
+    if (/hutang pajak|utang pajak/.test(lbl))          return rAmt(10000000, 200000000, 10000000)
+    if (/modal disetor/.test(lbl))                     return rAmt(500000000, 5000000000, 500000000)
+    return rAmt(10000000, 500000000, 10000000)
+  }
+
+  // Split `total` into n positive multiples of STEP that sum exactly to `total`.
+  function distribute(total, n) {
+    if (n <= 0) return []
+    if (n === 1) return [total]
+    const out = []
+    let rem = total
+    for (let i = 0; i < n - 1; i++) {
+      const leave = (n - 1 - i) * STEP            // reserve at least STEP for each remaining slot
+      const cap   = Math.floor((rem - leave) / STEP) * STEP
+      const share = Math.max(STEP, Math.floor(Math.random() * (cap / STEP)) * STEP || STEP)
+      out.push(Math.min(share, cap))
+      rem -= out[out.length - 1]
+    }
+    out.push(Math.max(STEP, rem))
+    return out
+  }
+
+  const modalEl = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+  const root = modalEl ? (document.querySelector('.MuiDialog-paper') || document) : document
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+
+  function getInp(cell) {
+    const el = cell.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])')
+    if (!el || el.disabled || el.readOnly) return null
+    const r = el.getBoundingClientRect()
+    if (!r.width && !r.height) return null
+    const cs = getComputedStyle(el)
+    if (cs.display === 'none' || cs.visibility === 'hidden') return null
+    return el
+  }
+
+  function fillInp(inp, numVal) {
+    inp.focus()
+    setter.call(inp, String(numVal))
+    inp.dispatchEvent(new Event('input', { bubbles: true }))
+    inp.dispatchEvent(new Event('change', { bubbles: true }))
+    inp.blur()
+  }
+
+  let filled = 0
+
+  for (const tbl of root.querySelectorAll('table')) {
+    const tblText = tbl.textContent.toLowerCase()
+    const isNeraca = /aktiva/.test(tblText) && /pasiva/.test(tblText)
+
+    if (isNeraca) {
+      // ── Neraca Keuangan: balanced fill ──────────────────────────────────────
+      //
+      // Approach: enumerate ALL (colIndex, inp, labelText) tuples from every row.
+      // Split inputs into aktiva-side vs pasiva-side by the column midpoint —
+      // no hardcoded column assumptions.  Within each side, any row whose label
+      // contains "total" or "jumlah" is a total row; everything else is a detail.
+      // Fallback: if no total label found on a side, treat the last input as total.
+      //
+      // Guarantee: sum(aktiva details) is computed, distributed across pasiva details,
+      // then BOTH total cells are stamped with that same sum → Total Aktiva = Total Pasiva.
+
+      // Step 1 — collect every input with its column index and nearest preceding label
+      const all = []  // { col, inp, lbl }
+      for (const row of tbl.querySelectorAll('tr')) {
+        const cells = Array.from(row.querySelectorAll('td, th'))
+        for (let ci = 0; ci < cells.length; ci++) {
+          const inp = getInp(cells[ci])
+          if (!inp) continue
+          let lbl = ''
+          for (let li = ci - 1; li >= 0; li--) {
+            const t = cells[li].textContent.trim()
+            if (t) { lbl = t; break }
+          }
+          all.push({ col: ci, inp, lbl })
+        }
+      }
+      if (!all.length) continue
+
+      // Step 2 — split by column midpoint
+      const uniqueCols = [...new Set(all.map(x => x.col))].sort((a, b) => a - b)
+      const mid = uniqueCols[Math.floor(uniqueCols.length / 2)]
+      const aktivaAll = all.filter(x => x.col < mid)
+      const pasivaAll = all.filter(x => x.col >= mid)
+
+      // Step 3 — separate detail rows from total rows within each side
+      const isTotalLbl = lbl => /\b(total|jumlah)\b/i.test(lbl)
+
+      function splitSide(side) {
+        let details = side.filter(x => !isTotalLbl(x.lbl))
+        let totals  = side.filter(x =>  isTotalLbl(x.lbl))
+        // Fallback: no total label found → treat the LAST input as the total
+        if (!totals.length && details.length) {
+          totals = [details[details.length - 1]]
+          details = details.slice(0, -1)
+        }
+        return { details, totals }
+      }
+
+      const { details: aktivaDetails, totals: aktivaTotals } = splitSide(aktivaAll)
+      const { details: pasivaDetails, totals: pasivaTotals } = splitSide(pasivaAll)
+
+      // Step 4 — fill aktiva details, sum them
+      let aktivaSum = 0
+      for (const { inp, lbl } of aktivaDetails) {
+        const v = amtForLabel(lbl.toLowerCase())
+        fillInp(inp, v)
+        aktivaSum += v
+        filled++
+        await sleep(25)
+      }
+
+      // Step 5 — distribute aktivaSum across pasiva details so their sum = aktivaSum
+      const pasivaAmts = distribute(aktivaSum, pasivaDetails.length)
+      for (let i = 0; i < pasivaDetails.length; i++) {
+        fillInp(pasivaDetails[i].inp, pasivaAmts[i])
+        filled++
+        await sleep(25)
+      }
+
+      // Step 6 — stamp BOTH total cells with aktivaSum (guaranteed equal)
+      for (const { inp } of aktivaTotals) { fillInp(inp, aktivaSum); filled++ }
+      for (const { inp } of pasivaTotals) { fillInp(inp, aktivaSum); filled++ }
+      await sleep(50)
+
+    } else {
+      // ── Other financial tables (Laporan Laba Rugi, etc.) ────────────────────
+      for (const row of tbl.querySelectorAll('tr')) {
+        const cells = Array.from(row.querySelectorAll('td'))
+        for (let ci = 0; ci < cells.length; ci++) {
+          const inp = getInp(cells[ci])
+          if (!inp) continue
+          let lbl = ''
+          for (let li = ci - 1; li >= 0; li--) {
+            const t = cells[li].textContent.trim()
+            if (t) { lbl = t; break }
+          }
+          fillInp(inp, amtForLabel(lbl.toLowerCase()))
+          filled++
+          await sleep(25)
+        }
+      }
+    }
+  }
+
+  return filled
+}
+
 // ─── Page-context read-values function ───────────────────────────────────────
 // Reads current form field values without opening any dropdowns.
 function pageReadFieldValues(fieldNames) {
@@ -916,8 +1212,7 @@ let lastDetectedFieldsByStep = []   // [{stepIdx, fields}] — set during all-st
 // Returns -1 when a modal dialog is open so the scan loop treats the modal as
 // a single-step form and doesn't try to navigate the main wizard behind it.
 function getCurrentStepIndex() {
-  const modal = Array.from(document.querySelectorAll('.MuiDialog-paper[role="dialog"][aria-modal="true"]'))
-    .find(d => !d.closest('[aria-hidden="true"]'))
+  const modal = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
   if (modal) return -1
 
   for (const el of document.querySelectorAll('[data-step-index]')) {
@@ -1155,6 +1450,14 @@ executeBtn.addEventListener('click', async () => {
     }
   }
 
+  // Fill any financial table inputs (Neraca Keuangan / Laporan Laba Rugi) that
+  // regular field scan misses because those inputs carry no name attribute.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: fillTableInputsDirect
+    })
+  } catch (_) { /* non-fatal — table fill is best-effort */ }
+
   progressFill.style.width = '100%'
   progressLabel.textContent = 'Done'
   await sleep(300)
@@ -1372,8 +1675,7 @@ skipOptionalCb.addEventListener('change',  () => chrome.storage.local.set({ pref
 // Returns 'clicked' or 'no_next'.
 function advanceWizardStep() {
   // When a modal is open, don't touch the main wizard stepper behind it.
-  const modal = Array.from(document.querySelectorAll('.MuiDialog-paper[role="dialog"][aria-modal="true"]'))
-    .find(d => !d.closest('[aria-hidden="true"]'))
+  const modal = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
   if (modal) return 'no_next'
 
   // ── Strategy 1: explicit Next button ──────────────────────────────────────
