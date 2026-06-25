@@ -20,6 +20,7 @@ const buildJsonBtn     = document.getElementById('buildJsonBtn')
 const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
 const allStepsCb       = document.getElementById('allStepsCb')
+const doubleCheckCb    = document.getElementById('doubleCheckCb')
 const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -912,7 +913,13 @@ let lastDetectedFields = []
 let lastDetectedFieldsByStep = []   // [{stepIdx, fields}] — set during all-steps scan
 
 // Page-context helper: returns the active wizard step index (skin="filled" avatar).
+// Returns -1 when a modal dialog is open so the scan loop treats the modal as
+// a single-step form and doesn't try to navigate the main wizard behind it.
 function getCurrentStepIndex() {
+  const modal = Array.from(document.querySelectorAll('.MuiDialog-paper[role="dialog"][aria-modal="true"]'))
+    .find(d => !d.closest('[aria-hidden="true"]'))
+  if (modal) return -1
+
   for (const el of document.querySelectorAll('[data-step-index]')) {
     if (el.querySelector('[skin="filled"]')) {
       const idx = parseInt(el.getAttribute('data-step-index'), 10)
@@ -1115,6 +1122,13 @@ executeBtn.addEventListener('click', async () => {
         await sleep(800)
       }
     }
+
+    // Return to the first step after all filling is done
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: goToWizardStep, args: [lastDetectedFieldsByStep[0].stepIdx]
+    })
+    await sleep(400)
   } else {
     // ── Single-step execute ────────────────────────────────────────────────
     for (let i = 0; i < fieldOrder.length; i++) {
@@ -1336,14 +1350,16 @@ setStepActive(1)
 
 // ── Persist checkbox prefs ────────────────────────────────────────────────────
 ;(async () => {
-  const prefs = await chrome.storage.local.get(['pref_allSteps', 'pref_ignoreDisabled', 'pref_skipFilled', 'pref_skipOptional'])
+  const prefs = await chrome.storage.local.get(['pref_allSteps', 'pref_doubleCheck', 'pref_ignoreDisabled', 'pref_skipFilled', 'pref_skipOptional'])
   if (prefs.pref_allSteps      !== undefined) allStepsCb.checked      = prefs.pref_allSteps
+  if (prefs.pref_doubleCheck   !== undefined) doubleCheckCb.checked   = prefs.pref_doubleCheck
   if (prefs.pref_ignoreDisabled !== undefined) ignoreDisabledCb.checked = prefs.pref_ignoreDisabled
   if (prefs.pref_skipFilled    !== undefined) skipFilledCb.checked    = prefs.pref_skipFilled
   if (prefs.pref_skipOptional  !== undefined) skipOptionalCb.checked  = prefs.pref_skipOptional
 })()
 
 allStepsCb.addEventListener('change',      () => chrome.storage.local.set({ pref_allSteps:      allStepsCb.checked }))
+doubleCheckCb.addEventListener('change',   () => chrome.storage.local.set({ pref_doubleCheck:   doubleCheckCb.checked }))
 ignoreDisabledCb.addEventListener('change', () => chrome.storage.local.set({ pref_ignoreDisabled: ignoreDisabledCb.checked }))
 skipFilledCb.addEventListener('change',    () => chrome.storage.local.set({ pref_skipFilled:    skipFilledCb.checked }))
 skipOptionalCb.addEventListener('change',  () => chrome.storage.local.set({ pref_skipOptional:  skipOptionalCb.checked }))
@@ -1355,6 +1371,11 @@ skipOptionalCb.addEventListener('change',  () => chrome.storage.local.set({ pref
 //   the attribute skin="filled"; inactive steps have skin="light".
 // Returns 'clicked' or 'no_next'.
 function advanceWizardStep() {
+  // When a modal is open, don't touch the main wizard stepper behind it.
+  const modal = Array.from(document.querySelectorAll('.MuiDialog-paper[role="dialog"][aria-modal="true"]'))
+    .find(d => !d.closest('[aria-hidden="true"]'))
+  if (modal) return 'no_next'
+
   // ── Strategy 1: explicit Next button ──────────────────────────────────────
   const NEXT_RE = /\b(selanjutnya|lanjutkan|lanjut|berikutnya|next|continue|proceed)\b/i
   const buttons = Array.from(document.querySelectorAll('button:not([disabled])'))
@@ -1418,6 +1439,33 @@ async function runAllWizardSteps({ onStep } = {}) {
   await sleep(300)
   // Per-step execution with navigation; allow up to 5 min total.
   await waitEnabled(executeBtn, 300000)
+
+  // ── Double-check loop ─────────────────────────────────────────────────────
+  // Re-scan after each fill pass. If new conditional fields appeared, fill them
+  // (with skipFilled forced on so already-filled fields are left alone).
+  // Repeat until no new fields appear, or after 5 extra passes as a safety cap.
+  if (doubleCheckCb.checked) {
+    for (let pass = 1; pass <= 5; pass++) {
+      const prevNames = new Set(lastDetectedFields.map(f => f.name))
+
+      if (onStep) onStep(`Re-scan ${pass}…`)
+      detectBtn.click()
+      await sleep(400)  // let lockUI fire before polling
+      await waitEnabled(executeBtn, 60000)
+
+      const newFields = lastDetectedFields.filter(f => !prevNames.has(f.name))
+      if (!newFields.length) break
+
+      if (onStep) onStep(`Fill pass ${pass + 1}…`)
+      const wasSkipFilled = skipFilledCb.checked
+      skipFilledCb.checked = true
+      await sleep(150)
+      executeBtn.click()
+      await sleep(300)
+      await waitEnabled(executeBtn, 300000)
+      skipFilledCb.checked = wasSkipFilled
+    }
+  }
 
   return lastResults
 }

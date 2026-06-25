@@ -143,6 +143,10 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
 
 .scan-opts {
   padding-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .tick-row {
