@@ -3,7 +3,7 @@
   "name": "LOS Form Autofill",
   "version": "1.0.0",
   "description": "Autofill CustomFormWizard fields (MUI + React Hook Form)",
-  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

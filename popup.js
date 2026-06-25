@@ -1207,7 +1207,8 @@ function renderFieldsPanel(fields) {
     fieldsPanel.classList.remove('hidden')
     return
   }
-  for (const f of fields) {
+
+  function appendField(f) {
     const row = document.createElement('div')
     row.className = 'field-row' + (f.disabled ? ' field-disabled' : '')
     row.title = f.disabled ? `[DISABLED] ${f.name}` : `Click to add "${f.name}" to JSON`
@@ -1229,6 +1230,20 @@ function renderFieldsPanel(fields) {
     row.addEventListener('click', () => { if (!f.disabled) insertFieldIntoJSON(f) })
     fieldsList.appendChild(row)
   }
+
+  if (lastDetectedFieldsByStep.length > 1) {
+    // Render fields grouped by step with a sticky step header between each
+    for (const { stepIdx, fields: stepFields } of lastDetectedFieldsByStep) {
+      const header = document.createElement('div')
+      header.className = 'step-group-header'
+      header.textContent = `Step ${stepIdx + 1}  ·  ${stepFields.length} field${stepFields.length !== 1 ? 's' : ''}`
+      fieldsList.appendChild(header)
+      for (const f of stepFields) appendField(f)
+    }
+  } else {
+    for (const f of fields) appendField(f)
+  }
+
   fieldsPanel.classList.remove('hidden')
 }
 
@@ -1274,32 +1289,45 @@ function renderResults(results) {
 
   const summary = document.createElement('span')
   summary.className = 'badge badge-summary'
-  summary.textContent = `${ok} / ${entries.length - totalSkip}`
+  summary.textContent = `${ok} filled · ${totalSkip} skipped · ${entries.length - ok - totalSkip} failed`
   resultStrip.appendChild(summary)
 
-  for (const [name, status] of entries) {
-    const b = document.createElement('span')
-    if (status === 'ok') {
-      b.className = 'badge badge-ok'
-      b.innerHTML = `<span style="flex-shrink:0">✓</span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(name)}</span>`
-    } else if (status === 'skipped_disabled') {
-      b.className = 'badge badge-skip'
-      b.title = 'Skipped (disabled)'
-      b.innerHTML = `<span style="flex-shrink:0">—</span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(name)}</span>`
-    } else if (status === 'skipped_filled') {
-      b.className = 'badge badge-skip'
-      b.title = 'Skipped (already filled)'
-      b.innerHTML = `<span style="flex-shrink:0">·</span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(name)}</span>`
-    } else if (status === 'skipped_optional') {
-      b.className = 'badge badge-skip'
-      b.title = 'Skipped (optional)'
-      b.innerHTML = `<span style="flex-shrink:0">○</span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(name)}</span>`
-    } else {
-      b.className = 'badge badge-err'
-      b.title = 'Not found on page'
-      b.innerHTML = `<span style="flex-shrink:0">✗</span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(name)}</span>`
+  function makeRow(name, status) {
+    const META = {
+      ok:               { cls: 'result-ok',   icon: '✓', label: '' },
+      skipped_disabled: { cls: 'result-skip', icon: '—', label: 'disabled' },
+      skipped_filled:   { cls: 'result-skip', icon: '·', label: 'filled' },
+      skipped_optional: { cls: 'result-skip', icon: '○', label: 'optional' },
     }
-    resultStrip.appendChild(b)
+    const m = META[status] || { cls: 'result-err', icon: '✗', label: 'not found' }
+    const fieldMeta = lastDetectedFields.find(f => f.name === name)
+    const row = document.createElement('div')
+    row.className = `result-row ${m.cls}`
+    row.title = name
+    row.innerHTML = `
+      <span class="result-icon">${m.icon}</span>
+      <span class="result-name">${escHtml(name)}</span>
+      ${fieldMeta && fieldMeta.label
+        ? `<span class="result-label" title="${escHtml(fieldMeta.label)}">${escHtml(fieldMeta.label.replace(/\*$/, '').trim())}</span>`
+        : m.label ? `<span class="result-label">${m.label}</span>` : ''}
+    `
+    return row
+  }
+
+  if (lastDetectedFieldsByStep.length > 1) {
+    // Group results by step with sticky headers
+    for (const { stepIdx, fields: stepFields } of lastDetectedFieldsByStep) {
+      const header = document.createElement('div')
+      header.className = 'step-group-header'
+      const stepOk = stepFields.filter(f => results[f.name] === 'ok').length
+      header.textContent = `Step ${stepIdx + 1}  ·  ${stepOk}/${stepFields.length} filled`
+      resultStrip.appendChild(header)
+      for (const f of stepFields) {
+        if (results[f.name] !== undefined) resultStrip.appendChild(makeRow(f.name, results[f.name]))
+      }
+    }
+  } else {
+    for (const [name, status] of entries) resultStrip.appendChild(makeRow(name, status))
   }
 }
 
@@ -1408,13 +1436,26 @@ quickFillBtn.addEventListener('click', async () => {
   }
 })
 
-// ── Quick Fill auto-run ───────────────────────────────────────────────────────
-// Default left-click opens the popup and auto-runs the full wizard loop.
-// Right-click "Open Panel" sets suppressAutoRun so we skip it.
+// ── On-open behaviour toggle ──────────────────────────────────────────────────
+const onOpenQuickFill = document.getElementById('onOpenQuickFill')
+const onOpenPopup     = document.getElementById('onOpenPopup')
+
 ;(async () => {
-  const { suppressAutoRun } = await chrome.storage.session.get('suppressAutoRun')
-  await chrome.storage.session.remove('suppressAutoRun')
-  if (suppressAutoRun) return
+  const { pref_onOpen } = await chrome.storage.local.get('pref_onOpen')
+  if (pref_onOpen === 'popup') onOpenPopup.checked = true
+  else onOpenQuickFill.checked = true
+})()
+
+document.querySelectorAll('input[name="onOpen"]').forEach(r => {
+  r.addEventListener('change', () => chrome.storage.local.set({ pref_onOpen: r.value }))
+})
+
+// ── Auto-run on popup open ────────────────────────────────────────────────────
+// If the user chose "Quick Fill", auto-run the wizard loop and close when done.
+// If they chose "Open Popup", just show the panel for manual use.
+;(async () => {
+  const { pref_onOpen } = await chrome.storage.local.get('pref_onOpen')
+  if (pref_onOpen === 'popup') return
 
   await sleep(300)
   await runAllWizardSteps()
