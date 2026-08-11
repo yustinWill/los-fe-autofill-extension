@@ -952,20 +952,38 @@ function renderResults(results) {
 setStepActive(1)
 
 // ── Persist checkbox prefs ────────────────────────────────────────────────────
+/**
+ * Every checkbox persists, table-driven so a new one cannot be forgotten.
+ *
+ * ⚠️ It WAS forgotten. `detectModalCb` and `fillModalCb` were added to the
+ * markup and wired to the run, but not to storage — so they reset on every open
+ * while the five boxes sitting beside them remembered. That is the worst shape
+ * for this bug: the row looks uniform and only part of it behaves. Adding a
+ * checkbox now means adding one line here, which wires load AND save together.
+ *
+ * A missing pref leaves the markup's own `checked` in place, so an untouched
+ * box keeps its declared default.
+ */
+const PERSISTED_CHECKBOXES = [
+  ['pref_allSteps',       allStepsCb],
+  ['pref_doubleCheck',    doubleCheckCb],
+  ['pref_detectModal',    detectModalCb],
+  ['pref_ignoreDisabled', ignoreDisabledCb],
+  ['pref_skipFilled',     skipFilledCb],
+  ['pref_skipOptional',   skipOptionalCb],
+  ['pref_fillModal',      fillModalCb]
+]
+
 ;(async () => {
-  const prefs = await chrome.storage.local.get(['pref_allSteps', 'pref_doubleCheck', 'pref_ignoreDisabled', 'pref_skipFilled', 'pref_skipOptional'])
-  if (prefs.pref_allSteps      !== undefined) allStepsCb.checked      = prefs.pref_allSteps
-  if (prefs.pref_doubleCheck   !== undefined) doubleCheckCb.checked   = prefs.pref_doubleCheck
-  if (prefs.pref_ignoreDisabled !== undefined) ignoreDisabledCb.checked = prefs.pref_ignoreDisabled
-  if (prefs.pref_skipFilled    !== undefined) skipFilledCb.checked    = prefs.pref_skipFilled
-  if (prefs.pref_skipOptional  !== undefined) skipOptionalCb.checked  = prefs.pref_skipOptional
+  const prefs = await chrome.storage.local.get(PERSISTED_CHECKBOXES.map(([key]) => key))
+  for (const [key, box] of PERSISTED_CHECKBOXES) {
+    if (box && prefs[key] !== undefined) box.checked = prefs[key]
+  }
 })()
 
-allStepsCb.addEventListener('change',      () => chrome.storage.local.set({ pref_allSteps:      allStepsCb.checked }))
-doubleCheckCb.addEventListener('change',   () => chrome.storage.local.set({ pref_doubleCheck:   doubleCheckCb.checked }))
-ignoreDisabledCb.addEventListener('change', () => chrome.storage.local.set({ pref_ignoreDisabled: ignoreDisabledCb.checked }))
-skipFilledCb.addEventListener('change',    () => chrome.storage.local.set({ pref_skipFilled:    skipFilledCb.checked }))
-skipOptionalCb.addEventListener('change',  () => chrome.storage.local.set({ pref_skipOptional:  skipOptionalCb.checked }))
+for (const [key, box] of PERSISTED_CHECKBOXES) {
+  if (box) box.addEventListener('change', () => chrome.storage.local.set({ [key]: box.checked }))
+}
 
 // ── Form dialect (auto / v1 / v2) ─────────────────────────────────────────────
 ;(async () => {
