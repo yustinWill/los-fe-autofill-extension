@@ -1302,7 +1302,22 @@ async function v1AnswerConfirm(accept) {
  * fixture can leave it out. Returns what it flipped, so a report can say which
  * sections only appeared because the driver opened them.
  */
-async function v1RevealGated() {
+/**
+ * @param {boolean} includeCheckboxes — when false, NOT ONE checkbox is clicked;
+ *   only Ya/Tidak radio gates are opened.
+ *
+ * 🔴 This parameter exists because "Tick checkboxes = off" did not stop this
+ * function (user, 2026-08-11: "I didn't tick the Tick checkboxes option but it
+ * tick the checkbox"). The option only ever governed the FILL pass, while
+ * reveal ran off the hardcoded `ALWAYS_REVEAL_GATED` — so a box was ticked
+ * here, the fill then deliberately declined to touch it, and the tick STAYED
+ * ON SCREEN. Confirmed on v1 `/credit-application/create` with the option off
+ * throughout: "Menggunakan Referensi Pengajuan Kredit" went unticked → TICKED.
+ *
+ * Radios are still opened when this is false: the option says *checkboxes*, and
+ * a Ya/Tidak group is a different control that the user did not opt out of.
+ */
+async function v1RevealGated(includeCheckboxes = true) {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const scope = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
     ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || document)
@@ -1323,10 +1338,21 @@ async function v1RevealGated() {
    * Counting live inputs before and after separates the two without knowing
    * which is which, and unticking is safe — it is the same control, unlike a
    * row repeater, whose click cannot be undone.
+   *
+   * ⚠️ **The count is a heuristic and it does NOT catch every mode switch.**
+   * Measured 2026-08-11 on a bare step 1: ticking that same "Menggunakan
+   * Referensi Pengajuan Kredit" took live inputs 6 → **8**, because reference
+   * mode ADDS a reference picker while removing the facility section. The count
+   * rose, so the guard kept the tick — on the very control this comment cites.
+   * It measures HOW MANY inputs exist, not WHICH, so any swap that trades a
+   * section for a larger one reads as a successful reveal. Whether it fires at
+   * all depends on form state (with Jenis Kredit unset, the facility section is
+   * not rendered in either mode). Treat a kept tick as "probably a gate", never
+   * as proof.
    */
   const liveInputs = () => document.querySelectorAll('input:not([type="hidden"]), textarea, select').length
 
-  for (const box of scope.querySelectorAll('input[type="checkbox"]')) {
+  for (const box of includeCheckboxes ? scope.querySelectorAll('input[type="checkbox"]') : []) {
     if (box.disabled || box.checked) continue
     const fc = box.closest('.MuiFormControlLabel-root') || box.closest('.MuiFormControl-root')
     const label = fc ? (fc.textContent || '').trim().slice(0, 60) : (box.name || '')

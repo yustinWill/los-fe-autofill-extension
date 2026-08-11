@@ -102,19 +102,35 @@ const syncTickCheckboxes = () => { TICK_CHECKBOXES = Boolean(tickCheckboxesCb &&
 const shouldReveal = () => ALWAYS_REVEAL_GATED
 
 /**
+ * May the run click a CHECKBOX — in the reveal pass as well as the fill?
+ *
+ * 🔴 This is the whole of "Tick checkboxes", and it used to govern only half the
+ * run. `shouldReveal()` reads a hardcoded constant, so the reveal pass ticked
+ * gate checkboxes whatever this option said; the fill then skipped them
+ * (correctly, see below) and the tick was LEFT ON SCREEN. The user turned the
+ * option off and watched a checkbox get ticked anyway — confirmed on v1
+ * 2026-08-11, "Menggunakan Referensi Pengajuan Kredit" unticked → TICKED.
+ *
+ * It now gates BOTH passes: off means no checkbox is clicked anywhere.
+ *
+ * ⚠️ The honest cost, so nobody "fixes" this back: a section gated behind a
+ * checkbox is ABSENT from the DOM rather than hidden, so with this off it is
+ * neither detected nor filled and the run's field count is genuinely lower.
+ * That trade is what the option exists to offer. Ya/Tidak radio gates are still
+ * opened — they are not checkboxes and the user did not opt out of them.
+ */
+const mayClickCheckboxes = () => Boolean(tickCheckboxesCb && tickCheckboxesCb.checked)
+
+/**
  * Should the fill leave checkbox-ish fields ALONE?
  *
- * 🔴 The one combination that would quietly undo the run: Reveal gated ON with
- * Tick checkboxes OFF. The scan ticks a gate so its section exists and gets
- * detected — then the fill reaches that same checkbox, answers "No", and the
- * section vanishes again, taking every field the run was about to write with
- * it. Every later fill on those fields then reports not_found, which reads as a
- * broken driver rather than as the run closing its own door.
- *
- * So in that combination checkboxes are SKIPPED rather than answered false.
- * "Do not tick" means do not tick — it does not mean untick.
+ * Yes whenever the option is off — and note it SKIPS rather than writing false.
+ * "Do not tick" means do not tick; it does not mean untick. Writing false would
+ * also close any gate the user opened BY HAND, taking that section's fields with
+ * it, after which every later fill reports not_found and reads as a broken
+ * driver rather than as the run closing its own door.
  */
-const shouldSkipCheckboxFills = () => shouldReveal() && !(tickCheckboxesCb && tickCheckboxesCb.checked)
+const shouldSkipCheckboxFills = () => !mayClickCheckboxes()
 
 const isCheckboxField = f =>
   f && (f.type === 'checkbox' || f.type === 'checkbox_group' || f.type === 'toggle')
@@ -130,9 +146,14 @@ const isCheckboxField = f =>
  * On the v1 credit application only step 4 has gates, so across a 7-step sweep
  * this drops roughly 4.2s of dead time to about 0.2s.
  */
+/**
+ * ⚠️ `args` is the ONLY way to get a value into `func`. It is serialised with
+ * `Function.toString()` and re-evaluated in the page, so it closes over nothing
+ * from this file — reading `mayClickCheckboxes()` inside it would throw.
+ */
 async function revealAndSettle(driver, tabId) {
   const [{ result: flipped }] = await chrome.scripting.executeScript({
-    target: { tabId }, world: 'MAIN', func: driver.reveal
+    target: { tabId }, world: 'MAIN', func: driver.reveal, args: [mayClickCheckboxes()]
   })
   if (Array.isArray(flipped) && flipped.length) await sleep(200)
   return flipped || []

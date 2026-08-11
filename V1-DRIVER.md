@@ -113,6 +113,49 @@ default** — the one that prompted this offers to empty the whole application.
 
 ## Traps paid for — mistake → rule
 
+### An option that governs only half the run
+
+🔴 **"Tick checkboxes = off" did not stop checkboxes being ticked** (user,
+2026-08-11: *"I didn't tick the Tick checkboxes option but it tick the
+checkbox"*). The option gated the FILL pass only. The REVEAL pass ran off the
+hardcoded `ALWAYS_REVEAL_GATED`, ticked gate checkboxes, and
+`shouldSkipCheckboxFills` then correctly declined to touch them — so the tick was
+**left on screen**.
+
+Confirmed on v1 `/credit-application/create`, option off throughout:
+
+```
+before   Menggunakan Referensi Pengajuan Kredit :: unticked
+flipped  [{ kind: 'checkbox', label: 'Menggunakan Referensi Pengajuan Kredit' }]
+after    Menggunakan Referensi Pengajuan Kredit :: TICKED
+```
+
+**Rule: a setting must gate every pass that performs the action it names, not
+just the pass it was written for.** `v1RevealGated(includeCheckboxes)` now takes
+the flag and `revealAndSettle` passes it through `args:` — the only channel into
+a `func:` body, which is serialised and closes over nothing from popup.js.
+
+Radio gates are still opened when it is off: the option says *checkboxes*, and a
+Ya/Tidak group is a different control.
+
+The honest cost of off: a section gated behind a checkbox is ABSENT from the DOM,
+not hidden, so it is neither detected nor filled and the field count is genuinely
+lower. That trade is the point of the option — do not "fix" it back.
+
+### The reveal guard counts inputs, so it misses swaps
+
+⚠️ **`liveInputs()` compares HOW MANY inputs exist, not WHICH**, so a mode switch
+that trades one section for a larger one reads as a successful reveal and the
+tick is kept. Measured 2026-08-11 on a bare step 1: ticking "Menggunakan
+Referensi Pengajuan Kredit" took live inputs **6 → 8** — reference mode adds a
+picker while removing the facility section — so the guard kept the tick, on the
+very control it was written to catch.
+
+Its verdict is also form-state dependent: with Jenis Kredit unset the facility
+section is not rendered in either mode, so there is nothing for the count to
+lose. **Treat a kept tick as "probably a gate", never as proof.** An identity
+check (which labels disappeared) would be sound; a count is not.
+
 ### The live dialog is not the first one
 
 🔴 **`querySelector('.MuiDialog-paper')` returns the WRONG dialog.** MUI leaves
