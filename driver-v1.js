@@ -452,10 +452,46 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const ctx0 = storeOf()
     const before = readStored(ctx0)
 
-    const rk0 = Object.keys(el).find(k => /^__reactProps\$/.test(k))
-    if (rk0 && typeof el[rk0].onChange === 'function') {
+    /**
+     * 🔴 Call the LAST onChange BEFORE the Controller — not the one on the DOM
+     * node.
+     *
+     * `el.__reactProps$.onChange` is the INNERMOST handler, and on a MUI field
+     * that is MUI's own `(event, ...args) => { if (!isControlled) …}`, which
+     * forwards the raw string untouched. The handler that gives the form the
+     * type it wants sits several levels up, passed as a prop to the styled
+     * TextField. Measured on the bank-statement debit cell 2026-08-11:
+     *
+     *   depth 1-4    input / MuiFilledInputInput  → MUI's isControlled forwarder
+     *   depth 8-17   (e) => parseFloat(raw) → field.onChange(parsed)   ← the app's
+     *   depth 18     Controller                                        ← boundary
+     *
+     * Calling depth 1 wrote the string "18200000" into a field whose schema is
+     * `v.nullable(v.number())`, and the modal refused to save reporting the cell
+     * as EMPTY while showing 18.200.000. Calling the outermost handler below the
+     * Controller runs the app's own transform, so the value arrives in whatever
+     * shape that field wants — a number here, a string for Nominal Underlying —
+     * with no type-guessing on the driver's side. An earlier attempt DID guess,
+     * and got Underlying backwards ("Harus berupa teks").
+     *
+     * When a field has no handler of its own the outermost one is MUI's, which
+     * forwards to `field.onChange` — still correct.
+     */
+    let outerOnChange = null
+    if (fk) {
+      let f = el[fk]
+      let depth = 0
+      while (f && depth++ < 60) {
+        const p = f.memoizedProps
+        if (p && p.control && typeof p.name === 'string') break   // Controller: stop
+        if (p && typeof p.onChange === 'function') outerOnChange = p.onChange
+        f = f.return
+      }
+    }
+
+    if (outerOnChange) {
       try {
-        el[rk0].onChange({ target: { value: strVal, rawValue: strVal, name: el.getAttribute('name') || '' } })
+        outerOnChange({ target: { value: strVal, rawValue: strVal, name: el.getAttribute('name') || '' } })
         await sleep(90)
         const after = readStored(storeOf())
         if (after !== undefined && after !== before && after !== '' && after !== null) filled = true
