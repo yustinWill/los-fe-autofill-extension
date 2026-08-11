@@ -45,13 +45,13 @@
     <!-- Record modals. Two independent checkboxes: Detect READS, Fill WRITES.
          Fill implies Detect, so ticking Fill alone is enough. -->
     <div class="scan-opts scope-row">
-      <span class="scope-label">Tambah</span>
+      <span class="scope-label">Modal</span>
       <label class="toggle-label" title="Open each &quot;Tambah …&quot; record modal, read its fields, close it WITHOUT saving. Counts modal fields with no side effects. One pass only, so modals that reveal more fields after a select are under-counted.">
-        <input id="detectTambahCb" type="checkbox" />
+        <input id="detectModalCb" type="checkbox" />
         Detect
       </label>
       <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
-        <input id="fillTambahCb" type="checkbox" checked />
+        <input id="fillModalCb" type="checkbox" checked />
         Fill
       </label>
       <label class="toggle-label variant-label">

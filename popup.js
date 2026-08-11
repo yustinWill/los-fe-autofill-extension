@@ -62,8 +62,8 @@ const commitDelay = () => {
    "1" into "100" before they can type the rest. */
 delayInput.addEventListener('change', commitDelay)
 
-const detectTambahCb = document.getElementById('detectTambahCb')
-const fillTambahCb   = document.getElementById('fillTambahCb')
+const detectModalCb = document.getElementById('detectModalCb')
+const fillModalCb   = document.getElementById('fillModalCb')
 const statusBar      = document.getElementById('statusBar')
 const statusText     = document.getElementById('statusText')
 
@@ -82,8 +82,8 @@ const statusText     = document.getElementById('statusText')
  * On the v1 credit application that is 84 fields versus 179.
  */
 const currentScope = () => {
-  if (fillTambahCb && fillTambahCb.checked) return 'fill'
-  if (detectTambahCb && detectTambahCb.checked) return 'detect'
+  if (fillModalCb && fillModalCb.checked) return 'fill'
+  if (detectModalCb && detectModalCb.checked) return 'detect'
   return 'page'
 }
 
@@ -1203,7 +1203,7 @@ async function runAllWizardSteps({ onStep } = {}) {
         const fields = all.reduce((n, m) => n + (m.seen || 0), 0)
 
         if (scope === 'detect') {
-          showToast(`Tambah: ${all.length} modals · ${fields} fields`, '#4f46e5')
+          showToast(`Modals: ${all.length} · ${fields} fields`, '#4f46e5')
         } else {
           const saved = all.filter(m => m.saved === 'saved').length
           showToast(`Modals: ${saved}/${all.length} saved · ${fields} fields`,
@@ -1227,8 +1227,8 @@ quickFillBtn.addEventListener('click', async () => {
     /* The scope decides what "done" can even mean, so say which one ran rather
        than a bare "Done" that reads the same whether modals were touched. */
     const scope = currentScope()
-    setStatus(scope === 'fill' ? 'Done — page + Tambah filled'
-      : scope === 'detect' ? 'Done — page filled, Tambah detected'
+    setStatus(scope === 'fill' ? 'Done — page + modals filled'
+      : scope === 'detect' ? 'Done — page filled, modals detected'
         : 'Done — page only', 'done')
   } catch (err) {
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
