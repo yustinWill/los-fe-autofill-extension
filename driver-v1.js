@@ -731,6 +731,28 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
 // split them into aktiva-side and pasiva-side by column midpoint,
 // fill aktiva details → compute sum → distribute that exact sum across pasiva details,
 // then stamp both total cells with the same sum.
+//
+// 🔴 KNOWN LIMITATION — this assumes EVERY input column is currency, and says
+// nothing when that is false. Measured 2026-08-11 on the credit application's
+// "Proyeksi Loan to Income & DSCR" table (step 3):
+//
+//   column              intended (from the disabled template row)   written
+//   Uraian              "Pendapatan Normal"  — a TEXT description   450000000
+//   Penyesuaian Income  "100"                — a PERCENT            360000000
+//
+// It reported 8 cells filled and the table looked populated, while holding a
+// number where a description belongs and a percentage of 360 million. So a v1
+// table run is NOT trustworthy as a fixture — check it by eye before relying on
+// one.
+//
+// Deliberately NOT fixed (user, 2026-08-11): v1 is the tree being migrated away
+// from, and this logic does not carry forward — there is no <table> anywhere in
+// src/app-v2 or src/kairos (FlushTable is a grid of divs) and v2's totals are
+// read-only computed spans, so the stamp-the-totals strategy is structurally
+// void there. v2FillTables returns 0 for the same reason.
+//
+// If it is ever worth fixing: the DISABLED first row is a type template —
+// read each column's kind from it rather than assuming currency.
 async function v1FillTables() {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const STEP = 1000000
