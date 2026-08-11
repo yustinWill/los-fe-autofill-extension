@@ -1371,49 +1371,6 @@ async function v1RevealGated() {
   return flipped
 }
 
-/**
- * Which "Tambah …" buttons open a MODAL, by label.
- *
- * 🔴 An allowlist, because neither of the alternatives works. Measured
- * 2026-08-11:
- *
- *  · There is NO structural signal. Every Tambah button on the form —
- *    repeaters and modal openers alike — is `MuiButton-outlinedPrimary`, in a
- *    Grid2 container, with a table somewhere nearby. Class, variant, ancestry
- *    and position all fail to separate them.
- *  · Click-then-undo is WORSE than the damage. Clicking a repeater appends a
- *    row; the row's `<tr>` carries exactly one icon button, and clicking it did
- *    not remove the row — the page went from 2 inputs to 6. There is no
- *    reliable undo, so "click to find out" cannot be made safe.
- *
- * So the driver refuses to click anything it does not recognise. A repeater
- * click is silently destructive: it appends an EMPTY REQUIRED row to a
- * financial table, which then blocks the step's own validation — the run breaks
- * the form it was asked to fill (user, 2026-08-11: Pendapatan and Pengeluaran
- * "got incremented too, which causes a new field").
- *
- * Known repeaters this keeps us away from: Tambah Pendapatan, Tambah
- * Pengeluaran, Tambah Proyeksi, bare "Tambah" (×2 on Data Keuangan), and
- * Tambah Biaya nested inside the facility modal.
- *
- * ⚠️ Adding a form means adding its openers here. An unknown button is REPORTED
- * (`opensModal: false`), never clicked — under-reaching is recoverable, a
- * corrupted form is not.
- */
-const V1_MODAL_OPENERS = [
-  /^Tambah Fasilitas$/i,
-  /^Tambah Pemegang Saham$/i,
-  /^Tambah Pengurus$/i,
-  /^Tambah Pemilik Manfaat/i,
-  /^Tambah Kontak Darurat$/i,
-  /^Tambah Agunan$/i,
-  /^Tambah Underlying$/i,
-  /^Tambah Data Pinjaman$/i,
-  /^Tambah Data Mutasi Rekening$/i,
-  /^Tambah Kunjungan/i
-]
-
-const v1OpensModal = label => V1_MODAL_OPENERS.some(re => re.test(String(label || '').trim()))
 
 // Add-record buttons in the CURRENT scope, by label. Labels repeat ("Tambah" ×2
 // on step 2), so callers address them by INDEX, not by text.
@@ -1436,9 +1393,10 @@ function v1ListModals() {
       label: x.label,
       disabled: x.disabled,
 
-      /* false = a row REPEATER (or simply unrecognised). Listed so a caller can
-         report it, never clicked — see V1_MODAL_OPENERS. */
-      opensModal: v1OpensModal(x.label)
+      /* Whether this opens a modal cannot be known without clicking — nothing
+         in the markup separates a modal opener from a row repeater. openModal
+         probes and reverts. */
+      opensModal: null
     }))
 }
 
@@ -1461,14 +1419,28 @@ async function v1OpenModal(nth) {
 
   const label = (btn.textContent || '').trim()
 
-  /* 🔴 Refuse anything not on the allowlist. This is the ONLY place that clicks
-     a Tambah button, so the guard belongs here rather than in the caller — a
-     future caller that forgets to check `opensModal` still cannot append a row
-     to a financial table. Clicking a repeater is not recoverable: see
-     V1_MODAL_OPENERS. */
-  if (!v1OpensModal(label)) {
-    return { opened: false, isModal: false, label, title: null, reason: 'repeater_not_clicked' }
-  }
+  /**
+   * 🔴 PROBE, then REVERT if it was a repeater.
+   *
+   * Nothing in the markup separates a modal opener from a row repeater — every
+   * Tambah button on this form is `MuiButton-outlinedPrimary` in a Grid2
+   * container with a table nearby (measured 2026-08-11). So the only way to
+   * know is to click, and the only way to make that safe is to undo.
+   *
+   * A repeater appends an empty REQUIRED row to a financial table, which then
+   * blocks the step's own validation — the run breaks the form it was asked to
+   * fill. Undo is by the row's DELETE control, identified by its red text
+   * colour: the design system paints destructive actions rgb(210, 31, 37) and
+   * nothing else on these rows is red.
+   *
+   * ⚠️ Match the delete among buttons that APPEARED with the click, not any red
+   * button on the page. Two earlier attempts clicked "the last icon button in
+   * the new row" and made it worse — inputs went 2 -> 6, because that control
+   * adds rather than removes on some tables.
+   */
+  const inputCount = () => document.querySelectorAll('input:not([type="hidden"]), textarea, select').length
+  const buttonsBefore = new Set([].slice.call(document.querySelectorAll('button')))
+  const countBefore = inputCount()
 
   btn.click()
 
@@ -1483,11 +1455,42 @@ async function v1OpenModal(nth) {
   const paper = (function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})()
   const isModal = Boolean(document.querySelector('.MuiBackdrop-root.MuiModal-backdrop') && paper)
 
+  if (isModal) {
+    return {
+      opened: true,
+      isModal: true,
+      label,
+      title: ((paper.querySelector('h1,h2,h3,h4,h5,h6') || {}).textContent || '').trim()
+    }
+  }
+
+  // ── No modal: it was a repeater. Put the row back. ────────────────────────
+  const countAfter = inputCount()
+  if (countAfter <= countBefore) {
+    return { opened: true, isModal: false, label, title: null, reason: 'no_modal_no_change' }
+  }
+
+  const isRed = el => {
+    const rgb = (getComputedStyle(el).color || '').match(/\d+/g)
+    return rgb && +rgb[0] > 150 && +rgb[1] < 90 && +rgb[2] < 90
+  }
+  const appeared = [].slice.call(document.querySelectorAll('button')).filter(b => !buttonsBefore.has(b))
+  const del = appeared.filter(isRed).pop()
+
+  if (del) {
+    del.click()
+    await sleep(700)
+  }
+
+  const reverted = inputCount() <= countBefore
   return {
     opened: true,
-    isModal,
+    isModal: false,
     label,
-    title: paper ? ((paper.querySelector('h1,h2,h3,h4,h5,h6') || {}).textContent || '').trim() : null
+    title: null,
+    reason: reverted ? 'repeater_reverted' : 'repeater_NOT_reverted',
+    addedInputs: countAfter - countBefore,
+    reverted
   }
 }
 
