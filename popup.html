@@ -12,6 +12,15 @@
     <h1>LOS Autofill</h1>
   </header>
 
+  <!-- Run status. Its own bar rather than the Quick Fill button's label: the
+       button's job is to say what it does, and overwriting it with "Step 3…"
+       hid the action, resized the control mid-run and left the last phase
+       showing after the run had ended. -->
+  <div id="statusBar" class="status-bar" hidden>
+    <span class="status-dot"></span>
+    <span id="statusText">Idle</span>
+  </div>
+
   <!-- ── Step 1: Detect ──────────────────────────────────────────────────── -->
   <section class="step-section">
     <div class="step-row">
@@ -33,21 +42,17 @@
         Double check
       </label>
     </div>
-    <!-- Scope: how far a scan/fill reaches. Radio, because these are exclusive
-         levels of depth, not independent switches. -->
+    <!-- Record modals. Two independent checkboxes: Detect READS, Fill WRITES.
+         Fill implies Detect, so ticking Fill alone is enough. -->
     <div class="scan-opts scope-row">
-      <span class="scope-label">Scope</span>
-      <label class="toggle-label" title="Page fields only. Record modals are neither counted nor opened.">
-        <input type="radio" name="scopeRadio" id="scopePage" value="page" />
-        Page
+      <span class="scope-label">Tambah</span>
+      <label class="toggle-label" title="Open each &quot;Tambah …&quot; record modal, read its fields, close it WITHOUT saving. Counts modal fields with no side effects. One pass only, so modals that reveal more fields after a select are under-counted.">
+        <input id="detectTambahCb" type="checkbox" />
+        Detect
       </label>
-      <label class="toggle-label" title="Also count the &quot;Tambah …&quot; record modals — opens each one to read its fields, then closes it without saving. Reveals the checkboxes that hide them first.">
-        <input type="radio" name="scopeRadio" id="scopeDetect" value="detect" />
-        + Detect Tambah
-      </label>
-      <label class="toggle-label" title="Also FILL and SAVE each record modal. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
-        <input type="radio" name="scopeRadio" id="scopeFill" value="fill" checked />
-        + Fill Tambah
+      <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
+        <input id="fillTambahCb" type="checkbox" checked />
+        Fill
       </label>
       <label class="toggle-label variant-label">
         Form
@@ -80,7 +85,7 @@
     </div>
     <div class="exec-opts">
       <label class="delay-label">
-        Delay <input id="delayInput" type="number" min="50" max="3000" step="50" value="300" /> ms
+        Delay <input id="delayInput" type="number" min="100" max="3000" step="100" value="200" /> ms
       </label>
       <div class="tick-row">
         <label class="toggle-label">

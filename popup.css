@@ -40,6 +40,49 @@ header {
 .logo { font-size: 18px; }
 header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
 
+/* ── Run status bar ───────────────────────────────────────────────────────── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #eef2ff;
+  border-bottom: 1px solid #c7d2fe;
+  font-size: 11px;
+  color: #4338ca;
+  flex-shrink: 0;
+}
+.status-bar[hidden] { display: none; }
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4f46e5;
+  flex-shrink: 0;
+  animation: statusPulse 1s ease-in-out infinite;
+}
+.status-bar.is-done  { background: #ecfdf5; border-bottom-color: #a7f3d0; color: #047857; }
+.status-bar.is-done  .status-dot { background: #059669; animation: none; }
+.status-bar.is-error { background: #fef2f2; border-bottom-color: #fecaca; color: #b91c1c; }
+.status-bar.is-error .status-dot { background: #dc2626; animation: none; }
+
+#statusText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes statusPulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+
+/* The run is long and mostly unattended, so a moving dot is the only signal
+   that anything is still happening. Respect a reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot { animation: none; }
+}
+
 /* ── Step sections ────────────────────────────────────────────────────────── */
 .step-section {
   background: #fff;
@@ -163,6 +206,18 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+/* The Tambah row reads as a labelled pair, not as two more loose options in the
+   row above — the two groups answer different questions. */
+.scope-row { gap: 12px; }
+.scope-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #9ca3af;
+  flex-shrink: 0;
 }
 
 .tick-row {

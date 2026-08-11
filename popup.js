@@ -23,21 +23,84 @@ const allStepsCb       = document.getElementById('allStepsCb')
 const doubleCheckCb    = document.getElementById('doubleCheckCb')
 
 /**
- * How deep a scan/fill reaches: 'page' | 'detect' | 'fill'.
+ * The inter-field delay, in ms. Persisted, and quantised to whole hundreds with
+ * a floor of 100.
  *
- * A radio rather than a checkbox because these are exclusive DEPTHS, not
- * independent switches — "detect the modals but do not fill them" is a real
- * middle setting, and it is the one to use when you want an honest field COUNT
- * without writing anything to the form.
+ * 100 is a floor rather than a suggestion: below it the app has not finished
+ * re-rendering between fields, and a cascade select reads its options from the
+ * previous state — which shows up as an intermittent wrong value rather than an
+ * error, so it is the worst kind of failure to allow by accident.
  *
- * Defaults to 'fill': the page-only reading is the one that silently
- * under-reports, since v1Detect scopes itself to an open dialog but nothing
- * opens one. On the credit application that is the difference between 84 fields
- * and 179.
+ * Read this instead of `delayInput.value` anywhere a delay is needed; the input
+ * can hold anything a user types until it is committed.
+ */
+const DELAY_MIN = 100
+const DELAY_STEP = 100
+const DELAY_DEFAULT = 200
+
+const readDelay = () => {
+  const raw = parseInt(delayInput.value, 10)
+  if (!Number.isFinite(raw)) return DELAY_DEFAULT
+  return Math.max(DELAY_MIN, Math.round(raw / DELAY_STEP) * DELAY_STEP)
+}
+
+const commitDelay = () => {
+  const value = readDelay()
+  delayInput.value = String(value)
+  chrome.storage.local.set({ pref_delay: value })
+  return value
+}
+
+;(async () => {
+  const { pref_delay } = await chrome.storage.local.get('pref_delay')
+  delayInput.value = String(
+    Number.isFinite(pref_delay) ? Math.max(DELAY_MIN, pref_delay) : DELAY_DEFAULT
+  )
+})()
+
+/* `change` rather than `input`: quantising mid-typing fights the user, turning
+   "1" into "100" before they can type the rest. */
+delayInput.addEventListener('change', commitDelay)
+
+const detectTambahCb = document.getElementById('detectTambahCb')
+const fillTambahCb   = document.getElementById('fillTambahCb')
+const statusBar      = document.getElementById('statusBar')
+const statusText     = document.getElementById('statusText')
+
+/**
+ * How far a run reaches into the "Tambah …" record modals:
+ * 'page' | 'detect' | 'fill'.
+ *
+ * Two independent checkboxes rather than one control, because they answer
+ * different questions: Detect READS (opens a modal, counts its fields, closes
+ * it, writes nothing) and Fill WRITES (fills and saves the record). Fill
+ * implies Detect — you cannot fill what you have not read — so Fill wins when
+ * both are ticked, and neither means page fields only.
+ *
+ * Fill is the default: a page-only run is the one that silently under-reports,
+ * because v1Detect scopes itself to an open dialog and nothing else opens one.
+ * On the v1 credit application that is 84 fields versus 179.
  */
 const currentScope = () => {
-  const picked = document.querySelector('input[name="scopeRadio"]:checked')
-  return picked ? picked.value : 'fill'
+  if (fillTambahCb && fillTambahCb.checked) return 'fill'
+  if (detectTambahCb && detectTambahCb.checked) return 'detect'
+  return 'page'
+}
+
+/**
+ * The run's own status line.
+ *
+ * Kept off the Quick Fill button deliberately. Overwriting the button's label
+ * with "Step 3…" hid what the control does, resized it mid-run, and left the
+ * final phase showing after the run had finished (user, 2026-08-11).
+ */
+const setStatus = (text, state) => {
+  if (!statusBar || !statusText) return
+  if (!text) { statusBar.hidden = true; return }
+  statusBar.hidden = false
+  statusBar.classList.toggle('is-done', state === 'done')
+  statusBar.classList.toggle('is-error', state === 'error')
+  statusText.textContent = text
 }
 const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
@@ -544,7 +607,7 @@ detectBtn.addEventListener('click', async () => {
 executeBtn.addEventListener('click', async () => {
   if (!lastDetectedFields.length) { showToast('Scan the page first (step 1)', '#dc2626'); return }
 
-  const delayMs        = Math.max(50, parseInt(delayInput.value, 10) || 300)
+  const delayMs        = readDelay()
   const ignoreDisabled = ignoreDisabledCb.checked
   const skipFilled     = skipFilledCb.checked
   const skipOptional   = skipOptionalCb.checked
@@ -1128,7 +1191,7 @@ async function runAllWizardSteps({ onStep } = {}) {
           await sleep(900)
         }
         const r = await walkRecordModals(driver, tab.id, {
-          delayMs: Math.max(50, parseInt(delayInput.value, 10) || 300),
+          delayMs: readDelay(),
           onStep,
           mode: scope === 'detect' ? 'detect' : 'fill'
         })
@@ -1157,13 +1220,21 @@ async function runAllWizardSteps({ onStep } = {}) {
 const quickFillBtn = document.getElementById('quickFillBtn')
 quickFillBtn.addEventListener('click', async () => {
   quickFillBtn.disabled = true
+  setStatus('Starting…')
   try {
-    await runAllWizardSteps({
-      onStep: n => { quickFillBtn.textContent = `Step ${n}…` }
-    })
+    await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
+
+    /* The scope decides what "done" can even mean, so say which one ran rather
+       than a bare "Done" that reads the same whether modals were touched. */
+    const scope = currentScope()
+    setStatus(scope === 'fill' ? 'Done — page + Tambah filled'
+      : scope === 'detect' ? 'Done — page filled, Tambah detected'
+        : 'Done — page only', 'done')
+  } catch (err) {
+    setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
   } finally {
     quickFillBtn.disabled = false
-    quickFillBtn.textContent = '⚡ Quick Fill'
+    // The label never changed, so there is nothing to restore.
   }
 })
 
