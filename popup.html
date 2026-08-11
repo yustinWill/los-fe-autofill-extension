@@ -16,9 +16,9 @@
        button's job is to say what it does, and overwriting it with "Step 3…"
        hid the action, resized the control mid-run and left the last phase
        showing after the run had ended. -->
-  <div id="statusBar" class="status-bar" hidden>
+  <div id="statusBar" class="status-bar is-idle">
     <span class="status-dot"></span>
-    <span id="statusText">Idle</span>
+    <span id="statusText">Ready</span>
   </div>
 
   <!-- ── Step 1: Detect ──────────────────────────────────────────────────── -->
@@ -37,14 +37,8 @@
         <input id="allStepsCb" type="checkbox" checked />
         All steps
       </label>
-      <label class="toggle-label variant-label">
-        Form
-        <select id="variantSel">
-          <option value="auto">Auto</option>
-          <option value="v1">v1 · MUI</option>
-          <option value="v2">v2 · Kairos</option>
-        </select>
-      </label>
+      <!-- The dialect is DETECTED per run, not chosen: it is a property of the
+           page. This reports what the probe settled on. -->
       <span id="variantHint" class="hint"></span>
     </div>
     <div id="fieldsPanel" class="fields-panel hidden">
@@ -82,15 +76,14 @@
         <!-- The writing half of the modal pair. Here rather than with the scan,
              because this one FILLS and SAVES records — on the v1 credit
              application it is the only setting that reaches 95 of the 179
-             fields. Its read-only counterpart is "Detect modals" in step 1. -->
+             fields. Detect-modals was dropped; this is the only modal control. -->
         <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
           <input id="fillModalCb" type="checkbox" checked />
           Fill modals
         </label>
-        <!-- How the FILL answers a checkbox. Separate from "Reveal gated" in
-             step 1: that one opens gates so fields can be detected, this one
-             decides what value the fill writes when it reaches one. -->
-        <label class="toggle-label" title="Answer checkboxes and Ya/Tidak toggles with YES when filling. Off answers No — the honest default for a blank form. If Reveal gated is on and this is off, checkboxes are left untouched rather than answered No, so the fill cannot close the gates the scan just opened.">
+        <!-- How the FILL answers a checkbox. Gates are always revealed during
+             the scan now, so this only decides the value written. -->
+        <label class="toggle-label" title="Answer checkboxes and Ya/Tidak toggles with YES when filling. Off answers No — the honest default for a blank form. Off leaves checkboxes untouched rather than answering No, so the fill cannot close the gates the scan opened.">
           <input id="tickCheckboxesCb" type="checkbox" checked />
           Tick checkboxes
         </label>
@@ -109,17 +102,19 @@
       <div class="step-num" id="badge3">3</div>
       <div class="step-meta">
         <span class="step-title">Capture JSON</span>
-        <span class="step-sub">Read filled values from the form</span>
+        <span class="step-sub">Copy filled values as JSON</span>
       </div>
       <div class="step-btns">
-        <button id="buildJsonBtn" class="btn btn-primary btn-sm" disabled>Capture</button>
-        <button id="exportBtn" class="btn btn-secondary btn-sm" disabled>Copy</button>
+        <button id="buildJsonBtn" class="btn btn-primary btn-sm" disabled>Capture &amp; Copy</button>
       </div>
     </div>
-    <div class="inner-pad top0">
-      <textarea id="jsonInput" rows="12" spellcheck="false"
-        placeholder="Run Execute first, then Capture to see filled values here."></textarea>
-    </div>
+    <!-- The captured JSON goes straight to the clipboard. The 12-row preview
+         that used to sit here was the tallest thing in the popup and nobody
+         reads JSON in a 380px box — paste it where it is actually going.
+         Kept in the DOM, hidden, because it doubles as the REPLAY input:
+         parseJSON() reads it, so values pasted in are filled instead of smart
+         defaults. -->
+    <textarea id="jsonInput" rows="12" spellcheck="false" hidden></textarea>
   </section>
 
   <div class="bottom-bar">

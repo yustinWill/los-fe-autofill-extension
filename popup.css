@@ -52,7 +52,11 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
   color: #4338ca;
   flex-shrink: 0;
 }
-.status-bar[hidden] { display: none; }
+/* Idle is a real state, not a hidden bar: the run's phase is the thing worth
+   watching, so the strip holds its place instead of appearing and shifting
+   everything below it down mid-run. */
+.status-bar.is-idle  { background: #f9fafb; border-bottom-color: #e5e7eb; color: #9ca3af; }
+.status-bar.is-idle  .status-dot { background: #d1d5db; animation: none; }
 
 .status-dot {
   width: 7px;
@@ -208,10 +212,6 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
   flex-wrap: wrap;
 }
 
-/* The modal pair no longer needs a row of its own: "Detect modals" sits with the
-   scan options and "Fill modals" with the execute options, each beside the
-   controls it belongs to. */
-
 .tick-row {
   display: flex;
   align-items: center;
@@ -235,25 +235,6 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
   accent-color: #4f46e5;
   cursor: pointer;
   flex-shrink: 0;
-}
-
-/* Form-dialect picker: which DOM driver reads the page (auto / v1 / v2). */
-.variant-label {
-  gap: 5px;
-}
-.variant-label select {
-  font: inherit;
-  font-size: 11px;
-  color: #374151;
-  background: #fff;
-  border: 1px solid #d1d5db;
-  border-radius: 5px;
-  padding: 2px 4px;
-  cursor: pointer;
-}
-.variant-label select:focus {
-  outline: none;
-  border-color: #4f46e5;
 }
 
 /* ── Detected fields panel ────────────────────────────────────────────────── */

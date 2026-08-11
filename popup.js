@@ -17,7 +17,6 @@ const jsonInput        = document.getElementById('jsonInput')
 const detectBtn        = document.getElementById('detectBtn')
 const executeBtn       = document.getElementById('executeBtn')
 const buildJsonBtn     = document.getElementById('buildJsonBtn')
-const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
 const allStepsCb       = document.getElementById('allStepsCb')
 
@@ -166,11 +165,10 @@ const currentScope = () => {
  */
 const setStatus = (text, state) => {
   if (!statusBar || !statusText) return
-  if (!text) { statusBar.hidden = true; return }
-  statusBar.hidden = false
-  statusBar.classList.toggle('is-done', state === 'done')
+  statusBar.classList.toggle('is-idle',  !text)
+  statusBar.classList.toggle('is-done',  state === 'done')
   statusBar.classList.toggle('is-error', state === 'error')
-  statusText.textContent = text
+  statusText.textContent = text || 'Ready'
 }
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -186,28 +184,20 @@ const progressFill     = document.getElementById('progressFill')
 const progressLabel    = document.getElementById('progressLabel')
 const resultStrip      = document.getElementById('resultStrip')
 const toast            = document.getElementById('toast')
-const variantSel       = document.getElementById('variantSel')
 const variantHint      = document.getElementById('variantHint')
 
 // ─── Driver selection ─────────────────────────────────────────────────────────
 // 'auto' probes the page; 'v1'/'v2' force a dialect. Forcing matters during the
 // migration: a v2 route hosting a legacy MUI modal probes as v2, and the v1
 // driver is the one that can actually read that modal.
-let variantPref = 'auto'      // persisted as pref_variant
+/* Always auto. The dialect is a property of the PAGE, not a preference — the
+   probe reads the DOM and is right by construction, while a manual override is
+   only ever right until you navigate. It shipped as a select, was never a real
+   decision, and a wrong forced value produces "0 fields" with no explanation
+   (user, 2026-08-11). The detected value is still SHOWN, next to the buttons. */
 let activeVariant = null      // what the last resolve() actually settled on
 
 async function resolveDriver() {
-  // Read the pref here rather than trusting module state: the popup can
-  // auto-run Quick Fill on open, which would otherwise race the pref load and
-  // silently use the wrong driver on the first run after a restart.
-  const { pref_variant } = await chrome.storage.local.get('pref_variant')
-  variantPref = pref_variant || 'auto'
-  if (variantSel) variantSel.value = variantPref
-
-  if (variantPref !== 'auto') {
-    activeVariant = variantPref
-    return DRIVERS[variantPref]
-  }
   const tab = await getActiveTab()
   let found = null
   try {
@@ -225,11 +215,7 @@ async function resolveDriver() {
 
 function renderVariantHint() {
   if (!variantHint) return
-  if (variantPref === 'auto') {
-    variantHint.textContent = activeVariant ? `auto → ${DRIVERS[activeVariant].label}` : 'auto'
-  } else {
-    variantHint.textContent = 'forced'
-  }
+  variantHint.textContent = activeVariant ? DRIVERS[activeVariant].label : ''
 }
 
 // ─── Step badge state ─────────────────────────────────────────────────────────
@@ -731,14 +717,12 @@ executeBtn.addEventListener('click', async () => {
   const extra      = Object.entries(data).filter(([n]) => !detectedNames.includes(n))
   const fieldOrder = [...inOrder, ...extra]
 
-  const prevExportDisabled = exportBtn.disabled
   const lockUI = () => {
     detectBtn.disabled = true
     quickFillBtn.disabled = true
     allStepsCb.disabled = true
     executeBtn.disabled = true
     buildJsonBtn.disabled = true
-    exportBtn.disabled = true
     delayInput.disabled = true
     skipFilledCb.disabled = true
     skipOptionalCb.disabled = true
@@ -751,7 +735,6 @@ executeBtn.addEventListener('click', async () => {
     delayInput.disabled = false
     skipFilledCb.disabled = false
     skipOptionalCb.disabled = false
-    exportBtn.disabled = prevExportDisabled
     // buildJsonBtn is managed separately below
   }
 
@@ -908,9 +891,21 @@ buildJsonBtn.addEventListener('click', async () => {
     for (const f of lastDetectedFields) {
       json[f.name] = values[f.name] ?? ''
     }
-    jsonInput.value = prettyJSON(json)
+    /* Straight to the clipboard: there is no preview any more, so a capture
+       that only filled a hidden textarea would look like it did nothing. Still
+       written to jsonInput, which doubles as the replay input. */
+    const text = prettyJSON(json)
+    jsonInput.value = text
     markStepDone(3)
-    showToast('JSON captured from current form state', '#059669')
+
+    let copied = true
+    try { await navigator.clipboard.writeText(text) } catch { copied = false }
+
+    showToast(
+      copied ? `Copied ${Object.keys(json).length} fields to clipboard`
+             : 'Captured, but the clipboard was blocked',
+      copied ? '#059669' : '#d97706'
+    )
   } catch (e) {
     showToast('Capture failed: ' + e.message, '#dc2626')
   } finally {
@@ -982,18 +977,6 @@ closeFieldsBtn.addEventListener('click', () => fieldsPanel.classList.add('hidden
 function escHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
-
-// ─── Export ───────────────────────────────────────────────────────────────────
-exportBtn.addEventListener('click', async () => {
-  const text = jsonInput.value.trim()
-  if (!text) { showToast('JSON editor is empty', '#d97706'); return }
-  try {
-    await navigator.clipboard.writeText(text)
-    showToast('JSON copied to clipboard', '#059669')
-  } catch {
-    showToast('Failed to copy clipboard', '#dc2626')
-  }
-})
 
 // ─── Results ──────────────────────────────────────────────────────────────────
 function renderResults(results) {
@@ -1094,28 +1077,8 @@ for (const [key, box] of PERSISTED_CHECKBOXES) {
 syncTickCheckboxes()
 if (tickCheckboxesCb) tickCheckboxesCb.addEventListener('change', syncTickCheckboxes)
 
-// ── Form dialect (auto / v1 / v2) ─────────────────────────────────────────────
-;(async () => {
-  const { pref_variant } = await chrome.storage.local.get('pref_variant')
-  variantPref = pref_variant || 'auto'
-  variantSel.value = variantPref
-  renderVariantHint()
-})()
-
-variantSel.addEventListener('change', () => {
-  variantPref = variantSel.value
-  // A dialect change invalidates the scan: field names may be shared between
-  // v1 and v2, but the control kinds behind them are not.
-  activeVariant = variantPref === 'auto' ? null : variantPref
-  lastDetectedFields = []
-  lastDetectedFieldsByStep = []
-  executeBtn.disabled = true
-  buildJsonBtn.disabled = true
-  fieldsPanel.classList.add('hidden')
-  setStepActive(1)
-  renderVariantHint()
-  chrome.storage.local.set({ pref_variant: variantPref })
-})
+// The form dialect is detected per run by resolveDriver(); there is nothing to
+// initialise or persist. renderVariantHint() reports what it settled on.
 
 /**
  * Walk the "Tambah …" record modals on the current step: reveal what gates them,
