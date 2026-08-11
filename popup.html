@@ -41,18 +41,12 @@
         <input id="doubleCheckCb" type="checkbox" />
         Double check
       </label>
-    </div>
-    <!-- Record modals. Two independent checkboxes: Detect READS, Fill WRITES.
-         Fill implies Detect, so ticking Fill alone is enough. -->
-    <div class="scan-opts scope-row">
-      <span class="scope-label">Modal</span>
+      <!-- Detection lives with the scan: it READS each record modal and closes
+           it again, writing nothing. Its counterpart "Fill modals" sits in
+           Execute, where the writing happens. -->
       <label class="toggle-label" title="Open each &quot;Tambah …&quot; record modal, read its fields, close it WITHOUT saving. Counts modal fields with no side effects. One pass only, so modals that reveal more fields after a select are under-counted.">
         <input id="detectModalCb" type="checkbox" />
-        Detect
-      </label>
-      <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
-        <input id="fillModalCb" type="checkbox" checked />
-        Fill
+        Detect modals
       </label>
       <label class="toggle-label variant-label">
         Form
@@ -99,6 +93,14 @@
         <label class="toggle-label">
           <input id="skipOptionalCb" type="checkbox" />
           Skip optional
+        </label>
+        <!-- The writing half of the modal pair. Here rather than with the scan,
+             because this one FILLS and SAVES records — on the v1 credit
+             application it is the only setting that reaches 95 of the 179
+             fields. Its read-only counterpart is "Detect modals" in step 1. -->
+        <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
+          <input id="fillModalCb" type="checkbox" checked />
+          Fill modals
         </label>
       </div>
     </div>

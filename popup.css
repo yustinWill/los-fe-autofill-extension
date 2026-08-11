@@ -208,17 +208,9 @@ header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
   flex-wrap: wrap;
 }
 
-/* The Tambah row reads as a labelled pair, not as two more loose options in the
-   row above — the two groups answer different questions. */
-.scope-row { gap: 12px; }
-.scope-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #9ca3af;
-  flex-shrink: 0;
-}
+/* The modal pair no longer needs a row of its own: "Detect modals" sits with the
+   scan options and "Fill modals" with the execute options, each beside the
+   controls it belongs to. */
 
 .tick-row {
   display: flex;
