@@ -94,6 +94,39 @@ const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Di
                         'Direktur Utama', 'Wakil Direktur', 'Kepala Cabang', 'Koordinator']
 const _TENORS        = ['12', '18', '24', '36', '48', '60']
 
+/* Added 2026-08-11 from a measured gap: 28 of 99 text fields on the v1 credit
+   application were falling through to the generic "<label> <today>" fallback.
+   That is neither realistic nor varied, and through a currency mask it became a
+   rupiah figure derived from the date. Every list below exists because a
+   specific field was landing there. */
+const _BANKS       = ['Bank Mandiri', 'Bank BCA', 'Bank BRI', 'Bank BNI', 'Bank CIMB Niaga', 'Bank Danamon',
+                      'Bank Permata', 'Bank OCBC NISP', 'Bank Panin', 'BPR Kirana Sejahtera']
+const _PROJECTS    = ['Pengembangan Gudang Distribusi', 'Penambahan Armada Operasional', 'Modal Kerja Musiman',
+                      'Renovasi Gerai Cabang', 'Pembelian Mesin Produksi', 'Ekspansi Outlet Baru',
+                      'Peremajaan Peralatan Produksi', 'Pengadaan Bahan Baku']
+const _PURPOSES    = ['Menambah modal kerja untuk memenuhi pesanan yang meningkat',
+                      'Membiayai pembelian peralatan produksi baru',
+                      'Memperluas kapasitas gudang dan jalur distribusi',
+                      'Menutup kebutuhan modal kerja musiman',
+                      'Melakukan renovasi tempat usaha',
+                      'Menambah armada kendaraan operasional']
+const _OCCUPATIONS = ['Wiraswasta', 'Karyawan Swasta', 'Pegawai Negeri Sipil', 'Pedagang', 'Petani',
+                      'Guru', 'Dokter', 'Konsultan', 'Kontraktor', 'Pensiunan']
+const _RELATIONS   = ['Istri', 'Suami', 'Anak', 'Orang Tua', 'Saudara Kandung', 'Kerabat', 'Rekan Kerja']
+const _FINDINGS    = ['Lokasi usaha sesuai dengan dokumen yang dilampirkan',
+                      'Kegiatan usaha berjalan normal saat kunjungan',
+                      'Stok barang tersedia dan tertata rapi',
+                      'Tempat usaha ramai dan mudah dijangkau',
+                      'Peralatan produksi dalam kondisi terawat']
+const _FOLLOWUPS   = ['Direkomendasikan untuk diproses ke tahap berikutnya',
+                      'Perlu verifikasi tambahan atas dokumen legalitas',
+                      'Disarankan menambah agunan pendukung',
+                      'Direkomendasikan dengan catatan pemantauan berkala',
+                      'Perlu konfirmasi ulang atas data keuangan']
+const _NOTES       = ['Tidak ada keterangan', 'Data telah diverifikasi', 'Sesuai dokumen pendukung',
+                      'Menunggu konfirmasi lanjutan', 'Tidak ada catatan khusus']
+const _GROUPS      = ['Kelompok Usaha Mandiri', 'Koperasi Sejahtera', 'Paguyuban Niaga', 'Kelompok Tani Makmur']
+
 const LABEL_DEFAULTS = {
   // ── Identitas ──────────────────────────────────────────────────────────────
   get 'nama lengkap'()       { return _PICK(_NAMES_DEBTOR) },
@@ -223,15 +256,38 @@ const SMART_RULES = [
   /* A share percentage is a percentage, not currency: the fallback produced a
      date-derived figure that rendered as "0 %" in the shareholder table. */
   [/\b(persentase|percentage)\b/,                        () => String(5 + Math.floor(Math.random() * 90))],
-  [/\b(plafond|jumlah pinjaman|loan amount)\b/,          () => _RAMT(50000000, 500000000, 10000000)],
+  [/\b(plafon|plafond|jumlah pinjaman|loan amount)\b/,   () => _RAMT(50000000, 500000000, 10000000)],
   [/\b(tenor|jangka waktu)\b/,                           () => _PICK(_TENORS)],
   [/\bnomor sk\b/,                                       () => 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10))],
   [/\bnomor akta\b/,                                     () => String(1 + Math.floor(Math.random() * 99)).padStart(2, '0')],
   [/\bnotaris\b/,                                                   'Budi Notaris, SH'],
-  [/\b(catatan|keterangan|deskripsi|description|note)\b/,           'Tidak ada keterangan'],
+  // ── Added 2026-08-11: each of these was measured landing on the generic
+  //    "<label> <today>" fallback on the v1 credit application.
+  [/\b(suku bunga|interest rate)\b/,                    () => String(8 + Math.floor(Math.random() * 11))],
+  [/\bangsuran\b/,                                      () => _RAMT(1000000, 15000000, 500000)],
+  [/\bsisa (pinjaman|pokok|bunga)\b/,                    () => _RAMT(5000000, 200000000, 5000000)],
+  [/\b(nama penyedia pinjaman|nama bank|bank name)\b/,   () => _PICK(_BANKS)],
+  [/\bnama pemilik rekening\b/,                          () => _PICK(_NAMES_DEBTOR)],
+  [/\b(nama proyek|project name)\b/,                     () => _PICK(_PROJECTS)],
+  [/\b(tujuan peminjaman|tujuan kredit|loan purpose)\b/, () => _PICK(_PURPOSES)],
+  [/\bpekerjaan\b/,                                      () => _PICK(_OCCUPATIONS)],
+  [/\bhubungan\b/,                                       () => _PICK(_RELATIONS)],
+  [/\bfrekuensi\b/,                                      () => String(Math.floor(Math.random() * 3))],
+  [/\b(temuan|findings)\b/,                              () => _PICK(_FINDINGS)],
+  [/\b(rekomendasi|tindak lanjut|follow up)\b/,          () => _PICK(_FOLLOWUPS)],
+  [/\b(peserta|participant)\b/,                          () => _PICK(_NAMES_DEBTOR)],
+  [/\bkelompok\b/,                                       () => _PICK(_GROUPS)],
+  [/\b(durasi|lama bekerja|employment duration)\b/,      () => String(1 + Math.floor(Math.random() * 20))],
+
+  [/\b(catatan|keterangan|deskripsi|description|note)\b/, () => _PICK(_NOTES)],
   // year-only picker fields (e.g. "Periode Tahun", "FR_REPORT_PERIOD_YEAR")
   [/\b(periode tahun|period year|tahun buku|fiscal year|report.*year|year.*report)\b/, () => String(new Date().getFullYear() - 1)],
   // numeric-hint catch: return '000' before general text fallback
+  /* Last resorts, deliberately after every specific rule above: a bare "Nama"
+     or "Tanggal" carries no other clue, and a person name or a real date beats
+     "<label> <today>" in either case. */
+  [/\bnama\b/,                                           () => _PICK(_NAMES_DEBTOR)],
+  [/\btanggal\b/,                                        () => { const y = 2020 + Math.floor(Math.random() * 6); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y }],
   [/\b(nomor|number|no\.)\b/,                                       '000'],
 ]
 
