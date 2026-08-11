@@ -67,12 +67,18 @@ const fillModalCb      = document.getElementById('fillModalCb')
 const revealGatedCb    = document.getElementById('revealGatedCb')
 const tickCheckboxesCb = document.getElementById('tickCheckboxesCb')
 
-/* Mirror the execute-side checkbox into the module flag `smartDefault` reads,
-   and keep it in step with every later change. Set once here so the first run
-   after load is already correct rather than correct-from-the-second-run. */
+/**
+ * Mirror the execute-side checkbox into the module flag `smartDefault` reads.
+ *
+ * ⚠️ DEFINED here, but not CALLED here. `TICK_CHECKBOXES` is declared further
+ * down, inside the block `build-bundle.sh` extracts, and `let` has no hoisting —
+ * so calling this during the top-level run threw
+ * `Cannot access 'TICK_CHECKBOXES' before initialization`, popup.js aborted
+ * mid-evaluation, and NO handler ever bound. Every button was dead, which
+ * presents as "Quick Fill stopped working" rather than as a load error nobody
+ * opens the console to see. The call lives in the init block at the bottom.
+ */
 const syncTickCheckboxes = () => { TICK_CHECKBOXES = Boolean(tickCheckboxesCb && tickCheckboxesCb.checked) }
-syncTickCheckboxes()
-if (tickCheckboxesCb) tickCheckboxesCb.addEventListener('change', syncTickCheckboxes)
 
 /** DETECT-side: open gates before reading, so hidden fields are counted. */
 const shouldReveal = () => Boolean(revealGatedCb && revealGatedCb.checked)
@@ -1066,11 +1072,19 @@ const PERSISTED_CHECKBOXES = [
   for (const [key, box] of PERSISTED_CHECKBOXES) {
     if (box && prefs[key] !== undefined) box.checked = prefs[key]
   }
+  // The restored value has to reach the flag too, or a persisted "off" would be
+  // ignored until the box is touched.
+  syncTickCheckboxes()
 })()
 
 for (const [key, box] of PERSISTED_CHECKBOXES) {
   if (box) box.addEventListener('change', () => chrome.storage.local.set({ [key]: box.checked }))
 }
+
+/* Safe here: TICK_CHECKBOXES is declared above this point. See the note on
+   syncTickCheckboxes for why it cannot be called where it is defined. */
+syncTickCheckboxes()
+if (tickCheckboxesCb) tickCheckboxesCb.addEventListener('change', syncTickCheckboxes)
 
 // ── Form dialect (auto / v1 / v2) ─────────────────────────────────────────────
 ;(async () => {
