@@ -258,7 +258,9 @@ function smartDefault(name, label, type, options = []) {
   // v2 renders a CHECKBOX descriptor as a two-segment Tidak/Ya toggle. False
   // picks the off segment — a create form starts blank, so the off state is the
   // honest default rather than opting the user into something.
-  if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return false
+  // See TICK_CHECKBOXES above: off is the honest default, on is the one that
+  // reaches gated fields.
+  if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return TICK_CHECKBOXES
   if (type === 'time') return ''
 
   /**

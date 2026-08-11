@@ -48,6 +48,12 @@
         <input id="detectModalCb" type="checkbox" />
         Detect modals
       </label>
+      <!-- Ticks gating checkboxes so the sections they hide come into existence.
+           WRITES to the form, which is why it is opt-in and says so. -->
+      <label class="toggle-label" title="Tick every checkbox and answer Ya/Tidak toggles with Ya, so the sections they gate appear. Whole tables — Agunan, Underlying and their Tambah buttons — do not exist in the DOM until their box is ticked, so without this they read as absent rather than hidden. Note: this WRITES to the form.">
+        <input id="tickCheckboxesCb" type="checkbox" checked />
+        Tick checkboxes
+      </label>
       <label class="toggle-label variant-label">
         Form
         <select id="variantSel">

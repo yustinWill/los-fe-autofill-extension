@@ -62,8 +62,19 @@ const commitDelay = () => {
    "1" into "100" before they can type the rest. */
 delayInput.addEventListener('change', commitDelay)
 
-const detectModalCb = document.getElementById('detectModalCb')
-const fillModalCb   = document.getElementById('fillModalCb')
+const detectModalCb    = document.getElementById('detectModalCb')
+const fillModalCb      = document.getElementById('fillModalCb')
+const tickCheckboxesCb = document.getElementById('tickCheckboxesCb')
+
+/* Mirror the checkbox into the module flag `smartDefault` reads, and keep it in
+   step with every later change. Set once here so the first run after load is
+   already correct rather than correct-from-the-second-run. */
+const syncTickCheckboxes = () => { TICK_CHECKBOXES = Boolean(tickCheckboxesCb && tickCheckboxesCb.checked) }
+syncTickCheckboxes()
+if (tickCheckboxesCb) tickCheckboxesCb.addEventListener('change', syncTickCheckboxes)
+
+/** Should the run tick gating checkboxes to expose what they hide? */
+const shouldReveal = () => Boolean(tickCheckboxesCb && tickCheckboxesCb.checked)
 const statusBar      = document.getElementById('statusBar')
 const statusText     = document.getElementById('statusText')
 
@@ -197,6 +208,24 @@ function parseJSON() {
   try { return JSON.parse(text) } catch { return null }
 }
 const prettyJSON = obj => JSON.stringify(obj, null, 2)
+
+/**
+ * Answer `true` for checkboxes and Ya/Tidak toggles instead of `false`.
+ *
+ * 🔴 The honest default for a blank create form is OFF — nothing has been opted
+ * into. But this app uses those same controls as GATES, and a field that only
+ * exists once its checkbox is ticked is invisible to a scan that faithfully
+ * leaves it alone: step 4's Agunan and Underlying tables, their Tambah buttons,
+ * and every field inside them do not exist in the DOM until the box says Ya.
+ *
+ * So a run that fills correctly REPORTS LESS than a run that ticks first, and
+ * the difference reads as "those fields aren't there" rather than "they are
+ * behind a gate". Turning this on trades fidelity for reach, deliberately.
+ *
+ * Declared inside the extracted smart-default block so `autofill-bundle.js`
+ * carries it too; the popup overwrites it from its own checkbox.
+ */
+let TICK_CHECKBOXES = false
 
 // ─── Smart default generator ──────────────────────────────────────────────────
 // Keys = normalized label text (lowercase, trailing * stripped).
@@ -423,7 +452,9 @@ function smartDefault(name, label, type, options = []) {
   // v2 renders a CHECKBOX descriptor as a two-segment Tidak/Ya toggle. False
   // picks the off segment — a create form starts blank, so the off state is the
   // honest default rather than opting the user into something.
-  if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return false
+  // See TICK_CHECKBOXES above: off is the honest default, on is the one that
+  // reaches gated fields.
+  if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return TICK_CHECKBOXES
   if (type === 'time') return ''
 
   /**
@@ -551,6 +582,18 @@ detectBtn.addEventListener('click', async () => {
         })
         if (prevStepIdx !== null && stepIdx === prevStepIdx) break
         prevStepIdx = stepIdx
+
+        /* Open the gates BEFORE reading the step, or the scan counts only what
+           happens to be visible. A gated section is ABSENT from the DOM, not
+           hidden, so it is indistinguishable from one that does not exist —
+           which is how step 4 read as having no tables at all. This writes to
+           the form, hence the opt-in checkbox. */
+        if (driver.reveal && shouldReveal()) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, world: 'MAIN', func: driver.reveal
+          })
+          await sleep(600)
+        }
 
         const [{ result: fields }] = await chrome.scripting.executeScript({
           target: { tabId: tab.id }, world: 'MAIN', func: driver.detect
@@ -968,6 +1011,7 @@ const PERSISTED_CHECKBOXES = [
   ['pref_allSteps',       allStepsCb],
   ['pref_doubleCheck',    doubleCheckCb],
   ['pref_detectModal',    detectModalCb],
+  ['pref_tickCheckboxes', tickCheckboxesCb],
   ['pref_ignoreDisabled', ignoreDisabledCb],
   ['pref_skipFilled',     skipFilledCb],
   ['pref_skipOptional',   skipOptionalCb],
@@ -1040,7 +1084,7 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
 
   const report = []
 
-  if (driver.reveal) { await run(driver.reveal); await sleep(700) }
+  if (driver.reveal && shouldReveal()) { await run(driver.reveal); await sleep(700) }
 
   const list = (await run(driver.listModals)) || []
 
@@ -1051,7 +1095,7 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
     const opened = await run(driver.openModal, [i])
     if (!opened || !opened.isModal) { report.push({ label, note: 'inline row-add' }); continue }
 
-    if (driver.reveal) { await run(driver.reveal); await sleep(400) }
+    if (driver.reveal && shouldReveal()) { await run(driver.reveal); await sleep(400) }
 
     const entry = { label, title: opened.title, seen: 0, filled: 0, failed: [] }
     const seen = new Set()
