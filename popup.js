@@ -64,17 +64,55 @@ delayInput.addEventListener('change', commitDelay)
 
 const detectModalCb    = document.getElementById('detectModalCb')
 const fillModalCb      = document.getElementById('fillModalCb')
+const revealGatedCb    = document.getElementById('revealGatedCb')
 const tickCheckboxesCb = document.getElementById('tickCheckboxesCb')
 
-/* Mirror the checkbox into the module flag `smartDefault` reads, and keep it in
-   step with every later change. Set once here so the first run after load is
-   already correct rather than correct-from-the-second-run. */
+/* Mirror the execute-side checkbox into the module flag `smartDefault` reads,
+   and keep it in step with every later change. Set once here so the first run
+   after load is already correct rather than correct-from-the-second-run. */
 const syncTickCheckboxes = () => { TICK_CHECKBOXES = Boolean(tickCheckboxesCb && tickCheckboxesCb.checked) }
 syncTickCheckboxes()
 if (tickCheckboxesCb) tickCheckboxesCb.addEventListener('change', syncTickCheckboxes)
 
-/** Should the run tick gating checkboxes to expose what they hide? */
-const shouldReveal = () => Boolean(tickCheckboxesCb && tickCheckboxesCb.checked)
+/** DETECT-side: open gates before reading, so hidden fields are counted. */
+const shouldReveal = () => Boolean(revealGatedCb && revealGatedCb.checked)
+
+/**
+ * Should the fill leave checkbox-ish fields ALONE?
+ *
+ * 🔴 The one combination that would quietly undo the run: Reveal gated ON with
+ * Tick checkboxes OFF. The scan ticks a gate so its section exists and gets
+ * detected — then the fill reaches that same checkbox, answers "No", and the
+ * section vanishes again, taking every field the run was about to write with
+ * it. Every later fill on those fields then reports not_found, which reads as a
+ * broken driver rather than as the run closing its own door.
+ *
+ * So in that combination checkboxes are SKIPPED rather than answered false.
+ * "Do not tick" means do not tick — it does not mean untick.
+ */
+const shouldSkipCheckboxFills = () => shouldReveal() && !(tickCheckboxesCb && tickCheckboxesCb.checked)
+
+const isCheckboxField = f =>
+  f && (f.type === 'checkbox' || f.type === 'checkbox_group' || f.type === 'toggle')
+
+/**
+ * Run the reveal and wait only as long as it actually needs.
+ *
+ * A flat sleep here was 600ms on EVERY step — paid in full on the steps with no
+ * gates at all, which is most of them. `v1RevealGated` already awaits ~260ms
+ * after each click it makes, so React has settled by the time it returns; it
+ * also reports WHAT it flipped. Nothing flipped means nothing to wait for.
+ *
+ * On the v1 credit application only step 4 has gates, so across a 7-step sweep
+ * this drops roughly 4.2s of dead time to about 0.2s.
+ */
+async function revealAndSettle(driver, tabId) {
+  const [{ result: flipped }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: 'MAIN', func: driver.reveal
+  })
+  if (Array.isArray(flipped) && flipped.length) await sleep(200)
+  return flipped || []
+}
 const statusBar      = document.getElementById('statusBar')
 const statusText     = document.getElementById('statusText')
 
@@ -588,12 +626,7 @@ detectBtn.addEventListener('click', async () => {
            hidden, so it is indistinguishable from one that does not exist —
            which is how step 4 read as having no tables at all. This writes to
            the form, hence the opt-in checkbox. */
-        if (driver.reveal && shouldReveal()) {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id }, world: 'MAIN', func: driver.reveal
-          })
-          await sleep(600)
-        }
+        if (driver.reveal && shouldReveal()) await revealAndSettle(driver, tab.id)
 
         const [{ result: fields }] = await chrome.scripting.executeScript({
           target: { tabId: tab.id }, world: 'MAIN', func: driver.detect
@@ -665,7 +698,16 @@ executeBtn.addEventListener('click', async () => {
   }
 
   const detectedNames = lastDetectedFields.map(f => f.name)
-  const inOrder    = lastDetectedFields.map(f => [f.name, data[f.name] ?? smartDefault(f.name, f.label, f.type, f.options)])
+
+  /* Reveal-on + tick-off means "open the gates, then leave them alone" — so
+     checkbox fields drop out of the fill entirely rather than being answered
+     No, which would close what the scan just opened. See
+     shouldSkipCheckboxFills. */
+  const fillable = shouldSkipCheckboxFills()
+    ? lastDetectedFields.filter(f => !isCheckboxField(f))
+    : lastDetectedFields
+
+  const inOrder    = fillable.map(f => [f.name, data[f.name] ?? smartDefault(f.name, f.label, f.type, f.options)])
   const extra      = Object.entries(data).filter(([n]) => !detectedNames.includes(n))
   const fieldOrder = [...inOrder, ...extra]
 
@@ -1011,11 +1053,12 @@ const PERSISTED_CHECKBOXES = [
   ['pref_allSteps',       allStepsCb],
   ['pref_doubleCheck',    doubleCheckCb],
   ['pref_detectModal',    detectModalCb],
-  ['pref_tickCheckboxes', tickCheckboxesCb],
+  ['pref_revealGated',    revealGatedCb],
   ['pref_ignoreDisabled', ignoreDisabledCb],
   ['pref_skipFilled',     skipFilledCb],
   ['pref_skipOptional',   skipOptionalCb],
-  ['pref_fillModal',      fillModalCb]
+  ['pref_fillModal',      fillModalCb],
+  ['pref_tickCheckboxes', tickCheckboxesCb]
 ]
 
 ;(async () => {
@@ -1084,7 +1127,7 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
 
   const report = []
 
-  if (driver.reveal && shouldReveal()) { await run(driver.reveal); await sleep(700) }
+  if (driver.reveal && shouldReveal()) await revealAndSettle(driver, tabId)
 
   const list = (await run(driver.listModals)) || []
 
@@ -1095,7 +1138,7 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
     const opened = await run(driver.openModal, [i])
     if (!opened || !opened.isModal) { report.push({ label, note: 'inline row-add' }); continue }
 
-    if (driver.reveal && shouldReveal()) { await run(driver.reveal); await sleep(400) }
+    if (driver.reveal && shouldReveal()) await revealAndSettle(driver, tabId)
 
     const entry = { label, title: opened.title, seen: 0, filled: 0, failed: [] }
     const seen = new Set()
@@ -1109,7 +1152,9 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
     const rounds = mode === 'detect' ? 1 : 6
 
     for (let round = 0; round < rounds; round++) {
-      const fields = ((await run(driver.detect)) || []).filter(f => !seen.has(f.name))
+      const fields = ((await run(driver.detect)) || [])
+        .filter(f => !seen.has(f.name))
+        .filter(f => !(mode !== 'detect' && shouldSkipCheckboxFills() && isCheckboxField(f)))
       if (!fields.length) break
 
       if (mode === 'detect') { fields.forEach(f => seen.add(f.name)); break }

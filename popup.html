@@ -48,11 +48,11 @@
         <input id="detectModalCb" type="checkbox" />
         Detect modals
       </label>
-      <!-- Ticks gating checkboxes so the sections they hide come into existence.
-           WRITES to the form, which is why it is opt-in and says so. -->
-      <label class="toggle-label" title="Tick every checkbox and answer Ya/Tidak toggles with Ya, so the sections they gate appear. Whole tables — Agunan, Underlying and their Tambah buttons — do not exist in the DOM until their box is ticked, so without this they read as absent rather than hidden. Note: this WRITES to the form.">
-        <input id="tickCheckboxesCb" type="checkbox" checked />
-        Tick checkboxes
+      <!-- Detect-side: ticks gating checkboxes so the sections they hide come
+           into existence and can be COUNTED. Writes to the form, so it says so. -->
+      <label class="toggle-label" title="Before reading each step, tick gating checkboxes and answer Ya/Tidak groups with Ya, so the sections they hide exist and get detected. A gated section is ABSENT from the DOM, not hidden, so without this it is indistinguishable from one that does not exist. Note: this WRITES to the form.">
+        <input id="revealGatedCb" type="checkbox" checked />
+        Reveal gated
       </label>
       <label class="toggle-label variant-label">
         Form
@@ -107,6 +107,13 @@
         <label class="toggle-label" title="Open each record modal, FILL it and SAVE the record. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
           <input id="fillModalCb" type="checkbox" checked />
           Fill modals
+        </label>
+        <!-- How the FILL answers a checkbox. Separate from "Reveal gated" in
+             step 1: that one opens gates so fields can be detected, this one
+             decides what value the fill writes when it reaches one. -->
+        <label class="toggle-label" title="Answer checkboxes and Ya/Tidak toggles with YES when filling. Off answers No — the honest default for a blank form. If Reveal gated is on and this is off, checkboxes are left untouched rather than answered No, so the fill cannot close the gates the scan just opened.">
+          <input id="tickCheckboxesCb" type="checkbox" checked />
+          Tick checkboxes
         </label>
       </div>
     </div>
