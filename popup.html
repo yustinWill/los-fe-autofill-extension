@@ -32,6 +32,15 @@
         <input id="doubleCheckCb" type="checkbox" />
         Double check
       </label>
+      <label class="toggle-label variant-label">
+        Form
+        <select id="variantSel">
+          <option value="auto">Auto</option>
+          <option value="v1">v1 · MUI</option>
+          <option value="v2">v2 · Kairos</option>
+        </select>
+      </label>
+      <span id="variantHint" class="hint"></span>
     </div>
     <div id="fieldsPanel" class="fields-panel hidden">
       <div class="fields-header">
@@ -111,6 +120,12 @@
   <div class="app-footer">made with patience by Yusti</div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- Drivers first: drivers.js builds its registry from their declarations,
+       and popup.js dispatches through that registry. -->
+  <script src="driver-v1.js"></script>
+  <script src="driver-v2.js"></script>
+  <script src="drivers.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
