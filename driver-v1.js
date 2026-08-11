@@ -864,7 +864,26 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       return e ? e.value.trim() : ''
     }
     const cur = currentValueNow(name, type)
-    if (cur !== '' && cur !== false) return 'skipped_filled'
+
+    /**
+     * 🔴 A numeric field sitting at ZERO is a placeholder, not data.
+     *
+     * `skipFilled` exists to protect what a user typed. A currency box the form
+     * mounted as `0` is the opposite of that, and skipping it leaves a REQUIRED
+     * field at a value the schema rejects. Measured on Tambah Underlying
+     * 2026-08-11: `Nominal Underlying` mounts as "0", was reported
+     * `skipped_filled`, and the modal then refused to save with "Harus berupa
+     * teks" — it holds the NUMBER 0 where a string is wanted. The same modal
+     * saved when skipFilled was off and the field was actually written.
+     *
+     * Treated as empty only when the value is nothing but zeros and grouping
+     * punctuation ("0", "0,00", "Rp 0", "0.000") — so a real 0 typed into a
+     * count stays protected wherever it is genuinely the answer, and every
+     * non-zero value is still left alone.
+     */
+    const zeroish = typeof cur === 'string' && cur !== '' && /^[0.,\s]*$/.test(cur.replace(/^rp\s*/i, ''))
+
+    if (cur !== '' && cur !== false && !zeroish) return 'skipped_filled'
   }
 
   /**

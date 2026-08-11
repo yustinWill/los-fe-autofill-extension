@@ -21,7 +21,24 @@ const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
 const allStepsCb       = document.getElementById('allStepsCb')
 const doubleCheckCb    = document.getElementById('doubleCheckCb')
-const modalsCb         = document.getElementById('modalsCb')
+
+/**
+ * How deep a scan/fill reaches: 'page' | 'detect' | 'fill'.
+ *
+ * A radio rather than a checkbox because these are exclusive DEPTHS, not
+ * independent switches — "detect the modals but do not fill them" is a real
+ * middle setting, and it is the one to use when you want an honest field COUNT
+ * without writing anything to the form.
+ *
+ * Defaults to 'fill': the page-only reading is the one that silently
+ * under-reports, since v1Detect scopes itself to an open dialog but nothing
+ * opens one. On the credit application that is the difference between 84 fields
+ * and 179.
+ */
+const currentScope = () => {
+  const picked = document.querySelector('input[name="scopeRadio"]:checked')
+  return picked ? picked.value : 'fill'
+}
 const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -933,7 +950,7 @@ variantSel.addEventListener('change', () => {
  *    happily drive it. Refused by default — the one that prompted this offers to
  *    empty the whole application.
  */
-async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
+async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = 'fill' } = {}) {
   if (!driver.listModals) return null
 
   const run = (func, args = []) =>
@@ -958,9 +975,19 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
     const entry = { label, title: opened.title, seen: 0, filled: 0, failed: [] }
     const seen = new Set()
 
-    for (let round = 0; round < 6; round++) {
+    /* 'detect' opens the modal, reads it and closes it again without writing —
+       the honest way to COUNT modal fields. Only one detect round is possible
+       there: the extra fields these forms mount appear after something is
+       chosen, so a read-only pass sees the first layer and no more. That
+       under-count is inherent to not filling, and is why the label says
+       "Detect" rather than "Count". */
+    const rounds = mode === 'detect' ? 1 : 6
+
+    for (let round = 0; round < rounds; round++) {
       const fields = ((await run(driver.detect)) || []).filter(f => !seen.has(f.name))
       if (!fields.length) break
+
+      if (mode === 'detect') { fields.forEach(f => seen.add(f.name)); break }
 
       for (const f of fields) {
         seen.add(f.name)
@@ -988,8 +1015,14 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
     }
 
     entry.seen = seen.size
-    entry.saved = await run(driver.saveModal)
-    if (entry.saved !== 'saved') await run(driver.closeModal)
+
+    if (mode === 'detect') {
+      entry.saved = 'not_attempted'
+      await run(driver.closeModal)
+    } else {
+      entry.saved = await run(driver.saveModal)
+      if (entry.saved !== 'saved') await run(driver.closeModal)
+    }
 
     report.push(entry)
     await sleep(500)
@@ -1076,7 +1109,8 @@ async function runAllWizardSteps({ onStep } = {}) {
      Runs last: several modals only exist once the page fields around them are
      set (Agunan needs a saved facility), and the gates that hide them are only
      worth flipping after the step itself is filled. */
-  if (modalsCb && modalsCb.checked) {
+  const scope = currentScope()
+  if (scope !== 'page') {
     const tab = await getActiveTab()
     const driver = DRIVERS[activeVariant] || DRIVERS.v1
 
@@ -1095,15 +1129,23 @@ async function runAllWizardSteps({ onStep } = {}) {
         }
         const r = await walkRecordModals(driver, tab.id, {
           delayMs: Math.max(50, parseInt(delayInput.value, 10) || 300),
-          onStep
+          onStep,
+          mode: scope === 'detect' ? 'detect' : 'fill'
         })
         if (r && r.length) modalReport.push({ step: stepIdx, modals: r })
       }
 
       if (modalReport.length) {
-        const saved = modalReport.flatMap(s => s.modals).filter(m => m.saved === 'saved').length
-        const total = modalReport.flatMap(s => s.modals).filter(m => !m.note).length
-        showToast(`Modals: ${saved}/${total} saved`, saved === total ? '#059669' : '#d97706')
+        const all = modalReport.flatMap(s => s.modals).filter(m => !m.note)
+        const fields = all.reduce((n, m) => n + (m.seen || 0), 0)
+
+        if (scope === 'detect') {
+          showToast(`Tambah: ${all.length} modals · ${fields} fields`, '#4f46e5')
+        } else {
+          const saved = all.filter(m => m.saved === 'saved').length
+          showToast(`Modals: ${saved}/${all.length} saved · ${fields} fields`,
+            saved === all.length ? '#059669' : '#d97706')
+        }
       }
     }
   }

@@ -32,9 +32,22 @@
         <input id="doubleCheckCb" type="checkbox" />
         Double check
       </label>
-      <label class="toggle-label" title="Open each &quot;Tambah …&quot; record modal, fill it and save it — revealing the checkboxes that hide them first. Without this, modal fields are never reached.">
-        <input id="modalsCb" type="checkbox" checked />
-        Modals
+    </div>
+    <!-- Scope: how far a scan/fill reaches. Radio, because these are exclusive
+         levels of depth, not independent switches. -->
+    <div class="scan-opts scope-row">
+      <span class="scope-label">Scope</span>
+      <label class="toggle-label" title="Page fields only. Record modals are neither counted nor opened.">
+        <input type="radio" name="scopeRadio" id="scopePage" value="page" />
+        Page
+      </label>
+      <label class="toggle-label" title="Also count the &quot;Tambah …&quot; record modals — opens each one to read its fields, then closes it without saving. Reveals the checkboxes that hide them first.">
+        <input type="radio" name="scopeRadio" id="scopeDetect" value="detect" />
+        + Detect Tambah
+      </label>
+      <label class="toggle-label" title="Also FILL and SAVE each record modal. This is the only setting that reaches modal fields — on the v1 credit application that is 95 fields across 8 modals.">
+        <input type="radio" name="scopeRadio" id="scopeFill" value="fill" checked />
+        + Fill Tambah
       </label>
       <label class="toggle-label variant-label">
         Form
