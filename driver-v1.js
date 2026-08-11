@@ -1310,13 +1310,39 @@ async function v1RevealGated() {
 
   const flipped = []
 
+  /**
+   * 🔴 Keep a tick ONLY if it revealed more than it hid.
+   *
+   * Not every checkbox is a gate. Some are MODE SWITCHES, and ticking one hides
+   * the section it replaces. Measured 2026-08-11: ticking "Menggunakan
+   * Referensi Pengajuan Kredit" on step 1 put the form into reference mode and
+   * removed the credit-facility table — after which listModals() found NO
+   * add-buttons on steps 1, 2 and 5, and the run reported a form with no record
+   * modals at all. A "reveal" that reveals less is worse than not revealing.
+   *
+   * Counting live inputs before and after separates the two without knowing
+   * which is which, and unticking is safe — it is the same control, unlike a
+   * row repeater, whose click cannot be undone.
+   */
+  const liveInputs = () => document.querySelectorAll('input:not([type="hidden"]), textarea, select').length
+
   for (const box of scope.querySelectorAll('input[type="checkbox"]')) {
     if (box.disabled || box.checked) continue
     const fc = box.closest('.MuiFormControlLabel-root') || box.closest('.MuiFormControl-root')
     const label = fc ? (fc.textContent || '').trim().slice(0, 60) : (box.name || '')
+
+    const before = liveInputs()
     box.click()
     await sleep(260)
-    if (box.checked) flipped.push({ kind: 'checkbox', label, name: box.name || null })
+    if (!box.checked) continue
+
+    if (liveInputs() < before) {
+      box.click()                       // it hid something — put it back
+      await sleep(260)
+      continue
+    }
+
+    flipped.push({ kind: 'checkbox', label, name: box.name || null })
   }
 
   /* Ya/Tidak radio pairs are the other gate shape. Only the affirmative one is
@@ -1345,6 +1371,50 @@ async function v1RevealGated() {
   return flipped
 }
 
+/**
+ * Which "Tambah …" buttons open a MODAL, by label.
+ *
+ * 🔴 An allowlist, because neither of the alternatives works. Measured
+ * 2026-08-11:
+ *
+ *  · There is NO structural signal. Every Tambah button on the form —
+ *    repeaters and modal openers alike — is `MuiButton-outlinedPrimary`, in a
+ *    Grid2 container, with a table somewhere nearby. Class, variant, ancestry
+ *    and position all fail to separate them.
+ *  · Click-then-undo is WORSE than the damage. Clicking a repeater appends a
+ *    row; the row's `<tr>` carries exactly one icon button, and clicking it did
+ *    not remove the row — the page went from 2 inputs to 6. There is no
+ *    reliable undo, so "click to find out" cannot be made safe.
+ *
+ * So the driver refuses to click anything it does not recognise. A repeater
+ * click is silently destructive: it appends an EMPTY REQUIRED row to a
+ * financial table, which then blocks the step's own validation — the run breaks
+ * the form it was asked to fill (user, 2026-08-11: Pendapatan and Pengeluaran
+ * "got incremented too, which causes a new field").
+ *
+ * Known repeaters this keeps us away from: Tambah Pendapatan, Tambah
+ * Pengeluaran, Tambah Proyeksi, bare "Tambah" (×2 on Data Keuangan), and
+ * Tambah Biaya nested inside the facility modal.
+ *
+ * ⚠️ Adding a form means adding its openers here. An unknown button is REPORTED
+ * (`opensModal: false`), never clicked — under-reaching is recoverable, a
+ * corrupted form is not.
+ */
+const V1_MODAL_OPENERS = [
+  /^Tambah Fasilitas$/i,
+  /^Tambah Pemegang Saham$/i,
+  /^Tambah Pengurus$/i,
+  /^Tambah Pemilik Manfaat/i,
+  /^Tambah Kontak Darurat$/i,
+  /^Tambah Agunan$/i,
+  /^Tambah Underlying$/i,
+  /^Tambah Data Pinjaman$/i,
+  /^Tambah Data Mutasi Rekening$/i,
+  /^Tambah Kunjungan/i
+]
+
+const v1OpensModal = label => V1_MODAL_OPENERS.some(re => re.test(String(label || '').trim()))
+
 // Add-record buttons in the CURRENT scope, by label. Labels repeat ("Tambah" ×2
 // on step 2), so callers address them by INDEX, not by text.
 //
@@ -1361,7 +1431,15 @@ function v1ListModals() {
   return [...scope.querySelectorAll('button')]
     .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
     .filter(x => /^Tambah/i.test(x.label))
-    .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled }))
+    .map((x, n) => ({
+      index: n,
+      label: x.label,
+      disabled: x.disabled,
+
+      /* false = a row REPEATER (or simply unrecognised). Listed so a caller can
+         report it, never clicked — see V1_MODAL_OPENERS. */
+      opensModal: v1OpensModal(x.label)
+    }))
 }
 
 // Open the nth add-record control on this step.
@@ -1382,6 +1460,16 @@ async function v1OpenModal(nth) {
   if (btn.disabled) return { opened: false, isModal: false, title: null, reason: 'disabled' }
 
   const label = (btn.textContent || '').trim()
+
+  /* 🔴 Refuse anything not on the allowlist. This is the ONLY place that clicks
+     a Tambah button, so the guard belongs here rather than in the caller — a
+     future caller that forgets to check `opensModal` still cannot append a row
+     to a financial table. Clicking a repeater is not recoverable: see
+     V1_MODAL_OPENERS. */
+  if (!v1OpensModal(label)) {
+    return { opened: false, isModal: false, label, title: null, reason: 'repeater_not_clicked' }
+  }
+
   btn.click()
 
   // The dialog mounts and animates; the backdrop is the reliable signal — class

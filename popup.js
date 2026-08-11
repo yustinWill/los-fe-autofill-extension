@@ -1118,10 +1118,19 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
 
   for (let i = 0; i < list.length; i++) {
     const label = list[i].label
+
+    /* Skip row REPEATERS without touching them. openModal refuses these too,
+       but checking here means the popup does not even spend a round trip, and
+       the status line does not claim to be opening something it will not. */
+    if (list[i].opensModal === false) { report.push({ label, note: 'row repeater — not clicked' }); continue }
+
     if (onStep) onStep(`Modal: ${label}`)
 
     const opened = await run(driver.openModal, [i])
-    if (!opened || !opened.isModal) { report.push({ label, note: 'inline row-add' }); continue }
+    if (!opened || !opened.isModal) {
+      report.push({ label, note: opened && opened.reason === 'repeater_not_clicked' ? 'row repeater — not clicked' : 'no modal opened' })
+      continue
+    }
 
     if (driver.reveal && shouldReveal()) await revealAndSettle(driver, tabId)
 
