@@ -20,7 +20,6 @@ const buildJsonBtn     = document.getElementById('buildJsonBtn')
 const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
 const allStepsCb       = document.getElementById('allStepsCb')
-const doubleCheckCb    = document.getElementById('doubleCheckCb')
 
 /**
  * The inter-field delay, in ms. Persisted, and quantised to whole hundreds with
@@ -62,10 +61,30 @@ const commitDelay = () => {
    "1" into "100" before they can type the rest. */
 delayInput.addEventListener('change', commitDelay)
 
-const detectModalCb    = document.getElementById('detectModalCb')
 const fillModalCb      = document.getElementById('fillModalCb')
-const revealGatedCb    = document.getElementById('revealGatedCb')
 const tickCheckboxesCb = document.getElementById('tickCheckboxesCb')
+
+/**
+ * Four settings were removed from the UI and fixed ON, because none of them had
+ * a defensible "off" — an option whose wrong setting silently produces a worse
+ * result is a trap, not a choice (user, 2026-08-11: "I'm afraid it will be
+ * information overload").
+ *
+ * · ALWAYS_SKIP_DISABLED — a disabled input cannot be written to. Off just
+ *   spends a round trip per field to be told so.
+ * · ALWAYS_REVEAL_GATED  — off silently UNDER-REPORTS. A gated section is
+ *   absent from the DOM, not hidden, so leaving the gate shut is
+ *   indistinguishable from the section not existing. That is the bug the
+ *   setting was added to fix, so shipping it turn-off-able reintroduced it.
+ * · ALWAYS_DOUBLE_CHECK  — a re-scan can only ever find MORE fields. The cost
+ *   is one extra scan when nothing new appeared.
+ * · Detect-modals is gone entirely: it was a read-only subset of Fill modals,
+ *   and its single detect pass under-counted anything that mounts fields after
+ *   a select — an honest-looking number that was always low.
+ */
+const ALWAYS_SKIP_DISABLED = true
+const ALWAYS_REVEAL_GATED  = true
+const ALWAYS_DOUBLE_CHECK  = true
 
 /**
  * Mirror the execute-side checkbox into the module flag `smartDefault` reads.
@@ -81,7 +100,7 @@ const tickCheckboxesCb = document.getElementById('tickCheckboxesCb')
 const syncTickCheckboxes = () => { TICK_CHECKBOXES = Boolean(tickCheckboxesCb && tickCheckboxesCb.checked) }
 
 /** DETECT-side: open gates before reading, so hidden fields are counted. */
-const shouldReveal = () => Boolean(revealGatedCb && revealGatedCb.checked)
+const shouldReveal = () => ALWAYS_REVEAL_GATED
 
 /**
  * Should the fill leave checkbox-ish fields ALONE?
@@ -123,22 +142,18 @@ const statusBar      = document.getElementById('statusBar')
 const statusText     = document.getElementById('statusText')
 
 /**
- * How far a run reaches into the "Tambah …" record modals:
- * 'page' | 'detect' | 'fill'.
+ * How far a run reaches into the "Tambah …" record modals: 'page' | 'fill'.
  *
- * Two independent checkboxes rather than one control, because they answer
- * different questions: Detect READS (opens a modal, counts its fields, closes
- * it, writes nothing) and Fill WRITES (fills and saves the record). Fill
- * implies Detect — you cannot fill what you have not read — so Fill wins when
- * both are ticked, and neither means page fields only.
+ * Fill is the default: a page-only run silently UNDER-REPORTS, because
+ * v1Detect scopes itself to an open dialog and nothing else opens one. On the
+ * v1 credit application that is 84 fields versus 179.
  *
- * Fill is the default: a page-only run is the one that silently under-reports,
- * because v1Detect scopes itself to an open dialog and nothing else opens one.
- * On the v1 credit application that is 84 fields versus 179.
+ * A read-only 'detect' scope existed briefly and was dropped — it was a subset
+ * of this one whose single pass under-counted every modal that mounts fields
+ * after a select, which is most of them.
  */
 const currentScope = () => {
   if (fillModalCb && fillModalCb.checked) return 'fill'
-  if (detectModalCb && detectModalCb.checked) return 'detect'
   return 'page'
 }
 
@@ -157,7 +172,6 @@ const setStatus = (text, state) => {
   statusBar.classList.toggle('is-error', state === 'error')
   statusText.textContent = text
 }
-const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
 const fieldsPanel      = document.getElementById('fieldsPanel')
@@ -690,7 +704,7 @@ executeBtn.addEventListener('click', async () => {
   if (!lastDetectedFields.length) { showToast('Scan the page first (step 1)', '#dc2626'); return }
 
   const delayMs        = readDelay()
-  const ignoreDisabled = ignoreDisabledCb.checked
+  const ignoreDisabled = ALWAYS_SKIP_DISABLED
   const skipFilled     = skipFilledCb.checked
   const skipOptional   = skipOptionalCb.checked
 
@@ -726,7 +740,6 @@ executeBtn.addEventListener('click', async () => {
     buildJsonBtn.disabled = true
     exportBtn.disabled = true
     delayInput.disabled = true
-    ignoreDisabledCb.disabled = true
     skipFilledCb.disabled = true
     skipOptionalCb.disabled = true
   }
@@ -736,7 +749,6 @@ executeBtn.addEventListener('click', async () => {
     allStepsCb.disabled = false
     executeBtn.disabled = false
     delayInput.disabled = false
-    ignoreDisabledCb.disabled = false
     skipFilledCb.disabled = false
     skipOptionalCb.disabled = false
     exportBtn.disabled = prevExportDisabled
@@ -1046,7 +1058,7 @@ setStepActive(1)
 /**
  * Every checkbox persists, table-driven so a new one cannot be forgotten.
  *
- * ⚠️ It WAS forgotten. `detectModalCb` and `fillModalCb` were added to the
+ * ⚠️ It WAS forgotten. `fillModalCb` and `tickCheckboxesCb` were added to the
  * markup and wired to the run, but not to storage — so they reset on every open
  * while the five boxes sitting beside them remembered. That is the worst shape
  * for this bug: the row looks uniform and only part of it behaves. Adding a
@@ -1057,10 +1069,6 @@ setStepActive(1)
  */
 const PERSISTED_CHECKBOXES = [
   ['pref_allSteps',       allStepsCb],
-  ['pref_doubleCheck',    doubleCheckCb],
-  ['pref_detectModal',    detectModalCb],
-  ['pref_revealGated',    revealGatedCb],
-  ['pref_ignoreDisabled', ignoreDisabledCb],
   ['pref_skipFilled',     skipFilledCb],
   ['pref_skipOptional',   skipOptionalCb],
   ['pref_fillModal',      fillModalCb],
@@ -1132,7 +1140,7 @@ variantSel.addEventListener('change', () => {
  *    happily drive it. Refused by default — the one that prompted this offers to
  *    empty the whole application.
  */
-async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = 'fill' } = {}) {
+async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
   if (!driver.listModals) return null
 
   const run = (func, args = []) =>
@@ -1157,21 +1165,14 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
     const entry = { label, title: opened.title, seen: 0, filled: 0, failed: [] }
     const seen = new Set()
 
-    /* 'detect' opens the modal, reads it and closes it again without writing —
-       the honest way to COUNT modal fields. Only one detect round is possible
-       there: the extra fields these forms mount appear after something is
-       chosen, so a read-only pass sees the first layer and no more. That
-       under-count is inherent to not filling, and is why the label says
-       "Detect" rather than "Count". */
-    const rounds = mode === 'detect' ? 1 : 6
-
-    for (let round = 0; round < rounds; round++) {
+    /* Re-detect until stable: these modals mount most of themselves after one
+       select (Pemegang Saham 2 -> 18 fields, Fasilitas 8 -> 20), so a single
+       pass fills the gate and stops. */
+    for (let round = 0; round < 6; round++) {
       const fields = ((await run(driver.detect)) || [])
         .filter(f => !seen.has(f.name))
-        .filter(f => !(mode !== 'detect' && shouldSkipCheckboxFills() && isCheckboxField(f)))
+        .filter(f => !(shouldSkipCheckboxFills() && isCheckboxField(f)))
       if (!fields.length) break
-
-      if (mode === 'detect') { fields.forEach(f => seen.add(f.name)); break }
 
       for (const f of fields) {
         seen.add(f.name)
@@ -1200,13 +1201,8 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep, mode = '
 
     entry.seen = seen.size
 
-    if (mode === 'detect') {
-      entry.saved = 'not_attempted'
-      await run(driver.closeModal)
-    } else {
-      entry.saved = await run(driver.saveModal)
-      if (entry.saved !== 'saved') await run(driver.closeModal)
-    }
+    entry.saved = await run(driver.saveModal)
+    if (entry.saved !== 'saved') await run(driver.closeModal)
 
     report.push(entry)
     await sleep(500)
@@ -1266,7 +1262,7 @@ async function runAllWizardSteps({ onStep } = {}) {
   // Re-scan after each fill pass. If new conditional fields appeared, fill them
   // (with skipFilled forced on so already-filled fields are left alone).
   // Repeat until no new fields appear, or after 5 extra passes as a safety cap.
-  if (doubleCheckCb.checked) {
+  if (ALWAYS_DOUBLE_CHECK) {
     for (let pass = 1; pass <= 5; pass++) {
       const prevNames = new Set(lastDetectedFields.map(f => f.name))
 
@@ -1313,8 +1309,7 @@ async function runAllWizardSteps({ onStep } = {}) {
         }
         const r = await walkRecordModals(driver, tab.id, {
           delayMs: readDelay(),
-          onStep,
-          mode: scope === 'detect' ? 'detect' : 'fill'
+          onStep
         })
         if (r && r.length) modalReport.push({ step: stepIdx, modals: r })
       }
@@ -1323,13 +1318,9 @@ async function runAllWizardSteps({ onStep } = {}) {
         const all = modalReport.flatMap(s => s.modals).filter(m => !m.note)
         const fields = all.reduce((n, m) => n + (m.seen || 0), 0)
 
-        if (scope === 'detect') {
-          showToast(`Modals: ${all.length} · ${fields} fields`, '#4f46e5')
-        } else {
-          const saved = all.filter(m => m.saved === 'saved').length
-          showToast(`Modals: ${saved}/${all.length} saved · ${fields} fields`,
-            saved === all.length ? '#059669' : '#d97706')
-        }
+        const saved = all.filter(m => m.saved === 'saved').length
+        showToast(`Modals: ${saved}/${all.length} saved · ${fields} fields`,
+          saved === all.length ? '#059669' : '#d97706')
       }
     }
   }
@@ -1348,9 +1339,7 @@ quickFillBtn.addEventListener('click', async () => {
     /* The scope decides what "done" can even mean, so say which one ran rather
        than a bare "Done" that reads the same whether modals were touched. */
     const scope = currentScope()
-    setStatus(scope === 'fill' ? 'Done — page + modals filled'
-      : scope === 'detect' ? 'Done — page filled, modals detected'
-        : 'Done — page only', 'done')
+    setStatus(scope === 'fill' ? 'Done — page + modals filled' : 'Done — page only', 'done')
   } catch (err) {
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
   } finally {

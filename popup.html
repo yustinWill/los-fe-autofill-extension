@@ -37,23 +37,6 @@
         <input id="allStepsCb" type="checkbox" checked />
         All steps
       </label>
-      <label class="toggle-label">
-        <input id="doubleCheckCb" type="checkbox" />
-        Double check
-      </label>
-      <!-- Detection lives with the scan: it READS each record modal and closes
-           it again, writing nothing. Its counterpart "Fill modals" sits in
-           Execute, where the writing happens. -->
-      <label class="toggle-label" title="Open each &quot;Tambah …&quot; record modal, read its fields, close it WITHOUT saving. Counts modal fields with no side effects. One pass only, so modals that reveal more fields after a select are under-counted.">
-        <input id="detectModalCb" type="checkbox" />
-        Detect modals
-      </label>
-      <!-- Detect-side: ticks gating checkboxes so the sections they hide come
-           into existence and can be COUNTED. Writes to the form, so it says so. -->
-      <label class="toggle-label" title="Before reading each step, tick gating checkboxes and answer Ya/Tidak groups with Ya, so the sections they hide exist and get detected. A gated section is ABSENT from the DOM, not hidden, so without this it is indistinguishable from one that does not exist. Note: this WRITES to the form.">
-        <input id="revealGatedCb" type="checkbox" checked />
-        Reveal gated
-      </label>
       <label class="toggle-label variant-label">
         Form
         <select id="variantSel">
@@ -88,10 +71,6 @@
         Delay <input id="delayInput" type="number" min="100" max="3000" step="100" value="200" /> ms
       </label>
       <div class="tick-row">
-        <label class="toggle-label">
-          <input id="ignoreDisabledCb" type="checkbox" checked />
-          Skip disabled
-        </label>
         <label class="toggle-label">
           <input id="skipFilledCb" type="checkbox" />
           Skip filled
