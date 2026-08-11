@@ -39,20 +39,59 @@ const FALLBACK_DATE = (() => {
 // or passed to Cleave masked date fields as raw digits after stripping dashes).
 
 // Random helpers — used by LABEL_DEFAULTS getters and smartDefault
-const _PICK = arr => arr[Math.floor(Math.random() * arr.length)]
+
+/**
+ * `_PICK` ROTATES through its list rather than picking at random.
+ *
+ * Random picking repeats: filling four record modals in one run routinely gave
+ * the same shareholder name three times, and a fixture where every person is
+ * "Budi Santoso" is a poor test of anything that groups, sorts or de-duplicates.
+ * Rotation guarantees each successive call to the SAME list yields the next
+ * entry, so a run walking eight modals produces eight distinct people.
+ *
+ * Keyed by the list's CONTENT, not its identity, because most rules build their
+ * array inline (`_PICK(['PT Maju Sejahtera', …])`) — a fresh array object every
+ * call, so a WeakMap keyed on the object would reset to index 0 every time and
+ * silently never rotate at all.
+ *
+ * State is per page-load. Values stay deterministic within a run, which also
+ * makes a failed run easier to reproduce than random ever was.
+ */
+const _ROT_STATE = new Map()
+
+const _PICK = arr => {
+  if (!Array.isArray(arr) || !arr.length) return ''
+  const key = arr.join('')
+  const i = _ROT_STATE.get(key) || 0
+  _ROT_STATE.set(key, i + 1)
+  return arr[i % arr.length]
+}
+
+/** Reset every rotation counter — call between independent fixture runs. */
+const _PICK_RESET = () => _ROT_STATE.clear()
 const _RAMT = (mn, mx, step = 1000000) => String(mn + Math.floor(Math.random() * Math.ceil((mx - mn) / step)) * step)
 const _RD2  = () => String(Math.floor(Math.random() * 90) + 10)  // 2-digit random
 const _R6   = () => String(Math.floor(Math.random() * 900000) + 100000)
 
-const _NAMES_DEBTOR  = ['Budi Santoso', 'Agus Setiawan', 'Hendra Wijaya', 'Reza Pratama', 'Denny Kusuma', 'Eko Prabowo', 'Feri Gunawan', 'Galih Saputra']
-const _NAMES_FEMALE  = ['Dewi Kusuma', 'Sari Wulandari', 'Rina Anggraeni', 'Maya Putri', 'Fitri Rahayu', 'Indah Lestari', 'Yuni Astuti']
-const _NAMES_DAD     = ['Slamet Riyadi', 'Wahyu Santoso', 'Bambang Sutrisno', 'Hadi Wijaya', 'Sugeng Raharjo', 'Joko Widodo', 'Mulyono Prabowo']
-const _NAMES_MOM     = ['Siti Aminah', 'Wati Rahayu', 'Sunarti', 'Purwati', 'Endang Susilowati', 'Sri Mulyani', 'Hartini']
-const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri', 'Galih']
-const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang']
-const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B']
-const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim']
-const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris']
+/* Lists are the ROTATION pool — length is what decides how far a run gets before
+   it repeats. A modal-walking run touches ~8 people, so keep person lists at 12+
+   or two records end up identical and stop testing anything that de-duplicates. */
+const _NAMES_DEBTOR  = ['Budi Santoso', 'Agus Setiawan', 'Hendra Wijaya', 'Reza Pratama', 'Denny Kusuma', 'Eko Prabowo', 'Feri Gunawan', 'Galih Saputra',
+                        'Irfan Maulana', 'Yoga Permana', 'Rizky Ramadhan', 'Bayu Nugroho', 'Dimas Anggara', 'Fajar Nurdin']
+const _NAMES_FEMALE  = ['Dewi Kusuma', 'Sari Wulandari', 'Rina Anggraeni', 'Maya Putri', 'Fitri Rahayu', 'Indah Lestari', 'Yuni Astuti',
+                        'Ratna Sari', 'Novi Handayani', 'Lia Permata', 'Citra Dewanti', 'Anisa Rahma']
+const _NAMES_DAD     = ['Slamet Riyadi', 'Wahyu Santoso', 'Bambang Sutrisno', 'Hadi Wijaya', 'Sugeng Raharjo', 'Joko Widodo', 'Mulyono Prabowo',
+                        'Suparman Hadi', 'Darmawan Susilo', 'Herman Setiadi', 'Yusuf Effendi', 'Tarno Wibisono']
+const _NAMES_MOM     = ['Siti Aminah', 'Wati Rahayu', 'Sunarti', 'Purwati', 'Endang Susilowati', 'Sri Mulyani', 'Hartini',
+                        'Nurhayati', 'Suryani', 'Marmi Lestari', 'Tuti Herawati', 'Kartini Wulan']
+const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri', 'Galih', 'Irfan', 'Yoga', 'Rizky', 'Bayu']
+const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang',
+                        'Malang', 'Bogor', 'Bekasi', 'Tangerang', 'Solo', 'Balikpapan', 'Pontianak']
+const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B', '17', '33', '76', '91C']
+const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim',
+                        'Jl. Asia Afrika', 'Jl. Diponegoro', 'Jl. Ahmad Yani', 'Jl. Pemuda', 'Jl. Merdeka']
+const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris',
+                        'Direktur Utama', 'Wakil Direktur', 'Kepala Cabang', 'Koordinator']
 const _TENORS        = ['12', '18', '24', '36', '48', '60']
 
 const LABEL_DEFAULTS = {
@@ -156,6 +195,34 @@ const SMART_RULES = [
   [/\b(nominal pengeluaran|expense amount)\b/,           () => _RAMT(1500000, 20000000, 500000)],
   [/\btotal pendapatan\b/,                               () => _RAMT(5000000, 50000000)],
   [/\btotal pengeluaran\b/,                              () => _RAMT(1500000, 20000000, 500000)],
+
+  /* ── Bank-statement transaction rows ────────────────────────────────────────
+   *
+   * 🔴 `credit` MUST stay empty, and the scoping here is not fussiness.
+   *
+   * The mutasi modal enforces "Debit dan Kredit tidak boleh diisi bersamaan" —
+   * a row may carry one or the other, never both. Filling every field, which is
+   * what a generic filler does, put an amount in each and the modal refused to
+   * save with no toast: 11 of 11 fields filled and the record never created.
+   * That was measured 2026-08-11 and it was the LAST blocker on this modal, not
+   * the file dropzone it looked like.
+   *
+   * Scoped to `transactions <n> credit` rather than `\bcredit\b` because every
+   * field on this form is named CREDIT_APPLICATION_* — a bare word match would
+   * blank most of the application.
+   *
+   * These cells carry NO label, so without an explicit rule they fall to the
+   * generic text fallback and receive `"<label> <today>"`; through a currency
+   * mask that became a balance of Rp 11.082.026, silently derived from the date.
+   */
+  [/transactions\s+\d+\s+credit/,                                   ''],
+  [/transactions\s+\d+\s+debit/,                         () => _RAMT(500000, 25000000, 100000)],
+  [/transactions\s+\d+\s+nasabah name/,                  () => _PICK(_NAMES_DEBTOR)],
+  [/\b(saldo|balance)\b/,                                () => _RAMT(5000000, 250000000, 100000)],
+
+  /* A share percentage is a percentage, not currency: the fallback produced a
+     date-derived figure that rendered as "0 %" in the shareholder table. */
+  [/\b(persentase|percentage)\b/,                        () => String(5 + Math.floor(Math.random() * 90))],
   [/\b(plafond|jumlah pinjaman|loan amount)\b/,          () => _RAMT(50000000, 500000000, 10000000)],
   [/\b(tenor|jangka waktu)\b/,                           () => _PICK(_TENORS)],
   [/\bnomor sk\b/,                                       () => 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10))],
@@ -194,11 +261,37 @@ function smartDefault(name, label, type, options = []) {
   if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return false
   if (type === 'time') return ''
 
+  /**
+   * 🔴 `datepicker` MUST be handled here, alongside `datetext`.
+   *
+   * v1's react-datepicker fields report type `datepicker`, which hit no date
+   * branch at all and fell through to the generic text path — so every one of
+   * them received `"<label> <today>"`. Measured 2026-08-11 on the site-visit
+   * modal:
+   *
+   *   Tanggal Kunjungan → "tanggal kunjungan 11-08-2026"  → not_found
+   *   Jam Mulai         → "jam mulai 11-08-2026"          → not_found
+   *
+   * The DRIVER was fine — handed `15-08-2026` the same field filled first try.
+   * The VALUE was the bug, and it presented as a broken control. It blocked
+   * three modals from saving at all (Kunjungan, Mutasi Rekening, Data Pinjaman).
+   *
+   * TIME cannot be told from DATE by `type` — v1 reports both as `datepicker`
+   * because a time-only react-datepicker still renders an
+   * `.react-datepicker__input-container`. So it comes off the NAME, with the
+   * Indonesian label as a second signal: `..._START_TIME` / `Jam Mulai` are
+   * times, `..._VISIT_DATE` / `Tanggal Kunjungan` are dates.
+   */
+  if (type === 'datepicker' && (/(^|_)TIME$|_TIME_/.test(String(name).toUpperCase()) || /^jam\b/i.test(label || ''))) {
+    return '09:00'
+  }
+
   // v2 DateField is a TYPED dd/mm/yyyy box, not a native picker — it strips
   // non-digits from whatever it receives, so the DD-MM-YYYY the label rules
   // emit lands unchanged. Kept distinct from v1's `date`, which is a real
-  // <input type="date"> and needs ISO.
-  if (type === 'datetext') {
+  // <input type="date"> and needs ISO. `datepicker` takes the same DD-MM-YYYY
+  // string; fillDatePicker parses it into a Date.
+  if (type === 'datetext' || type === 'datepicker') {
     const normLabel = label.replace(/\s*\*\s*$/, '').trim().toLowerCase()
     if (normLabel && normLabel in LABEL_DEFAULTS) return LABEL_DEFAULTS[normLabel]
     const key = (name + ' ' + label).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()

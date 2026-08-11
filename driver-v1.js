@@ -25,8 +25,29 @@ async function v1Detect() {
   // Detect an open MUI dialog by its backdrop — the only element that is
   // unconditionally rendered (and only rendered) while a dialog is open.
   // Class/attribute checks on .MuiDialog-paper are fragile; the backdrop is not.
+  //
+  /**
+   * 🔴 The LIVE dialog is the LAST `.MuiDialog-paper` whose root is NOT
+   * `aria-hidden` — never simply the first one on the page.
+   *
+   * MUI leaves earlier dialogs mounted and marks them `aria-hidden="true"` on
+   * `.MuiDialog-root`. Both keep a non-zero bounding box and both pass an
+   * `offsetParent` or visibility test, so that attribute is the only reliable
+   * discriminator.
+   *
+   * Measured 2026-08-11 opening "Tambah Agunan": two papers present — index 0
+   * empty and aria-hidden, index 1 the real "Registrasi Agunan" form carrying
+   * 28 INPUTS. `querySelector` returned the dead one, so detect reported zero
+   * fields, the title read as empty, and saveModal answered 'no_button'. It was
+   * indistinguishable from a modal that fails to load, and 28 fields were
+   * invisible to the driver.
+   *
+   * This shape is repeated at every modal-root resolution in this file rather
+   * than shared, because chrome.scripting serialises each contract function on
+   * its own and it cannot close over a helper.
+   */
   const modalRoot = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
-    ? (document.querySelector('.MuiDialog-paper') || null)
+    ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || null)
     : null
   const root = modalRoot || document
 
@@ -384,6 +405,63 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     let filled = false
     const fk = Object.keys(el).find(k => /^__reactFiber\$/.test(k))
 
+    /**
+     * ── Preferred path: the COMPONENT's own onChange ─────────────────────────
+     *
+     * 🔴 Order matters more than anything else in this function.
+     *
+     * This used to run only as a fallback, after writing straight into
+     * react-hook-form via `control.register(name).onChange`. That skips whatever
+     * the component does to a value on its way to the form, and different fields
+     * want different types — measured 2026-08-11, in BOTH directions:
+     *
+     *   bank-statement debit  `parseFloat(raw)` → NUMBER, schema v.number()
+     *                         writing the string failed as "Field ini wajib diisi"
+     *                         on a cell visibly showing 23.200.000
+     *   Nominal Underlying    stores the STRING; writing a number failed as
+     *                         "Harus berupa teks"
+     *
+     * No heuristic on the driver's side can know which — an earlier attempt keyed
+     * off whether the stored value was `null`, and that got underlying backwards.
+     * Letting the field's own handler run is the only approach that is right by
+     * construction, and it generalises to every v1 form rather than to the fields
+     * someone remembered to special-case.
+     *
+     * `rawValue` is supplied alongside `value` because Cleave-backed handlers read
+     * `e.target.rawValue ?? e.target.value`.
+     *
+     * The write is VERIFIED against the form store rather than trusted: if this
+     * handler is a no-op or the component swallows the shape, the RHF path below
+     * still runs.
+     */
+    const storeOf = () => {
+      if (!fk) return null
+      let f = el[fk], d = 0
+      while (f && d++ < 150) {
+        const p = f.memoizedProps
+        if (p && p.control && p.control._formValues) return { control: p.control, name: p.name }
+        f = f.return
+      }
+      return null
+    }
+
+    const readStored = ctx => ctx && typeof ctx.name === 'string'
+      ? ctx.name.split('.').reduce((o, k) => (o == null ? o : o[k]), ctx.control._formValues)
+      : undefined
+
+    const ctx0 = storeOf()
+    const before = readStored(ctx0)
+
+    const rk0 = Object.keys(el).find(k => /^__reactProps\$/.test(k))
+    if (rk0 && typeof el[rk0].onChange === 'function') {
+      try {
+        el[rk0].onChange({ target: { value: strVal, rawValue: strVal, name: el.getAttribute('name') || '' } })
+        await sleep(90)
+        const after = readStored(storeOf())
+        if (after !== undefined && after !== before && after !== '' && after !== null) filled = true
+      } catch (_) { /* fall through to the RHF path */ }
+    }
+
     // ── Cleave / regular text: RHF control.register(name).onChange via fiber walk ─
     if (!filled && fk) {
       let f = el[fk], depth = 0
@@ -393,9 +471,14 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
           try {
             const reg = p.control.register(p.name)
             if (reg && typeof reg.onChange === 'function') {
+              /* Reached only when the component has no onChange of its own, so
+                 there is no transformation to preserve and the raw string is
+                 what the form wants. Type-guessing used to live here and got
+                 Nominal Underlying backwards — see the note at the top. */
               const parentBase = el.closest('.MuiInputBase-root')
               const isNumeric = parentBase && parentBase.getAttribute('inputmode') === 'numeric'
               const finalVal = isNumeric ? strVal.replace(/\D+/g, '') : strVal
+
               await reg.onChange({ target: { value: finalVal, name: p.name } })
               filled = true
             }
@@ -534,6 +617,43 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
         }
         f = f.return
       }
+    }
+
+    // ── TIME-mode picker (value is HH:mm) ────────────────────────────────────
+    //
+    // 🔴 `Jam Mulai` / `Jam Selesai` resolve as `datepicker`, not `time`: they are
+    // react-datepicker in `showTimeSelectOnly` mode, so they carry a
+    // `.react-datepicker__input-container` exactly like a date field. Everything
+    // below this point hunts for a DAY cell in a calendar popper, which a
+    // time-only picker never renders — so the fill failed and returned
+    // not_found, and that alone blocked the whole Kunjungan modal from saving
+    // (measured 2026-08-11: 15 of 19 fields filled, save refused).
+    //
+    // The instance's own `setSelected` takes a Date, and time mode reads the
+    // hours/minutes off it, so no popper interaction is needed at all.
+    if (/^\d{1,2}[:.]\d{2}$/.test(strVal)) {
+      const [hh, mm] = strVal.split(/[:.]/).map(Number)
+      const base = new Date()
+      base.setHours(hh, mm, 0, 0)
+
+      if (dpInstance) {
+        try {
+          dpInstance.setSelected(base)
+          await sleep(220)
+          if (inp.value.trim()) return true
+        } catch (_) {}
+      }
+
+      // Fallback: type it. react-datepicker parses the input against its own
+      // dateFormat, which for these fields is HH:mm.
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(inp, strVal)
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      await sleep(180)
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      inp.blur()
+      await sleep(180)
+      return Boolean(inp.value.trim())
     }
 
     // ── Year-only picker (value is a 4-digit year, e.g. "2025") ──────────────
@@ -711,6 +831,33 @@ async function v1FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     if (cur !== '' && cur !== false) return 'skipped_filled'
   }
 
+  /**
+   * 🔴 An EMPTY value must not be WRITTEN to an already-empty text field.
+   * Leaving a field untouched and clearing it are different states.
+   *
+   * The bank-statement modal proved it. A fresh transaction row holds
+   * `credit: null` / `debit: null`, and its cross-rule reads
+   *
+   *     hasCredit = tx.credit !== null && tx.credit !== undefined && tx.credit !== 0
+   *
+   * (`bank-statement/form/validations.ts:48`). An empty STRING passes all three
+   * tests, so writing '' into the credit cell made `hasCredit` true alongside
+   * `hasDebit` and the modal refused to save with "Debit dan Kredit tidak boleh
+   * diisi bersamaan" — while the cell looked empty on screen and in the store.
+   * A human filling only Debit never trips this, because untouched stays null.
+   *
+   * Only skipped when the field is ALREADY empty, so an explicit '' from a JSON
+   * replay still CLEARS a field that has content. Selects are untouched by this:
+   * for them '' means "pick the first live option" and never reaches here.
+   */
+  if (value === '' || value === null || value === undefined) {
+    if (type === 'text' || type === 'textarea' || type === 'datepicker' || type === 'date' || type === 'time') {
+      const el = document.querySelector('input[name="' + name + '"]:not([aria-hidden="true"])')
+        || document.querySelector('textarea[name="' + name + '"]')
+      if (!el || !String(el.value || '').trim()) return 'skipped_empty'
+    }
+  }
+
   let filled = false
   if (type === 'autocomplete')        filled = await fillAutocomplete(name, value)
   else if (type === 'muiselect')      filled = await fillMuiSelect(name, value)
@@ -799,7 +946,7 @@ async function v1FillTables() {
   }
 
   const modalEl = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
-  const root = modalEl ? (document.querySelector('.MuiDialog-paper') || document) : document
+  const root = modalEl ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || document) : document
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
 
   function getInp(cell) {
@@ -985,6 +1132,262 @@ function v1ReadValues(fieldNames) {
     result[name] = type ? currentValue(name, type) : ''
   }
   return result
+}
+
+// ─── Record modals ("Tambah …" above a table) ────────────────────────────────
+//
+// 🔴 THE BIGGEST COVERAGE GAP IN THIS DRIVER, and it was invisible.
+//
+// v1Detect already scopes itself to an open dialog (see `modalRoot` at the top
+// of this file), so fields inside a modal were always FILLABLE — nothing ever
+// OPENED one. A full seven-step sweep therefore reported 84 fields and looked
+// complete, while 95 more sat behind eight buttons. Measured 2026-08-11 on a
+// Badan Usaha / Baru application:
+//
+//   step  button                          modal?  fields  required
+//   0     Tambah Fasilitas                  yes       8       6
+//   1     Tambah Pemegang Saham             yes       2       1
+//   1     Tambah Pengurus                   yes      20      14
+//   1     Tambah Pemilik Manfaat Utama      yes      15       3
+//   1     Tambah Kontak Darurat             yes       7       5
+//   2     Tambah Proyeksi                   NO — adds a table row inline
+//   2     Tambah  ×2                        NO — adds a table row inline
+//   4     Tambah Data Pinjaman              yes      13       9
+//   4     Tambah Data Mutasi Rekening       yes      11       5
+//   6     Tambah Kunjungan Calon Debitur    yes      19      16
+//
+// So a `Tambah` button is NOT reliably a modal — three of the eleven add a row
+// in place. Open it and look for the backdrop rather than assuming.
+//
+// The dialog's contract, measured: root `.MuiDialog-paper`, title in the first
+// heading, commit button labelled **Simpan**, and NO cancel button — closing is
+// Escape or a backdrop click.
+
+/**
+ * Is the TOPMOST dialog a confirmation rather than a form?
+ *
+ * 🔴 A driver that cannot tell these apart silently drives the wrong thing.
+ * Confirmations are `.MuiDialog-paper` like any modal, so the live-dialog rule
+ * points detect/fill/save straight at them: detect finds no named fields and
+ * reports nothing, the fill loop carries on regardless, and saveModal hunts for
+ * a "Simpan" that does not exist and answers 'no_button'. From the outside it
+ * looks like the autofill ignored a popup and kept running — because it did.
+ *
+ * Seen 2026-08-11: filling the Agunan modal re-set an already-populated Jenis
+ * Kredit, which raised "Konfirmasi Ganti Jenis Kredit — Mengganti Jenis Kredit
+ * akan mengosongkan seluruh data yang sudah diisi". One wrong answer there wipes
+ * the whole application.
+ *
+ * Recognised by shape, not by copy: a confirmation carries NO form inputs and
+ * offers a small set of decision buttons. Returns null when the top dialog is a
+ * real form.
+ */
+function v1PendingConfirm() {
+  const papers = [].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function (el) {
+    const r = el.closest('.MuiDialog-root') || el.parentElement
+    return !(r && r.getAttribute('aria-hidden') === 'true')
+  })
+  const top = papers[papers.length - 1]
+  if (!top) return null
+
+  if (top.querySelectorAll('input:not([type="hidden"]), textarea, select').length) return null
+
+  const buttons = [].slice.call(top.querySelectorAll('button'))
+    .map(b => (b.textContent || '').trim())
+    .filter(Boolean)
+  if (!buttons.length) return null
+
+  const decisive = buttons.filter(t => /^(ya|tidak|yes|no|ok|batal|cancel|lanjutkan|hapus|simpan)$/i.test(t))
+  if (!decisive.length) return null
+
+  return { text: (top.innerText || '').trim().slice(0, 200), buttons, decisive }
+}
+
+/**
+ * Answer the pending confirmation. `accept` true clicks Ya/OK/Lanjutkan, false
+ * clicks Tidak/Batal.
+ *
+ * ⚠️ Default to REFUSING. Most confirmations in this app guard a destructive
+ * change, and the one that prompted this function offers to empty every field
+ * already filled — accepting by reflex would throw away the run's own work.
+ */
+async function v1AnswerConfirm(accept) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const papers = [].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function (el) {
+    const r = el.closest('.MuiDialog-root') || el.parentElement
+    return !(r && r.getAttribute('aria-hidden') === 'true')
+  })
+  const top = papers[papers.length - 1]
+  if (!top) return 'no_dialog'
+
+  const want = accept ? /^(ya|yes|ok|lanjutkan)$/i : /^(tidak|no|batal|cancel)$/i
+  const btn = [].slice.call(top.querySelectorAll('button')).find(b => want.test((b.textContent || '').trim()))
+  if (!btn) return 'no_button'
+
+  btn.click()
+  await sleep(800)
+  return 'answered'
+}
+
+/**
+ * Turn ON every gating checkbox / Ya-Tidak toggle in the current scope, so the
+ * sections they hide come into existence.
+ *
+ * 🔴 Without this a "fill everything" run actively HIDES work. `smartDefault`
+ * answers `false` for a checkbox — the honest default for a blank create form,
+ * and right for a normal fill — but a v1 form uses those same controls as GATES.
+ * Step 4's Agunan and Underlying tables, and the Tambah buttons above them, do
+ * not exist in the DOM until their toggle says Ya (user, 2026-08-11: "the add
+ * button sometimes only shows up after the checkbox has been checked too").
+ * A run that fills faithfully therefore reports a step with no tables and no
+ * add-buttons, which is indistinguishable from a step that genuinely has none.
+ *
+ * Deliberately SEPARATE from the fill pass rather than folded into it: turning
+ * a gate on is a coverage decision, not a value, so a caller filling a real
+ * fixture can leave it out. Returns what it flipped, so a report can say which
+ * sections only appeared because the driver opened them.
+ */
+async function v1RevealGated() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const scope = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+    ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || document)
+    : document
+
+  const flipped = []
+
+  for (const box of scope.querySelectorAll('input[type="checkbox"]')) {
+    if (box.disabled || box.checked) continue
+    const fc = box.closest('.MuiFormControlLabel-root') || box.closest('.MuiFormControl-root')
+    const label = fc ? (fc.textContent || '').trim().slice(0, 60) : (box.name || '')
+    box.click()
+    await sleep(260)
+    if (box.checked) flipped.push({ kind: 'checkbox', label, name: box.name || null })
+  }
+
+  /* Ya/Tidak radio pairs are the other gate shape. Only the affirmative one is
+     clicked, and only when nothing in the group is chosen yet — re-answering a
+     question the form already answered would discard whatever it revealed. */
+  const groups = new Map()
+  for (const radio of scope.querySelectorAll('input[type="radio"]')) {
+    if (!radio.name) continue
+    if (!groups.has(radio.name)) groups.set(radio.name, [])
+    groups.get(radio.name).push(radio)
+  }
+
+  for (const [name, radios] of groups) {
+    if (radios.some(r => r.checked)) continue
+    const yes = radios.find(r => /^(ya|yes|true|1|ada)$/i.test(String(r.value || '').trim()))
+      || radios.find(r => {
+        const lab = r.closest('.MuiFormControlLabel-root')
+        return lab && /^(ya|yes|ada)\b/i.test((lab.textContent || '').trim())
+      })
+    if (!yes || yes.disabled) continue
+    yes.click()
+    await sleep(260)
+    if (yes.checked) flipped.push({ kind: 'radio', label: name, value: yes.value })
+  }
+
+  return flipped
+}
+
+// Add-record buttons in the CURRENT scope, by label. Labels repeat ("Tambah" ×2
+// on step 2), so callers address them by INDEX, not by text.
+//
+// ⚠️ Scoped exactly like v1Detect: when a dialog is open this lists the DIALOG's
+// own add-buttons, not the page's. Without that, calling it while the facility
+// modal was open returned step 1's four record buttons PLUS the modal's nested
+// "Tambah Biaya" — five entries from two different scopes, so index 4 opened a
+// control that belonged to a different form.
+function v1ListModals() {
+  const scope = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+    ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || document)
+    : document
+
+  return [...scope.querySelectorAll('button')]
+    .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
+    .filter(x => /^Tambah/i.test(x.label))
+    .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled }))
+}
+
+// Open the nth add-record control on this step.
+// Returns { opened, isModal, title } — `isModal: false` means it added an inline
+// row instead, which is a real answer, not a failure.
+async function v1OpenModal(nth) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+  // Same scoping as v1ListModals, so an index from that list addresses the same
+  // control here.
+  const scope = document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+    ? ((function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})() || document)
+    : document
+
+  const buttons = [...scope.querySelectorAll('button')].filter(b => /^Tambah/i.test((b.textContent || '').trim()))
+  const btn = buttons[nth]
+  if (!btn) return { opened: false, isModal: false, title: null, reason: 'no_button' }
+  if (btn.disabled) return { opened: false, isModal: false, title: null, reason: 'disabled' }
+
+  const label = (btn.textContent || '').trim()
+  btn.click()
+
+  // The dialog mounts and animates; the backdrop is the reliable signal — class
+  // checks on the paper are fragile, which is why detect keys off it too.
+  for (let i = 0; i < 40; i++) {
+    if (document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')) break
+    await sleep(50)
+  }
+  await sleep(400)
+
+  const paper = (function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})()
+  const isModal = Boolean(document.querySelector('.MuiBackdrop-root.MuiModal-backdrop') && paper)
+
+  return {
+    opened: true,
+    isModal,
+    label,
+    title: paper ? ((paper.querySelector('h1,h2,h3,h4,h5,h6') || {}).textContent || '').trim() : null
+  }
+}
+
+// Commit the open modal. Returns 'saved' | 'blocked' | 'no_modal' | 'no_button'.
+//
+// ⚠️ 'blocked' is the important one: a v1 modal that fails validation simply
+// stays open with no toast, exactly like the facility modal's silent refusal.
+// Treating a click as success is how a run reports a record it never created.
+async function v1SaveModal() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const paper = (function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})()
+  if (!paper) return 'no_modal'
+
+  const save = [...paper.querySelectorAll('button')].find(b => /^Simpan$/i.test((b.textContent || '').trim()))
+  if (!save) return 'no_button'
+  if (save.disabled) return 'blocked'
+
+  save.click()
+  for (let i = 0; i < 60; i++) {
+    if (!document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')) return 'saved'
+    await sleep(100)
+  }
+  return 'blocked'
+}
+
+// Dismiss the open modal without saving. There is no Batal button on these, so
+// Escape first, then a backdrop click.
+async function v1CloseModal() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const gone = () => !document.querySelector('.MuiBackdrop-root.MuiModal-backdrop')
+  if (gone()) return 'closed'
+
+  const paper = (function(){var ps=[].slice.call(document.querySelectorAll('.MuiDialog-paper')).filter(function(el){var r=el.closest('.MuiDialog-root')||el.parentElement;return !(r&&r.getAttribute('aria-hidden')==='true')});return ps[ps.length-1]||null})()
+  const cancel = paper && [...paper.querySelectorAll('button')].find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+  if (cancel) { cancel.click(); await sleep(700); if (gone()) return 'closed' }
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await sleep(700)
+  if (gone()) return 'closed'
+
+  const backdrop = document.querySelector('.MuiBackdrop-root')
+  if (backdrop) { backdrop.click(); await sleep(700) }
+  return gone() ? 'closed' : 'stuck'
 }
 
 // Page-context helper: returns the active wizard step index (skin="filled" avatar).

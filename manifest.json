@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
   "name": "LOS Form Autofill",
-  "version": "1.0.0",
+  "version": "1.0.9",
   "description": "Autofill CustomFormWizard fields (MUI + React Hook Form)",
-  "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -18,8 +24,12 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

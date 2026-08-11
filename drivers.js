@@ -22,7 +22,18 @@ const DRIVERS = {
     read:    v1ReadValues,
     current: v1CurrentStep,
     goTo:    v1GoToStep,
-    advance: v1AdvanceStep
+    advance: v1AdvanceStep,
+
+    /* Record modals ("Tambah …" above a table) and the gates that hide them.
+       Optional capability: a driver without these is walked page-only, so the
+       popup checks for the function before using it rather than assuming. */
+    reveal:         v1RevealGated,
+    listModals:     v1ListModals,
+    openModal:      v1OpenModal,
+    saveModal:      v1SaveModal,
+    closeModal:     v1CloseModal,
+    pendingConfirm: v1PendingConfirm,
+    answerConfirm:  v1AnswerConfirm
   },
   v2: {
     label: 'v2 · Kairos',

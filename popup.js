@@ -21,6 +21,7 @@ const exportBtn        = document.getElementById('exportBtn')
 const delayInput       = document.getElementById('delayInput')
 const allStepsCb       = document.getElementById('allStepsCb')
 const doubleCheckCb    = document.getElementById('doubleCheckCb')
+const modalsCb         = document.getElementById('modalsCb')
 const ignoreDisabledCb = document.getElementById('ignoreDisabledCb')
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -123,20 +124,59 @@ const prettyJSON = obj => JSON.stringify(obj, null, 2)
 // or passed to Cleave masked date fields as raw digits after stripping dashes).
 
 // Random helpers — used by LABEL_DEFAULTS getters and smartDefault
-const _PICK = arr => arr[Math.floor(Math.random() * arr.length)]
+
+/**
+ * `_PICK` ROTATES through its list rather than picking at random.
+ *
+ * Random picking repeats: filling four record modals in one run routinely gave
+ * the same shareholder name three times, and a fixture where every person is
+ * "Budi Santoso" is a poor test of anything that groups, sorts or de-duplicates.
+ * Rotation guarantees each successive call to the SAME list yields the next
+ * entry, so a run walking eight modals produces eight distinct people.
+ *
+ * Keyed by the list's CONTENT, not its identity, because most rules build their
+ * array inline (`_PICK(['PT Maju Sejahtera', …])`) — a fresh array object every
+ * call, so a WeakMap keyed on the object would reset to index 0 every time and
+ * silently never rotate at all.
+ *
+ * State is per page-load. Values stay deterministic within a run, which also
+ * makes a failed run easier to reproduce than random ever was.
+ */
+const _ROT_STATE = new Map()
+
+const _PICK = arr => {
+  if (!Array.isArray(arr) || !arr.length) return ''
+  const key = arr.join('')
+  const i = _ROT_STATE.get(key) || 0
+  _ROT_STATE.set(key, i + 1)
+  return arr[i % arr.length]
+}
+
+/** Reset every rotation counter — call between independent fixture runs. */
+const _PICK_RESET = () => _ROT_STATE.clear()
 const _RAMT = (mn, mx, step = 1000000) => String(mn + Math.floor(Math.random() * Math.ceil((mx - mn) / step)) * step)
 const _RD2  = () => String(Math.floor(Math.random() * 90) + 10)  // 2-digit random
 const _R6   = () => String(Math.floor(Math.random() * 900000) + 100000)
 
-const _NAMES_DEBTOR  = ['Budi Santoso', 'Agus Setiawan', 'Hendra Wijaya', 'Reza Pratama', 'Denny Kusuma', 'Eko Prabowo', 'Feri Gunawan', 'Galih Saputra']
-const _NAMES_FEMALE  = ['Dewi Kusuma', 'Sari Wulandari', 'Rina Anggraeni', 'Maya Putri', 'Fitri Rahayu', 'Indah Lestari', 'Yuni Astuti']
-const _NAMES_DAD     = ['Slamet Riyadi', 'Wahyu Santoso', 'Bambang Sutrisno', 'Hadi Wijaya', 'Sugeng Raharjo', 'Joko Widodo', 'Mulyono Prabowo']
-const _NAMES_MOM     = ['Siti Aminah', 'Wati Rahayu', 'Sunarti', 'Purwati', 'Endang Susilowati', 'Sri Mulyani', 'Hartini']
-const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri', 'Galih']
-const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang']
-const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B']
-const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim']
-const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris']
+/* Lists are the ROTATION pool — length is what decides how far a run gets before
+   it repeats. A modal-walking run touches ~8 people, so keep person lists at 12+
+   or two records end up identical and stop testing anything that de-duplicates. */
+const _NAMES_DEBTOR  = ['Budi Santoso', 'Agus Setiawan', 'Hendra Wijaya', 'Reza Pratama', 'Denny Kusuma', 'Eko Prabowo', 'Feri Gunawan', 'Galih Saputra',
+                        'Irfan Maulana', 'Yoga Permana', 'Rizky Ramadhan', 'Bayu Nugroho', 'Dimas Anggara', 'Fajar Nurdin']
+const _NAMES_FEMALE  = ['Dewi Kusuma', 'Sari Wulandari', 'Rina Anggraeni', 'Maya Putri', 'Fitri Rahayu', 'Indah Lestari', 'Yuni Astuti',
+                        'Ratna Sari', 'Novi Handayani', 'Lia Permata', 'Citra Dewanti', 'Anisa Rahma']
+const _NAMES_DAD     = ['Slamet Riyadi', 'Wahyu Santoso', 'Bambang Sutrisno', 'Hadi Wijaya', 'Sugeng Raharjo', 'Joko Widodo', 'Mulyono Prabowo',
+                        'Suparman Hadi', 'Darmawan Susilo', 'Herman Setiadi', 'Yusuf Effendi', 'Tarno Wibisono']
+const _NAMES_MOM     = ['Siti Aminah', 'Wati Rahayu', 'Sunarti', 'Purwati', 'Endang Susilowati', 'Sri Mulyani', 'Hartini',
+                        'Nurhayati', 'Suryani', 'Marmi Lestari', 'Tuti Herawati', 'Kartini Wulan']
+const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri', 'Galih', 'Irfan', 'Yoga', 'Rizky', 'Bayu']
+const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang',
+                        'Malang', 'Bogor', 'Bekasi', 'Tangerang', 'Solo', 'Balikpapan', 'Pontianak']
+const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B', '17', '33', '76', '91C']
+const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim',
+                        'Jl. Asia Afrika', 'Jl. Diponegoro', 'Jl. Ahmad Yani', 'Jl. Pemuda', 'Jl. Merdeka']
+const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris',
+                        'Direktur Utama', 'Wakil Direktur', 'Kepala Cabang', 'Koordinator']
 const _TENORS        = ['12', '18', '24', '36', '48', '60']
 
 const LABEL_DEFAULTS = {
@@ -240,6 +280,34 @@ const SMART_RULES = [
   [/\b(nominal pengeluaran|expense amount)\b/,           () => _RAMT(1500000, 20000000, 500000)],
   [/\btotal pendapatan\b/,                               () => _RAMT(5000000, 50000000)],
   [/\btotal pengeluaran\b/,                              () => _RAMT(1500000, 20000000, 500000)],
+
+  /* ── Bank-statement transaction rows ────────────────────────────────────────
+   *
+   * 🔴 `credit` MUST stay empty, and the scoping here is not fussiness.
+   *
+   * The mutasi modal enforces "Debit dan Kredit tidak boleh diisi bersamaan" —
+   * a row may carry one or the other, never both. Filling every field, which is
+   * what a generic filler does, put an amount in each and the modal refused to
+   * save with no toast: 11 of 11 fields filled and the record never created.
+   * That was measured 2026-08-11 and it was the LAST blocker on this modal, not
+   * the file dropzone it looked like.
+   *
+   * Scoped to `transactions <n> credit` rather than `\bcredit\b` because every
+   * field on this form is named CREDIT_APPLICATION_* — a bare word match would
+   * blank most of the application.
+   *
+   * These cells carry NO label, so without an explicit rule they fall to the
+   * generic text fallback and receive `"<label> <today>"`; through a currency
+   * mask that became a balance of Rp 11.082.026, silently derived from the date.
+   */
+  [/transactions\s+\d+\s+credit/,                                   ''],
+  [/transactions\s+\d+\s+debit/,                         () => _RAMT(500000, 25000000, 100000)],
+  [/transactions\s+\d+\s+nasabah name/,                  () => _PICK(_NAMES_DEBTOR)],
+  [/\b(saldo|balance)\b/,                                () => _RAMT(5000000, 250000000, 100000)],
+
+  /* A share percentage is a percentage, not currency: the fallback produced a
+     date-derived figure that rendered as "0 %" in the shareholder table. */
+  [/\b(persentase|percentage)\b/,                        () => String(5 + Math.floor(Math.random() * 90))],
   [/\b(plafond|jumlah pinjaman|loan amount)\b/,          () => _RAMT(50000000, 500000000, 10000000)],
   [/\b(tenor|jangka waktu)\b/,                           () => _PICK(_TENORS)],
   [/\bnomor sk\b/,                                       () => 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10))],
@@ -278,11 +346,37 @@ function smartDefault(name, label, type, options = []) {
   if (type === 'checkbox' || type === 'checkbox_group' || type === 'toggle') return false
   if (type === 'time') return ''
 
+  /**
+   * 🔴 `datepicker` MUST be handled here, alongside `datetext`.
+   *
+   * v1's react-datepicker fields report type `datepicker`, which hit no date
+   * branch at all and fell through to the generic text path — so every one of
+   * them received `"<label> <today>"`. Measured 2026-08-11 on the site-visit
+   * modal:
+   *
+   *   Tanggal Kunjungan → "tanggal kunjungan 11-08-2026"  → not_found
+   *   Jam Mulai         → "jam mulai 11-08-2026"          → not_found
+   *
+   * The DRIVER was fine — handed `15-08-2026` the same field filled first try.
+   * The VALUE was the bug, and it presented as a broken control. It blocked
+   * three modals from saving at all (Kunjungan, Mutasi Rekening, Data Pinjaman).
+   *
+   * TIME cannot be told from DATE by `type` — v1 reports both as `datepicker`
+   * because a time-only react-datepicker still renders an
+   * `.react-datepicker__input-container`. So it comes off the NAME, with the
+   * Indonesian label as a second signal: `..._START_TIME` / `Jam Mulai` are
+   * times, `..._VISIT_DATE` / `Tanggal Kunjungan` are dates.
+   */
+  if (type === 'datepicker' && (/(^|_)TIME$|_TIME_/.test(String(name).toUpperCase()) || /^jam\b/i.test(label || ''))) {
+    return '09:00'
+  }
+
   // v2 DateField is a TYPED dd/mm/yyyy box, not a native picker — it strips
   // non-digits from whatever it receives, so the DD-MM-YYYY the label rules
   // emit lands unchanged. Kept distinct from v1's `date`, which is a real
-  // <input type="date"> and needs ISO.
-  if (type === 'datetext') {
+  // <input type="date"> and needs ISO. `datepicker` takes the same DD-MM-YYYY
+  // string; fillDatePicker parses it into a Date.
+  if (type === 'datetext' || type === 'datepicker') {
     const normLabel = label.replace(/\s*\*\s*$/, '').trim().toLowerCase()
     if (normLabel && normLabel in LABEL_DEFAULTS) return LABEL_DEFAULTS[normLabel]
     const key = (name + ' ' + label).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -816,6 +910,94 @@ variantSel.addEventListener('change', () => {
   chrome.storage.local.set({ pref_variant: variantPref })
 })
 
+/**
+ * Walk the "Tambah …" record modals on the current step: reveal what gates them,
+ * open each, fill it, save it.
+ *
+ * 🔴 Without this the popup UNDER-REPORTS and does not say so. Everything else
+ * here scans the page, and `v1Detect` scopes itself to an open dialog — but
+ * nothing ever OPENED one, so a seven-step sweep of the credit application found
+ * 84 fields and looked complete while 95 more sat behind eight buttons.
+ *
+ * Three behaviours here are not optional, each learned from a run that looked
+ * fine and was not:
+ *
+ *  · REVEAL FIRST. Step 4's Agunan and Underlying tables — and the buttons above
+ *    them — do not exist until a gating checkbox says Ya. `smartDefault` answers
+ *    `false` for a checkbox, which is right for a value and wrong for a gate, so
+ *    the reveal is a separate call.
+ *  · RE-DETECT UNTIL STABLE. These forms mount most of themselves after one
+ *    select: Pemegang Saham goes 2 → 18 fields, Fasilitas 8 → 20. A single
+ *    detect pass fills the gate and stops.
+ *  · ANSWER CONFIRMATIONS. A confirmation is a dialog too, so the fill loop will
+ *    happily drive it. Refused by default — the one that prompted this offers to
+ *    empty the whole application.
+ */
+async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
+  if (!driver.listModals) return null
+
+  const run = (func, args = []) =>
+    chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func, args })
+      .then(r => r[0] && r[0].result)
+
+  const report = []
+
+  if (driver.reveal) { await run(driver.reveal); await sleep(700) }
+
+  const list = (await run(driver.listModals)) || []
+
+  for (let i = 0; i < list.length; i++) {
+    const label = list[i].label
+    if (onStep) onStep(`Modal: ${label}`)
+
+    const opened = await run(driver.openModal, [i])
+    if (!opened || !opened.isModal) { report.push({ label, note: 'inline row-add' }); continue }
+
+    if (driver.reveal) { await run(driver.reveal); await sleep(400) }
+
+    const entry = { label, title: opened.title, seen: 0, filled: 0, failed: [] }
+    const seen = new Set()
+
+    for (let round = 0; round < 6; round++) {
+      const fields = ((await run(driver.detect)) || []).filter(f => !seen.has(f.name))
+      if (!fields.length) break
+
+      for (const f of fields) {
+        seen.add(f.name)
+        const value = smartDefault(f.name, f.label, f.type, f.options)
+
+        // skipFilled is forced ON: overwriting an existing value is what raises
+        // this app's destructive "Ganti Jenis" confirmation.
+        const res = await run(driver.fill, [f.name, value, delayMs, true, true, false, Boolean(f.optional)])
+        if (res === 'ok') entry.filled++
+        else if (res !== 'skipped_filled' && res !== 'skipped_empty' && res !== 'skipped_disabled') {
+          entry.failed.push((f.label || f.name) + '=' + res)
+        }
+
+        if (driver.pendingConfirm) {
+          const confirm = await run(driver.pendingConfirm)
+          if (confirm) {
+            entry.confirms = entry.confirms || []
+            entry.confirms.push(confirm.text.slice(0, 60))
+            await run(driver.answerConfirm, [false])
+          }
+        }
+        await sleep(delayMs)
+      }
+      await sleep(500)
+    }
+
+    entry.seen = seen.size
+    entry.saved = await run(driver.saveModal)
+    if (entry.saved !== 'saved') await run(driver.closeModal)
+
+    report.push(entry)
+    await sleep(500)
+  }
+
+  return report
+}
+
 // ─── Quick Fill orchestrator ──────────────────────────────────────────────────
 // Clicks Scan then Execute. The detect handler handles all-steps scanning;
 // the execute handler handles per-step filling. No manual step loop needed here.
@@ -831,12 +1013,37 @@ async function runAllWizardSteps({ onStep } = {}) {
   await waitEnabled(executeBtn, 60000)
   if (executeBtn.disabled) return lastResults
 
-  if (onStep) onStep('Filling…')
-  await sleep(150)
-  executeBtn.click()
-  await sleep(300)
-  // Per-step execution with navigation; allow up to 5 min total.
-  await waitEnabled(executeBtn, 300000)
+  /**
+   * 🔴 Quick Fill forces skipFilled ON for EVERY pass, including the first.
+   *
+   * Only the double-check passes below used to force it; pass 1 honoured the
+   * checkbox. With it unticked — which is the default — the first pass
+   * OVERWRITES fields that already have a value, and on this app that is
+   * destructive: re-setting an already-chosen `Jenis Kredit` raises "Konfirmasi
+   * Ganti Jenis Kredit — Mengganti Jenis Kredit akan mengosongkan seluruh data
+   * yang sudah diisi", offering to empty the entire application (user,
+   * 2026-08-11, mid-run).
+   *
+   * Quick Fill means "fill what is empty", so protecting existing values is the
+   * behaviour the button already implies. The explicit Run button still honours
+   * the checkbox for anyone who genuinely wants to overwrite.
+   *
+   * The user's setting is restored in `finally` so the UI does not silently
+   * change under them.
+   */
+  const userSkipFilled = skipFilledCb.checked
+  skipFilledCb.checked = true
+
+  try {
+    if (onStep) onStep('Filling…')
+    await sleep(150)
+    executeBtn.click()
+    await sleep(300)
+    // Per-step execution with navigation; allow up to 5 min total.
+    await waitEnabled(executeBtn, 300000)
+  } finally {
+    skipFilledCb.checked = userSkipFilled
+  }
 
   // ── Double-check loop ─────────────────────────────────────────────────────
   // Re-scan after each fill pass. If new conditional fields appeared, fill them
@@ -862,6 +1069,42 @@ async function runAllWizardSteps({ onStep } = {}) {
       await sleep(300)
       await waitEnabled(executeBtn, 300000)
       skipFilledCb.checked = wasSkipFilled
+    }
+  }
+
+  /* ── Record modals, step by step ──────────────────────────────────────────
+     Runs last: several modals only exist once the page fields around them are
+     set (Agunan needs a saved facility), and the gates that hide them are only
+     worth flipping after the step itself is filled. */
+  if (modalsCb && modalsCb.checked) {
+    const tab = await getActiveTab()
+    const driver = DRIVERS[activeVariant] || DRIVERS.v1
+
+    if (driver.listModals) {
+      const steps = lastDetectedFieldsByStep.length
+        ? lastDetectedFieldsByStep.map(s => s.stepIdx)
+        : [null]
+
+      const modalReport = []
+      for (const stepIdx of steps) {
+        if (stepIdx !== null && driver.goTo) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, world: 'MAIN', func: driver.goTo, args: [stepIdx]
+          })
+          await sleep(900)
+        }
+        const r = await walkRecordModals(driver, tab.id, {
+          delayMs: Math.max(50, parseInt(delayInput.value, 10) || 300),
+          onStep
+        })
+        if (r && r.length) modalReport.push({ step: stepIdx, modals: r })
+      }
+
+      if (modalReport.length) {
+        const saved = modalReport.flatMap(s => s.modals).filter(m => m.saved === 'saved').length
+        const total = modalReport.flatMap(s => s.modals).filter(m => !m.note).length
+        showToast(`Modals: ${saved}/${total} saved`, saved === total ? '#059669' : '#d97706')
+      }
     }
   }
 
