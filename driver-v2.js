@@ -179,6 +179,17 @@ async function v2Detect() {
     return false
   }
 
+  /**
+   * A chosen value's `×`, not a chooser.
+   *
+   * `SearchableMultiSelect` renders each selection as a chip whose remove
+   * control is a BUTTON carrying an svg and an `aria-label` of `Hapus {label}`.
+   * Every routine that hunts for a control to CLICK has to exclude these, or it
+   * deletes the value it was trying to read.
+   */
+  const isChipRemove = el =>
+    el.tagName === 'BUTTON' && /^hapus\b/i.test((el.getAttribute('aria-label') || el.textContent || '').trim())
+
   // Shape → kind. Ordered most-specific first; each test rules out the next.
   function classify(els) {
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
@@ -203,9 +214,22 @@ async function v2Detect() {
     if (buttons.length) {
       // SegmentedToggle wraps its two segments in a role="group" track.
       if (buttons.some(b => b.closest('[role="group"]'))) return 'toggle'
-      // SearchableSelect's trigger is the only chooser carrying a chevron.
-      // Count alone would misread a one-option PillGroup as a select.
-      if (buttons.some(b => b.querySelector('svg'))) return 'select'
+      /**
+       * SearchableSelect's trigger is the only chooser carrying a chevron.
+       * Count alone would misread a one-option PillGroup as a select.
+       *
+       * 🔴 `isChipRemove` is load-bearing: a chip's `×` is an svg too, so this
+       * test matched a control whose ONLY svg was a remove icon. `peekOptions`
+       * then took the first button as the opener and clicked it — deleting that
+       * selection. Measured on Produk Kredit 2026-08-14 by instrumenting
+       * `HTMLElement.click`: detect clicked "Hapus 001 - Main Branch", "Hapus
+       * Reguler" and "Hapus Anuitas", taking `["001"]` to `[]` and
+       * `["REGULAR","BULLET_PRINCIPAL_INTEREST"]` to
+       * `["BULLET_PRINCIPAL_INTEREST"]`. Running Quick Fill against a POPULATED
+       * record silently dropped one value from every multi-select before it
+       * filled anything.
+       */
+      if (buttons.some(b => !isChipRemove(b) && b.querySelector('svg'))) return 'select'
       return 'pills'
     }
     return null
@@ -316,8 +340,11 @@ async function v2Detect() {
     const field = { name: g.name, type, label, value, disabled, optional: !required, options: [] }
 
     if (!disabled && (type === 'select' || type === 'multiselect')) {
+      /* Belt and braces with `classify` above: even where a control is
+         correctly a select, its chips come FIRST in document order, so `find`
+         would hand `peekOptions` a remove button to click. */
       const opener = type === 'select'
-        ? g.els.find(e => e.tagName === 'BUTTON')
+        ? g.els.find(e => e.tagName === 'BUTTON' && !isChipRemove(e))
         : g.els.find(e => e.tagName === 'INPUT')
       field.options = await peekOptions(opener)
     } else if (type === 'pills' || type === 'toggle') {
