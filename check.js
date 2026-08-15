@@ -31,26 +31,56 @@ const fail = msg => { failures++; console.log('  FAIL  ' + msg) }
 const pass = msg => console.log('  ok    ' + msg)
 
 // ── 1. Load ───────────────────────────────────────────────────────────────────
-const stubEl = () => ({
-  style: { cssText: '' },
-  classList: { add() {}, remove() {}, toggle: () => false, contains: () => false },
-  children: [],
-  value: '',
-  textContent: '',
-  className: '',
-  disabled: false,
-  checked: false,
-  appendChild(k) { this.children.push(k); return k },
-  setAttribute() {},
-  getAttribute: () => null,
-  addEventListener() {},
-  querySelector: () => null,
-  querySelectorAll: () => [],
-  closest: () => null,
-  focus() {},
-  click() {},
-  remove() {}
-})
+/**
+ * ⚠️ `textContent` is a real ACCESSOR here, and setting it to '' really does
+ * drop the children — because that is the whole mechanism the panel checks in
+ * §3 depend on. A plain `textContent: ''` data property looks equivalent and
+ * silently makes those assertions unfalsifiable: the sabotage passes, the
+ * check goes green, and the harness certifies a bug. Caught 2026-08-15 by
+ * reintroducing the bug on purpose and watching nothing happen.
+ */
+const stubEl = () => {
+  const node = {
+    style: { cssText: '' },
+    classList: { add() {}, remove() {}, toggle: () => false, contains: () => false },
+    children: [],
+    value: '',
+    className: '',
+    disabled: false,
+    checked: false,
+    firstChild: null,
+    appendChild(k) { this.children.push(k); return k },
+    insertBefore(kid, ref) {
+      const at = ref ? this.children.indexOf(ref) : -1
+
+      at === -1 ? this.children.unshift(kid) : this.children.splice(at, 0, kid)
+
+      return kid
+    },
+    setAttribute() {},
+    getAttribute: () => null,
+    addEventListener() {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    closest: () => null,
+    focus() {},
+    click() {},
+    remove() {}
+  }
+
+  let text = ''
+
+  Object.defineProperty(node, 'textContent', {
+    configurable: true,
+    get: () => text,
+    set(v) {
+      text = String(v)
+      if (text === '') node.children.length = 0
+    }
+  })
+
+  return node
+}
 
 const sandbox = {
   console, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -149,19 +179,22 @@ if (!S) {
     : pass('ignores non-create routes')
 }
 
-// ── 3. Typing must not rebuild the panel, and the name prefills ───────────────
+// ── 3. Panel behaviour ────────────────────────────────────────────────────────
 /**
- * 🔴 Both of these shipped broken and NEITHER was visible to the checks above
- * (user, 2026-08-15: "on type at popup autofill, it loses focus each time").
+ * 🔴 Three bugs shipped here and NONE was visible to the checks above (user,
+ * 2026-08-15: "on type at popup autofill, it loses focus each time").
  *
- * Focus loss cannot be observed in a stub DOM, but its CAUSE can: `render()`
- * begins by clearing `root.textContent`, so a root that COUNTS writes to that
- * property tells you whether a keystroke rebuilt the panel — and a rebuild is
- * what destroys the input being typed into. Assert on the mechanism, not the
- * symptom you cannot see from here.
+ * All three are the same shape — a re-render destroying something it should
+ * not — so all three are asserted on the MECHANISM, which a stub DOM can see,
+ * rather than on focus, which it cannot:
  *
- * ⚠️ Proven to fire: restore `commit()` in either name handler and the focus
- * assertion fails while everything else still passes.
+ *   1. typing rebuilt the panel body  → the input died mid-keystroke
+ *   2. `render()` cleared the CONTAINER → it deleted popup.js's run button,
+ *      which is a sibling, not a child
+ *   3. `defaultUserName` was never fed  → the name box stayed empty
+ *
+ * ⚠️ Proven to fire. Restore `commit()` in a name handler and #1 fails; render
+ * into the container instead of `.sim-body` and #2 fails.
  */
 ;(async () => {
   console.log('\npanel behaviour')
@@ -172,24 +205,55 @@ if (!S) {
     fail('SIMUI/SIM unavailable — skipping panel checks')
   } else {
     const listeners = []
+    const created = []
     const realCreate = sandbox.document.createElement
 
     sandbox.document.createElement = () => {
       const node = stubEl()
 
       node.addEventListener = (type, fn) => listeners.push({ node, type, fn })
+      created.push(node)
 
       return node
     }
 
-    let clears = 0
-    const root = stubEl()
+    const container = stubEl()
 
-    Object.defineProperty(root, 'textContent', { get: () => '', set: () => { clears++ } })
+    /**
+     * Fire the recorded handler that provably causes `changed()`, found by
+     * BEHAVIOUR rather than by position — the panel's append order is not a
+     * contract, and keying on it would fail for the wrong reason the next time
+     * a row moves.
+     *
+     * ⚠️ Iterate a SNAPSHOT. Several handlers re-render, and a re-render
+     * registers fresh listeners into this very array — so a live `for…of` walks
+     * into "+ Tambah agunan" appending a collateral, re-rendering, appending
+     * another "+ Tambah agunan", forever. That is a stack overflow in the
+     * CHECK, and it presents as the whole harness dying with a V8 trace rather
+     * than as a failed assertion.
+     */
+    const fireHandlerThat = (type, prepare, changed) => {
+      for (const { node, type: t, fn } of listeners.slice()) {
+        if (t !== type) continue
+
+        prepare(node)
+
+        try {
+          fn({ preventDefault() {}, key: 'x' })
+        } catch (_) {
+          continue
+        }
+
+        if (changed()) return true
+      }
+
+      return false
+    }
 
     try {
       S.state.userName = ''
-      await SU.mount(root, { defaultUserName: 'Budi Santoso' })
+      S.state.collapsed = false
+      await SU.mount(container, { defaultUserName: 'Budi Santoso' })
 
       // The hook existed in `mount` from the start; nothing ever fed it.
       S.state.userName === 'Budi Santoso'
@@ -198,35 +262,58 @@ if (!S) {
 
       // A name the user typed themselves must survive a re-mount.
       S.state.userName = 'Diketik Sendiri'
-      await SU.mount(root, { defaultUserName: 'Budi Santoso' })
+      await SU.mount(container, { defaultUserName: 'Budi Santoso' })
       S.state.userName === 'Diketik Sendiri'
         ? pass('a typed name beats the session name')
         : fail(`typed name lost: got "${S.state.userName}"`)
 
-      /* Identify the handler by BEHAVIOUR, never by position — the panel's
-         append order is not a contract, and keying on it would make this fail
-         for the wrong reason the next time a row moves. */
-      const rendersBefore = clears
-      let fired = false
+      const body = created.filter(n => n.className === 'sim-body').pop()
 
-      for (const { node, type, fn } of listeners) {
-        if (type !== 'input') continue
+      if (!body) {
+        fail('no .sim-body — the panel renders straight into its container, so a re-render deletes the run button')
+      } else {
+        let clears = 0
 
-        S.state.userName = ''
-        node.value = 'Zed'
+        /* Counts, and still CLEARS — keep the real semantics, or the sibling
+           assertion below stops being falsifiable. */
+        Object.defineProperty(body, 'textContent', {
+          configurable: true,
+          get: () => '',
+          set() { clears++; body.children.length = 0 }
+        })
 
-        try {
-          fn()
-        } catch (_) {
-          continue
-        }
+        // 1. Typing must not rebuild the body.
+        const typed = fireHandlerThat(
+          'input',
+          node => { S.state.userName = ''; node.value = 'Zed' },
+          () => S.state.userName === 'Zed'
+        )
 
-        if (S.state.userName === 'Zed') { fired = true; break }
+        if (!typed) fail('could not find the userName input handler — this check never ran')
+        else if (clears) fail(`typing rebuilt the panel (${clears}× re-render) — focus is lost per keystroke`)
+        else pass('typing does not rebuild the panel')
+
+        /* 2. A full re-render is legitimate on a PILL click — what must survive
+              it is popup.js's run button, appended to the container as a
+              sibling of the body. */
+        const sentinel = stubEl()
+
+        sentinel.className = 'run-button-sentinel'
+        container.appendChild(sentinel)
+
+        const before = S.state.jenis
+        const clicked = fireHandlerThat('click', () => {}, () => S.state.jenis !== before)
+
+        if (!clicked) fail('could not find a pill click handler — the sibling check never ran')
+        else if (!container.children.includes(sentinel)) fail('a re-render deleted a container sibling — this is how the run button disappeared')
+        else pass('a re-render leaves container siblings alone')
       }
 
-      if (!fired) fail('could not find the userName input handler — this check never ran')
-      else if (clears > rendersBefore) fail(`typing rebuilt the panel (${clears - rendersBefore}× re-render) — focus is lost per keystroke`)
-      else pass('typing does not rebuild the panel')
+      // 3. The fold state round-trips.
+      S.state.collapsed = false
+      const folded = fireHandlerThat('click', () => {}, () => S.state.collapsed === true)
+
+      folded ? pass('the config folds away') : fail('nothing toggles state.collapsed — the panel cannot be collapsed')
     } catch (e) {
       fail(`panel checks: ${e.name}: ${e.message}`)
     } finally {

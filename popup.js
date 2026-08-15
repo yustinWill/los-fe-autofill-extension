@@ -572,7 +572,16 @@ function simOverride(label) {
   return {
     'nama proyek kredit': activePlan.projectName,
     'jenis kredit': activePlan.creditType,
-    'jenis pengajuan': activePlan.applicationType
+    'jenis pengajuan': activePlan.applicationType,
+
+    /* 🔴 `debtorType` was produced by `plan()` and read by NOTHING — grep found
+       only the line creating it. So the Debitur pill (BU / I) did not set the
+       form's debtor type at all; it only altered the generated project and
+       collateral NAME strings, which made a run labelled "…BU-P" perfectly
+       able to build a Perorangan application. Wired 2026-08-15.
+       ⚠️ Step 2's field, `DEBTOR_GENERAL_DATA_DEBTOR_TYPE`
+       (creditApplication.json:621). */
+    'jenis calon debitur': activePlan.debtorType
   }[key]
 }
 
@@ -814,8 +823,31 @@ executeBtn.addEventListener('click', async () => {
     ? lastDetectedFields.filter(f => !isCheckboxField(f))
     : lastDetectedFields
 
-  const inOrder    = fillable.map(f => [f.name, data[f.name] ?? smartDefault(f.name, f.label, f.type, f.options)])
-  const extra      = Object.entries(data).filter(([n]) => !detectedNames.includes(n))
+  /**
+   * 🔑 A DELIBERATE value must beat an already-filled field; an INVENTED one
+   * must not.
+   *
+   * `runAllWizardSteps` forces `skipFilled` on for the whole run, which is
+   * right for smart defaults — they exist to populate blanks, not to overwrite
+   * a real record. It was wrong for the two explicit sources: a per-field JSON
+   * override and the simulation panel's own picks were silently discarded the
+   * moment the field already held anything, so choosing "Restrukturisasi" in
+   * the panel did nothing on a form whose Jenis Pengajuan was already set —
+   * and the run still reported success naming the value it had not written.
+   *
+   * ⚠️ `simOverride` was also missing from THIS branch entirely, so with "All
+   * steps" unticked the panel contributed nothing to any field at all.
+   */
+  const valueFor = f => {
+    const explicit = data[f.name] ?? simOverride(f.label)
+
+    return explicit !== undefined
+      ? { value: explicit, deliberate: true }
+      : { value: smartDefault(f.name, f.label, f.type, f.options), deliberate: false }
+  }
+
+  const inOrder    = fillable.map(f => { const { value, deliberate } = valueFor(f); return [f.name, value, deliberate] })
+  const extra      = Object.entries(data).filter(([n]) => !detectedNames.includes(n)).map(([n, v]) => [n, v, true])
   const fieldOrder = [...inOrder, ...extra]
 
   const lockUI = () => {
@@ -875,12 +907,26 @@ executeBtn.addEventListener('click', async () => {
 
       for (let i = 0; i < stepFields.length; i++) {
         const f = stepFields[i]
+
+        /* 🔴 The checkbox filter had to be applied HERE too, and was not.
+           `shouldSkipCheckboxFills()` fed only the single-step branch's
+           `fillable` list; this branch iterates the raw detected buckets, so
+           "reveal on, tick off" still answered every gate. Worse than it
+           sounds: a v2 CHECKBOX renders as a Tidak/Ya toggle, toggles are
+           exempt from the skipFilled guard (driver-v2.js:1002), and the toggle
+           path clicks its off segment with no state check — so a gate the user
+           had set to Ya was clicked back to Tidak, taking its whole gated
+           section with it. */
+        if (shouldSkipCheckboxFills() && isCheckboxField(f)) continue
+
         /* Precedence: an explicit per-field override, then the simulation plan
            (the scenario pills and the generated project name), then the smart
            default. The plan sits ABOVE smartDefault because its values are
            chosen deliberately for this run; it sits BELOW `data` so a manual
            override still wins. */
-        const value = data[f.name] ?? simOverride(f.label) ?? smartDefault(f.name, f.label, f.type, f.options)
+        const explicit = data[f.name] ?? simOverride(f.label)
+        const deliberate = explicit !== undefined
+        const value = deliberate ? explicit : smartDefault(f.name, f.label, f.type, f.options)
         const isOptional = !!f.optional
 
         progressFill.style.width = Math.round((filled / totalFields) * 100) + '%'
@@ -890,7 +936,7 @@ executeBtn.addEventListener('click', async () => {
           const [{ result }] = await chrome.scripting.executeScript({
             target: { tabId: tab.id }, world: 'MAIN',
             func: driver.fill,
-            args: [f.name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional]
+            args: [f.name, value, delayMs, ignoreDisabled, skipFilled && !deliberate, skipOptional, isOptional]
           })
           results[f.name] = result || 'error'
         } catch (e) {
@@ -919,7 +965,7 @@ executeBtn.addEventListener('click', async () => {
   } else {
     // ── Single-step execute ────────────────────────────────────────────────
     for (let i = 0; i < fieldOrder.length; i++) {
-      const [name, value] = fieldOrder[i]
+      const [name, value, deliberate] = fieldOrder[i]
       const pct = Math.round((i / fieldOrder.length) * 100)
       progressFill.style.width = pct + '%'
       progressLabel.textContent = `(${i + 1}/${fieldOrder.length})  ${name}…`
@@ -931,7 +977,7 @@ executeBtn.addEventListener('click', async () => {
         const [{ result }] = await chrome.scripting.executeScript({
           target: { tabId: tab.id }, world: 'MAIN',
           func: driver.fill,
-          args: [name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional]
+          args: [name, value, delayMs, ignoreDisabled, skipFilled && !deliberate, skipOptional, isOptional]
         })
         results[name] = result || 'error'
       } catch (e) {
@@ -1466,10 +1512,25 @@ async function fillPlannedRows() {
 
   if (!driver || typeof driver.addRows !== 'function') return []
 
-  /* The wizard pass seeds one row in each table it touches, so ask for one
-     fewer. Never below zero — a count of 1 means "the one that already exists". */
+  /**
+   * The wizard pass seeds one row in each table it touches, so ask for one
+   * fewer. Never below zero — a count of 1 means "the one that already exists".
+   *
+   * ⚠️ THIS ASSUMES A FRESH FORM, which is the panel's documented job ("build
+   * the record I just described"). On a form that ALREADY had rows the wizard
+   * seeded nothing, so the target is undershot by one; on a table that already
+   * held three, a plan of two still adds one and overshoots to four. Nothing
+   * here reconciles against the live row count, because the tables are CSS-grid
+   * `FlushTable`s with no countable `<tr>` — a generic counter would be a
+   * heuristic keyed on section-heading text, and a wrong count is worse than a
+   * stated assumption.
+   *
+   * `target` is carried through so the caller can report what was ASKED FOR
+   * rather than what was asked of the driver — the two differ by exactly this
+   * assumption, and hiding that is how "Done" got printed over a short table.
+   */
   const specs = activePlan.tables
-    .map(t => ({ opener: t.opener, count: Math.max(0, t.count - 1) }))
+    .map(t => ({ opener: t.opener, count: Math.max(0, t.count - 1), target: t.count }))
     .filter(t => t.count > 0)
 
   if (!specs.length) return []
@@ -1480,10 +1541,12 @@ async function fillPlannedRows() {
 
   try {
     const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, world: 'MAIN', func: driver.addRows, args: [specs]
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.addRows, args: [specs.map(s => ({ opener: s.opener, count: s.count }))]
     })
 
-    return result || []
+    /* Re-attach the target the driver never saw, so a shortfall is reported
+       against what the USER asked for. */
+    return (result || []).map(r => ({ ...r, target: (specs.find(s => s.opener === r.table) || {}).target }))
   } catch (e) {
     return [{ table: 'inject', error: e && e.message ? e.message : String(e) }]
   }
@@ -1561,6 +1624,35 @@ async function loggedInUserName(tabId) {
   }
 }
 
+/**
+ * What the form's project-name field actually holds, read back through the
+ * driver's own RHF-store reader — the same route `read` uses, so it returns the
+ * stored value rather than a rendered label.
+ *
+ * Returns null on any failure: this only decorates a status line, and a broken
+ * read must not turn a successful run into a reported one.
+ */
+async function readProjectName() {
+  const FIELD = 'CREDIT_APPLICATION_APPLICATION_DATA_PROJECT_NAME'
+
+  try {
+    const tab = await getActiveTab()
+    const driver = DRIVERS[activeVariant] || DRIVERS.v2
+
+    if (!tab || !driver || !driver.read) return null
+
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.read, args: [[FIELD]]
+    })
+
+    const value = result && result[FIELD]
+
+    return value ? String(value) : null
+  } catch (_) {
+    return null
+  }
+}
+
 async function mountSimulation() {
   const tab = await getActiveTab()
 
@@ -1597,8 +1689,10 @@ async function mountSimulation() {
          driver had never written. Fixed in the driver's blank test. */
       const rows = await fillPlannedRows()
       const agunan = await fillPlannedCollaterals()
-      /* `wanted` is the driver's own spec count, which fillPlannedRows already
-         reduced by the wizard-seeded row — compare it as-is. */
+      /* `wanted` is the driver's own spec count, already reduced by the
+         wizard-seeded row; `target` is what the user actually asked for. A
+         shortfall against `wanted` is a real failure — the driver could not add
+         a row it tried to add. */
       const shortRows = rows.filter(r => r.error || (r.added ?? 0) < (r.wanted ?? 0))
       const failed = agunan.filter(r => !r.ok)
 
@@ -1607,8 +1701,23 @@ async function mountSimulation() {
       if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
       if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
 
+      /**
+       * 🔴 Report the name the FORM ended up with, not the one we planned.
+       *
+       * This used to print `'Done — ' + activePlan.projectName` unconditionally,
+       * which on a pre-filled form named a project the run had never written —
+       * a green "Done — Testing Yusti N BU-P …" over an application still
+       * called something else. Deliberate values now bypass skipFilled so the
+       * two usually agree, but a disabled field still cannot be written, and a
+       * status line must never assert something it has not checked.
+       */
+      const actualName = await readProjectName()
+      const nameMismatch = actualName && activePlan.projectName && actualName !== activePlan.projectName
+
+      if (nameMismatch) problems.push(`nama proyek tetap "${actualName}"`)
+
       setStatus(
-        problems.length ? 'Done, ' + problems.join(' · ') : 'Done — ' + activePlan.projectName,
+        problems.length ? 'Done, ' + problems.join(' · ') : 'Done — ' + (actualName || activePlan.projectName),
         problems.length ? 'error' : 'done'
       )
     } catch (err) {

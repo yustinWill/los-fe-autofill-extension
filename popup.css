@@ -533,6 +533,38 @@ textarea:focus { outline: none; border-color: #4f46e5; background: #fff; }
   flex-shrink: 0;
 }
 
+/* The fold control. Always visible, so a collapsed panel still says which
+   fixture is queued and still leaves the run button reachable. */
+.sim-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 8px;
+}
+.sim-head:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; border-radius: 4px; }
+.sim-head-caret { font-size: 10px; color: #9ca3af; width: 9px; }
+.sim-head-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  font-weight: 600;
+}
+/* Truncates rather than wrapping: the popup is 380px and a project name runs
+   past that, which would push the run button down every time it folded. */
+.sim-head-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sim-legend {
   font-size: 10px;
   text-transform: uppercase;

@@ -313,7 +313,16 @@ function simOverride(label) {
   return {
     'nama proyek kredit': activePlan.projectName,
     'jenis kredit': activePlan.creditType,
-    'jenis pengajuan': activePlan.applicationType
+    'jenis pengajuan': activePlan.applicationType,
+
+    /* 🔴 `debtorType` was produced by `plan()` and read by NOTHING — grep found
+       only the line creating it. So the Debitur pill (BU / I) did not set the
+       form's debtor type at all; it only altered the generated project and
+       collateral NAME strings, which made a run labelled "…BU-P" perfectly
+       able to build a Perorangan application. Wired 2026-08-15.
+       ⚠️ Step 2's field, `DEBTOR_GENERAL_DATA_DEBTOR_TYPE`
+       (creditApplication.json:621). */
+    'jenis calon debitur': activePlan.debtorType
   }[key]
 }
 

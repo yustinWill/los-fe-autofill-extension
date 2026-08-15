@@ -107,7 +107,12 @@ window.SIM = (() => {
     debtorName: '',
     projectOverride: null,
     rows: Object.fromEntries(TABLES.map(t => [t.key, t.def])),
-    collaterals: [{ type: 'property', name: null }]
+    collaterals: [{ type: 'property', name: null }],
+
+    /** Whether the config body is folded away. Persisted, because a fixture's
+     *  shape is usually decided once and then re-run many times — after which
+     *  the panel is mostly something between you and the run button. */
+    collapsed: false
   }
 
   /**

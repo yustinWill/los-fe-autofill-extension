@@ -23,7 +23,17 @@ window.SIMUI = (() => {
     return node
   }
 
+  /**
+   * 🔴 `root` is the panel's OWN body, never the container it was mounted into.
+   *
+   * `render()` clears `root.textContent`, and popup.js appends the "Isi
+   * formulir" button to the same container — so while the two were the same
+   * node, clicking any pill or changing a collateral type DELETED the run
+   * button, and it stayed gone until the popup was reopened. A component that
+   * wipes its parent destroys its siblings; give it a subtree of its own.
+   */
   let root = null
+  let head = null
   let onChange = () => {}
 
   /**
@@ -276,16 +286,70 @@ window.SIMUI = (() => {
     onChange()
   }
 
+  /**
+   * The always-visible header: a caret, a title, and — when folded — the
+   * derived project name, so a collapsed panel still says which fixture is
+   * about to be built rather than hiding it behind a click.
+   */
+  const renderHead = () => {
+    if (!head) return
+
+    const folded = Boolean(SIM.state.collapsed)
+
+    head.textContent = ''
+    head.setAttribute('aria-expanded', folded ? 'false' : 'true')
+    head.appendChild(el('span', { class: 'sim-head-caret', text: folded ? '▸' : '▾' }))
+    head.appendChild(el('span', { class: 'sim-head-title', text: 'Konfigurasi' }))
+
+    if (folded) {
+      const summary = el('span', { class: 'sim-head-summary', text: SIM.projectName() })
+
+      summary.title = SIM.projectName()
+      head.appendChild(summary)
+    }
+  }
+
+  const setCollapsed = folded => {
+    SIM.state.collapsed = folded
+    SIM.save()
+    root.classList.toggle('hidden', folded)
+    renderHead()
+  }
+
   /** Build the panel into `container`. Idempotent — popup.js may resolve the
-   *  route more than once. */
+   *  route more than once, and a second mount must not stack two panels. */
   const mount = async (container, opts = {}) => {
     onChange = opts.onChange || (() => {})
     await SIM.load()
 
     if (!SIM.state.userName && opts.defaultUserName) SIM.state.userName = opts.defaultUserName
 
-    root = container
-    root.classList.remove('hidden')
+    /* Re-mount: drop only what this component owns. Clearing the container
+       would take popup.js's run button with it — the same class of bug as the
+       one described at the top of this file. */
+    container.querySelectorAll('.sim-head, .sim-body').forEach(node => node.remove())
+
+    head = el('div', { class: 'sim-head', role: 'button', tabindex: '0' })
+    root = el('div', { class: 'sim-body' })
+
+    const toggle = () => setCollapsed(!SIM.state.collapsed)
+
+    head.addEventListener('click', toggle)
+    head.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        toggle()
+      }
+    })
+
+    /* Head and body go FIRST, so a run button appended afterwards stays at the
+       bottom where it belongs. */
+    container.insertBefore(root, container.firstChild)
+    container.insertBefore(head, root)
+
+    container.classList.remove('hidden')
+    root.classList.toggle('hidden', Boolean(SIM.state.collapsed))
+    renderHead()
     render()
   }
 
@@ -293,6 +357,7 @@ window.SIMUI = (() => {
     container.classList.add('hidden')
     container.textContent = ''
     root = null
+    head = null
   }
 
   return { mount, unmount, render }
