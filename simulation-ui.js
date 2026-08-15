@@ -181,7 +181,10 @@ window.SIMUI = (() => {
     root.appendChild(preview)
 
     // ── Rows per table ────────────────────────────────────────────────────
-    root.appendChild(el('div', { class: 'sim-legend', text: 'Jumlah baris per tabel' }))
+    /* ⚠️ Honest about what it does. The counts are collected and persisted but
+       the driver cannot yet add rows, and a control that silently does nothing
+       is worse than an absent one — the same rule the v2 tables follow. */
+    root.appendChild(el('div', { class: 'sim-legend', text: 'Jumlah baris per tabel · belum aktif' }))
 
     const grid = el('div', { class: 'sim-grid' })
     const more = el('div', { class: 'sim-grid sim-more hidden' })

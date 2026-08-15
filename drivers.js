@@ -43,6 +43,9 @@ const DRIVERS = {
     /* Step 4's Agunan modal, one call per plan. v1 has no equivalent yet, so
        callers must feature-test rather than assume it exists. */
     collaterals: v2FillCollaterals,
+    /* Generic N-rows-per-table. Uniform modals only — Agunan branches on type
+       and has its own capability above. */
+    addRows: v2AddRows,
     read:    v2ReadValues,
     current: v2CurrentStep,
     goTo:    v2GoToStep,

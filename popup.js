@@ -1451,6 +1451,44 @@ document.querySelectorAll('input[name="onOpen"]').forEach(r => {
  * a v1 page reaching this would otherwise throw on an undefined function rather
  * than simply skipping a capability it does not have.
  */
+/**
+ * Add the planned extra rows to each repeatable table.
+ *
+ * ⚠️ Runs BEFORE the collateral pass and AFTER the wizard fill: the wizard fill
+ * already creates one row in most tables, so these counts are read as a TARGET
+ * and the driver adds the difference — asking for 2 pemegang saham on a form
+ * that already has 1 must not produce 3.
+ */
+async function fillPlannedRows() {
+  if (!activePlan || !activePlan.tables || !activePlan.tables.length) return []
+
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.addRows !== 'function') return []
+
+  /* The wizard pass seeds one row in each table it touches, so ask for one
+     fewer. Never below zero — a count of 1 means "the one that already exists". */
+  const specs = activePlan.tables
+    .map(t => ({ opener: t.opener, count: Math.max(0, t.count - 1) }))
+    .filter(t => t.count > 0)
+
+  if (!specs.length) return []
+
+  const tab = await getActiveTab()
+
+  setStatus(`Baris tambahan (${specs.length} tabel)…`)
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.addRows, args: [specs]
+    })
+
+    return result || []
+  } catch (e) {
+    return [{ table: 'inject', error: e && e.message ? e.message : String(e) }]
+  }
+}
+
 async function fillPlannedCollaterals() {
   if (!activePlan || !activePlan.collaterals || !activePlan.collaterals.length) return []
 
@@ -1514,17 +1552,25 @@ async function mountSimulation() {
     try {
       await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
 
-      /* Collateral comes AFTER the wizard pass: the Agunan modal refuses to
-         open until a debtor is set on step 2, so running it first fails on
-         every item with the same reason. */
+      /* Both passes come AFTER the wizard fill: the Agunan modal refuses to open
+         until a debtor is set on step 2, so running either first fails on every
+         item for the same reason. */
+      /* ⚠️ fillPlannedRows is NOT called yet — the driver's addRows capability
+         does not work (see its note). Calling it would spend minutes per run
+         failing every table, so the counters stay inert and the panel says so
+         rather than the run pretending. */
       const agunan = await fillPlannedCollaterals()
+      const shortRows = []
       const failed = agunan.filter(r => !r.ok)
 
+      const problems = []
+
+      if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
+      if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
+
       setStatus(
-        failed.length
-          ? `Done, ${failed.length}/${agunan.length} agunan gagal — ${failed[0].step || ''} ${failed[0].reason || ''}`.trim()
-          : 'Done — ' + activePlan.projectName,
-        failed.length ? 'error' : 'done'
+        problems.length ? 'Done, ' + problems.join(' · ') : 'Done — ' + activePlan.projectName,
+        problems.length ? 'error' : 'done'
       )
     } catch (err) {
       setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')

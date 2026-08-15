@@ -44,18 +44,30 @@ window.SIM = (() => {
   /** The repeatable tables, in the order the wizard meets them. `max` is a
    *  guard rail, not a form rule — a 40-row shareholder table is a typo, and a
    *  run that fills one wastes minutes before anyone notices. */
+  /**
+   * The repeatable tables. `opener` is the button's EXACT label, taken from the
+   * app's own `id` translations rather than guessed — the driver matches on it
+   * exactly, and "Tambah Fasilitas" and "Tambah Fasilitas Kredit" are different
+   * buttons on different screens.
+   *
+   * `max` is a guard rail, not a form rule: a 40-row shareholder table is a
+   * typo, and a run that fills one wastes minutes before anyone notices.
+   *
+   * ⚠️ Agunan is deliberately ABSENT — it needs a type per row, so the panel
+   * models it as a list and the driver has a separate capability for it.
+   */
   const TABLES = [
-    { key: 'facility', label: 'Fasilitas', def: 1, max: 5 },
-    { key: 'shareholder', label: 'Pemegang saham', def: 2, max: 10 },
-    { key: 'boardMember', label: 'Pengurus', def: 2, max: 10 },
-    { key: 'financialReport', label: 'Laporan keuangan', def: 4, max: 8 },
-    { key: 'underlying', label: 'Underlying', def: 1, max: 5 },
-    { key: 'slik', label: 'SLIK', def: 1, max: 10 },
-    { key: 'ubo', label: 'UBO', def: 1, max: 10, more: true },
-    { key: 'emergencyContact', label: 'Kontak darurat', def: 1, max: 10, more: true },
-    { key: 'qualitative', label: 'Data kualitatif', def: 16, max: 20, more: true },
-    { key: 'document', label: 'Dokumen wajib', def: 7, max: 12, more: true },
-    { key: 'restructInfo', label: 'Informasi restrukturisasi', def: 9, max: 12, more: true }
+    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas Kredit', def: 1, max: 5 },
+    { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
+    { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
+    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8 },
+    { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
+    { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
+    { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
+    { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
+    { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
+    { key: 'document', label: 'Dokumen pengajuan', opener: 'Tambah Dokumen Pengajuan Kredit', def: 1, max: 12, more: true },
+    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Data Kunjungan', def: 1, max: 5, more: true }
   ]
 
   const SCENARIO = {
@@ -139,6 +151,13 @@ window.SIM = (() => {
       debtorName: state.debtorName || '',
       projectName: projectName(at),
       rows: { ...state.rows },
+
+      /* Shaped for the driver: it needs the opener label, not our key. Zero-count
+         tables are dropped here rather than in the driver, so "do nothing" is
+         expressed once. */
+      tables: TABLES
+        .filter(t => (state.rows[t.key] ?? 0) > 0)
+        .map(t => ({ key: t.key, opener: t.opener, count: state.rows[t.key] })),
       collaterals: state.collaterals.map(item => ({
         type: item.type,
         jenis: (COLLATERAL_TYPES.find(t => t.key === item.type) || {}).jenis,

@@ -1595,6 +1595,211 @@ async function v2FillCollaterals(items, openWait = 900) {
   return results
 }
 
+
+/**
+ * Add N rows to a repeatable table, generically.
+ *
+ * The collateral driver above needs a per-branch field table because the Agunan
+ * modal branches on type. Every OTHER repeatable table is uniform: one opener,
+ * one modal, one save. So this fills whatever the modal happens to contain
+ * rather than carrying a map per table — which is what makes it survive a field
+ * being added to any of them.
+ *
+ * ⚠️ Serialised alone, like every driver function here.
+ *
+ * @param specs [{ opener, count }] — `opener` is the button's exact label.
+ */
+async function v2AddRows(specs, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')]
+      .filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  /**
+   * A plausible value from the field's own placeholder.
+   *
+   * Deliberately heuristic rather than a per-table map: the point of this
+   * routine is that adding a field to any modal does not require touching the
+   * driver. Order matters — "Nomor Rekening" must match the number rule before
+   * the generic text rule.
+   */
+  const guess = (placeholder, index) => {
+    const p = String(placeholder || '').toLowerCase()
+
+    /* 🔴 DASHES, not slashes. v2's DateField parses dd-MM-yyyy; a slashed value
+       is accepted by the input and then fails validation, so the save is blocked
+       with no message against the date itself. Measured 2026-08-15: the same
+       underlying modal refused '15/01/2026' and saved on '15-01-2026'. */
+    if (/tanggal|tgl|jatuh tempo|masa berlaku/.test(p)) return '15-01-2026'
+    if (/kode pos/.test(p)) return '17530'
+    if (/^isi (rw|rt)|[\s(]rw|[\s(]rt/.test(p)) return '007'
+    if (/email/.test(p)) return 'uji' + index + '@contoh.co.id'
+    if (/telepon|nomor hp|handphone|whatsapp/.test(p)) return '0812' + String(10000000 + index)
+    if (/npwp|nik|ktp|nomor induk/.test(p)) return String(320000000000000 + index)
+    if (/nilai|nominal|jumlah|plafon|harga|limit|angsuran|saldo|omzet|pendapatan/.test(p)) return '100000000'
+    if (/persen|rate|bunga|suku/.test(p)) return '12'
+    if (/jangka waktu|tenor|periode|lama/.test(p)) return '12'
+    if (/nomor|no\./.test(p)) return 'UJI-' + String(1000 + index)
+
+    return 'Uji ' + String(placeholder || 'Data').replace(/^Isi\s+/i, '').slice(0, 28) + ' ' + index
+  }
+
+  /* Options come from a BEFORE/AFTER DIFF of the button set — the panel renders
+     inline among controls that are also buttons, so "first button that is not
+     Batal" picks a pill. Same trap the collateral driver paid for. */
+  const chooseFirst = async label => {
+    const scope = dialog()
+
+    if (!scope) return false
+
+    const trigger = [...scope.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === label)
+
+    if (!trigger) return false
+
+    const before = new Set([...scope.querySelectorAll('button')])
+
+    trigger.click()
+    await wait(openWait)
+
+    const option = [...(dialog() || document).querySelectorAll('button')]
+      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+      .find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    if (!option) { trigger.click(); return false }
+
+    option.click()
+    await wait(350)
+
+    return true
+  }
+
+  const makePdf = name =>
+    new File([new Blob([`%PDF-1.4\n% ${name}\nendobj\n%%EOF`], { type: 'application/pdf' })], name, { type: 'application/pdf' })
+
+  const results = []
+
+  for (const spec of specs || []) {
+    const count = Math.max(0, Number(spec.count) || 0)
+    let added = 0
+    let lastError = null
+
+    for (let n = 0; n < count; n++) {
+      const opener = [...document.querySelectorAll('button')]
+        .find(b => (b.textContent || '').trim() === spec.opener)
+
+      if (!opener) { lastError = 'no opener "' + spec.opener + '"'; break }
+
+      opener.click()
+      await wait(1000)
+
+      const box = dialog()
+
+      /* No modal means this is an INLINE repeater — the row is already appended
+         and there is nothing to save. Counting it as added is correct. */
+      if (!box) { added++; continue }
+
+      /* Selects first: several modals gate later fields on an earlier choice,
+         and a text pass before them writes into inputs about to be replaced. */
+      for (let i = 0; i < 10; i++) {
+        const pending = [...(dialog() || document).querySelectorAll('button')]
+          .map(b => (b.textContent || '').trim())
+          .find(t => /^Pilih\s/.test(t) && !/^Pilih File/i.test(t))
+
+        if (!pending) break
+        if (!(await chooseFirst(pending))) break
+      }
+
+      const scope = dialog()
+
+      if (scope) {
+        ;[...scope.querySelectorAll('input, textarea')]
+          .filter(i => i.type !== 'file' && !i.value && !i.disabled && !i.readOnly)
+          .forEach((input, i) => setNative(input, guess(input.placeholder, n + 1 + i)))
+
+        for (const input of [...scope.querySelectorAll('input[type=file]')]) {
+          const transfer = new DataTransfer()
+
+          transfer.items.add(makePdf('uji.pdf'))
+          input.files = transfer.files
+          input.dispatchEvent(new Event('change', { bubbles: true }))
+
+          /* 🔴 3200ms, the number run-case.js uses. The dropzone UPLOADS to the
+             DMS temp store on change, so this is a real network round trip —
+             saving before it settles leaves the form holding no document and
+             the modal simply does not close, with NO validation message to say
+             why. Measured 2026-08-15: at 1500ms every add reported "save
+             blocked: no message in the dialog". */
+          await wait(3200)
+        }
+      }
+
+      await wait(400)
+
+      /* ⚠️ The save carries the SAME label as the opener in these modals and is
+         told apart only by living inside the dialog — searching the document
+         would re-click the opener. */
+      const box2 = dialog()
+      const save = box2 && ([...box2.querySelectorAll('button')].find(b => (b.textContent || '').trim() === spec.opener)
+        || [...box2.querySelectorAll('button')].find(b => /^Simpan/.test((b.textContent || '').trim())))
+
+      save?.click()
+      await wait(1400)
+
+      const confirmBtn = dialog() && [...dialog().querySelectorAll('button')].find(b => (b.textContent || '').trim() === 'Ya')
+
+      if (confirmBtn) { confirmBtn.click(); await wait(1200) }
+
+      /* 🔴 Give the close time to happen before judging it.
+         The verdict is "did the modal close", so a wait shorter than the close
+         animation reports a SUCCESSFUL save as blocked — measured 2026-08-15:
+         900ms called the underlying modal blocked while the same sequence at
+         1800ms saved and the row appeared. Poll rather than guess a single
+         number, so a fast close is not paid for by everyone. */
+      for (let i = 0; i < 12 && dialog(); i++) await wait(200)
+
+      if (dialog()) {
+        /* Report WHAT blocked it, not merely that something did. A bare "save
+           blocked" sent two rounds of guessing after date formats and timing
+           before anyone asked the form. */
+        const box3 = dialog()
+
+        lastError = 'save blocked: ' + ([...new Set(
+          [...box3.querySelectorAll('*')]
+            .filter(e => !e.children.length)
+            .map(e => (e.textContent || '').trim())
+            .filter(t => /wajib|tidak boleh/i.test(t) && !/^•/.test(t) && !/^Format /i.test(t))
+        )].slice(0, 4).join(' | ') || 'no message in the dialog')
+
+        const cancel = [...box3.querySelectorAll('button')]
+          .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
+
+        cancel?.click()
+        await wait(700)
+        break
+      }
+
+      added++
+    }
+
+    results.push({ table: spec.opener, wanted: count, added, error: lastError })
+  }
+
+  return results
+}
+
 // ─── Read values back ─────────────────────────────────────────────────────────
 // One fiber walk yields the whole RHF store, which is both cheaper and more
 // accurate than scraping: it returns the stored codes rather than the labels
