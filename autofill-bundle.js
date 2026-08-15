@@ -293,6 +293,30 @@ const SMART_RULES = [
 
 // Returns smart default for a field.
 // '' for selects means "pick first live option during fill" (handles cascade-disabled fields).
+/**
+ * Values the simulation panel decides, keyed by the field's visible LABEL.
+ *
+ * Captured once per run (`activePlan`) rather than recomputed per field, so
+ * every generated name in one run carries the same timestamp — resolving
+ * per-field would stamp a five-minute run with five different minutes.
+ *
+ * Returns undefined when no panel is active, which is every route except the
+ * credit-application create form.
+ */
+let activePlan = null
+
+function simOverride(label) {
+  if (!activePlan) return undefined
+
+  const key = String(label || '').replace(/\s*\*\s*$/, '').trim().toLowerCase()
+
+  return {
+    'nama proyek kredit': activePlan.projectName,
+    'jenis kredit': activePlan.creditType,
+    'jenis pengajuan': activePlan.applicationType
+  }[key]
+}
+
 function smartDefault(name, label, type, options = []) {
   // Chooser kinds. v1: autocomplete / muiselect / select / radio.
   // v2: select (SearchableSelect), pills (PillGroup), multiselect.

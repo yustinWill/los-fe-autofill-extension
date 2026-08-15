@@ -520,3 +520,167 @@ textarea:focus { outline: none; border-color: #4f46e5; background: #fff; }
 .toast.show { opacity: 1; }
 
 .hidden { display: none !important; }
+
+/* ── Simulation panel ─────────────────────────────────────────────────────────
+   Shown only on the credit-application create route. Dense on purpose: the
+   popup is 380px and this panel carries three pill groups, two names, eleven
+   counters and a collateral list, so every row is 24-28px and the rarely-changed
+   counters collapse behind a disclosure. */
+.sim-panel {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 14px 12px;
+  flex-shrink: 0;
+}
+
+.sim-legend {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ca3af;
+  margin: 10px 0 6px;
+}
+.sim-legend:first-child { margin-top: 0; }
+
+.sim-row {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.sim-row-label { color: #6b7280; font-size: 12px; }
+
+.sim-pills { display: flex; gap: 4px; }
+.sim-pill {
+  flex: 1;
+  padding: 4px 2px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #6b7280;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sim-pill:hover { border-color: #c7d2fe; }
+.sim-pill.is-on {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+  color: #3730a3;
+  font-weight: 600;
+}
+
+.sim-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 7px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  color: #1a1a2e;
+  background: #fff;
+}
+.sim-input::placeholder { color: #b6bcc7; }
+.sim-input:focus { outline: none; border-color: #a5b4fc; }
+
+/* An overridden value is styled so it is obvious the convention no longer
+   governs this string. */
+.sim-input.is-custom { border-color: #a5b4fc; background: #f8f9ff; }
+
+.sim-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #f9fafb;
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin-top: 8px;
+}
+.sim-preview-label { font-size: 10px; color: #9ca3af; }
+.sim-preview-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #1a1a2e;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.sim-preview-input:focus { outline: none; border-color: #a5b4fc; background: #fff; }
+.sim-preview-input.is-custom { border-color: #a5b4fc; background: #fff; }
+
+.sim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+.sim-count { display: flex; align-items: center; gap: 6px; }
+.sim-count-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sim-num {
+  width: 40px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  text-align: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  color: #1a1a2e;
+}
+.sim-num:focus { outline: none; border-color: #a5b4fc; }
+
+.sim-more-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  color: #4f46e5;
+  cursor: pointer;
+}
+.sim-more { margin-top: 5px; }
+
+.sim-collateral { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+.sim-select {
+  width: 96px;
+  flex-shrink: 0;
+  padding: 4px 5px;
+  font-size: 11px;
+  font-family: inherit;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #fff;
+  color: #1a1a2e;
+}
+.sim-select:focus { outline: none; border-color: #a5b4fc; }
+.sim-name { font-size: 11px; }
+
+.sim-icon {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.sim-icon:hover { background: #fee2e2; color: #b91c1c; }
+
+.sim-add {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 11px;
+  color: #4f46e5;
+  cursor: pointer;
+}

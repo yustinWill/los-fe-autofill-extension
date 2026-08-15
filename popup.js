@@ -552,6 +552,30 @@ const SMART_RULES = [
 
 // Returns smart default for a field.
 // '' for selects means "pick first live option during fill" (handles cascade-disabled fields).
+/**
+ * Values the simulation panel decides, keyed by the field's visible LABEL.
+ *
+ * Captured once per run (`activePlan`) rather than recomputed per field, so
+ * every generated name in one run carries the same timestamp — resolving
+ * per-field would stamp a five-minute run with five different minutes.
+ *
+ * Returns undefined when no panel is active, which is every route except the
+ * credit-application create form.
+ */
+let activePlan = null
+
+function simOverride(label) {
+  if (!activePlan) return undefined
+
+  const key = String(label || '').replace(/\s*\*\s*$/, '').trim().toLowerCase()
+
+  return {
+    'nama proyek kredit': activePlan.projectName,
+    'jenis kredit': activePlan.creditType,
+    'jenis pengajuan': activePlan.applicationType
+  }[key]
+}
+
 function smartDefault(name, label, type, options = []) {
   // Chooser kinds. v1: autocomplete / muiselect / select / radio.
   // v2: select (SearchableSelect), pills (PillGroup), multiselect.
@@ -851,7 +875,12 @@ executeBtn.addEventListener('click', async () => {
 
       for (let i = 0; i < stepFields.length; i++) {
         const f = stepFields[i]
-        const value = data[f.name] ?? smartDefault(f.name, f.label, f.type, f.options)
+        /* Precedence: an explicit per-field override, then the simulation plan
+           (the scenario pills and the generated project name), then the smart
+           default. The plan sits ABOVE smartDefault because its values are
+           chosen deliberately for this run; it sits BELOW `data` so a manual
+           override still wins. */
+        const value = data[f.name] ?? simOverride(f.label) ?? smartDefault(f.name, f.label, f.type, f.options)
         const isOptional = !!f.optional
 
         progressFill.style.width = Math.round((filled / totalFields) * 100) + '%'
@@ -1415,10 +1444,63 @@ document.querySelectorAll('input[name="onOpen"]').forEach(r => {
   r.addEventListener('change', () => chrome.storage.local.set({ pref_onOpen: r.value }))
 })
 
+// ── Simulation panel ──────────────────────────────────────────────────────────
+/**
+ * On the credit-application CREATE route the popup asks before it acts.
+ *
+ * 🔴 This SUPPRESSES the auto-run below, and that is the point of the feature.
+ * Auto-run is right everywhere else — open the popup, the form fills — but on
+ * the create form the run is a fixture with a shape (how many facilities, which
+ * collateral branches, what the record is called), and a run that starts before
+ * the user can say any of that is a run they have to undo. Undoing means a real
+ * row in shared staging.
+ *
+ * Everywhere else this returns false in one URL test and nothing changes.
+ */
+const simPanel = document.getElementById('simPanel')
+
+async function mountSimulation() {
+  const tab = await getActiveTab()
+
+  if (!tab || !SIM.isCreditApplication(tab.url)) return false
+
+  await SIMUI.mount(simPanel, { onChange: () => {} })
+
+  /* The panel's own primary action. Deliberately NOT the header Quick Fill
+     button: that one means "fill this page now" and still does, while this one
+     means "build the record I just described". */
+  const run = document.createElement('button')
+
+  run.className = 'btn btn-primary btn-sm'
+  run.style.cssText = 'width:100%;margin-top:10px'
+  run.textContent = 'Isi formulir'
+  run.addEventListener('click', async () => {
+    run.disabled = true
+    activePlan = SIM.plan()
+    setStatus('Starting…')
+
+    try {
+      await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
+      setStatus('Done — ' + activePlan.projectName, 'done')
+    } catch (err) {
+      setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
+    } finally {
+      run.disabled = false
+    }
+  })
+
+  simPanel.appendChild(run)
+
+  return true
+}
+
 // ── Auto-run on popup open ────────────────────────────────────────────────────
 // If the user chose "Quick Fill", auto-run the wizard loop and close when done.
 // If they chose "Open Popup", just show the panel for manual use.
 ;(async () => {
+  // Asks first on the create route; returns false everywhere else.
+  if (await mountSimulation()) return
+
   const { pref_onOpen } = await chrome.storage.local.get('pref_onOpen')
   if (pref_onOpen === 'popup') return
 

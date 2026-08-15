@@ -21,6 +21,11 @@
     <span id="statusText">Ready</span>
   </div>
 
+  <!-- Simulation options. Populated by simulation-ui.js and shown ONLY on the
+       credit-application create route; everywhere else Quick Fill behaves as it
+       always did. Empty in markup because it is entirely data-driven. -->
+  <section id="simPanel" class="sim-panel hidden"></section>
+
   <!-- ── Step 1: Detect ──────────────────────────────────────────────────── -->
   <section class="step-section">
     <div class="step-row">
@@ -137,6 +142,8 @@
   <script src="driver-v1.js"></script>
   <script src="driver-v2.js"></script>
   <script src="drivers.js"></script>
+  <script src="simulation.js"></script>
+  <script src="simulation-ui.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
