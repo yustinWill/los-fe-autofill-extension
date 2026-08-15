@@ -1279,7 +1279,27 @@ async function v2FillCollaterals(items, openWait = 900) {
    * Two fixes: skip upload triggers by name, and treat a failure as "move on"
    * rather than "stop", so one unresolvable control cannot strand the rest.
    */
-  const resolveRemainingSelects = async (rounds = 10) => {
+  /**
+   * 🔴 Blocklist FAILURES, not attempts. The modal carries the address block
+   * TWICE (collateral + owner) with IDENTICAL trigger labels, and a `tried` set
+   * keyed on the label meant the owner's whole cascade was skipped the moment
+   * the collateral's had run — so `OWNER_DATA_PROVINCE_CODE` and its three
+   * children were required and permanently empty, and the save was refused on
+   * a section the sweep believed it had finished. Measured 2026-08-15 on the
+   * logam-mulia branch (the RHF-store report named the four fields in one run).
+   *
+   * A SUCCESSFUL choose changes the trigger's label to the chosen value, so on
+   * the next round the first "Pilih Provinsi" match IS the owner's — duplicate
+   * labels resolve themselves as long as only failures are retired. The `tried`
+   * set still exists for its original job: a trigger whose choose FAILS keeps
+   * its label forever and would otherwise loop.
+   *
+   * ⚠️ The five branches that saved before this fix did so on RESIDUAL modal
+   * state — this modal keeps its RHF values across open/cancel — not because
+   * the sweep reached the owner block. A fresh page fails every two-cascade
+   * branch without this.
+   */
+  const resolveRemainingSelects = async (rounds = 20) => {
     const tried = new Set()
 
     for (let i = 0; i < rounds; i++) {
@@ -1292,8 +1312,10 @@ async function v2FillCollaterals(items, openWait = 900) {
         .find(t => /^Pilih\s/.test(t) && !/^Pilih File/i.test(t) && !tried.has(t))
 
       if (!pending) return
-      tried.add(pending)
-      await choose(pending, null)
+
+      const result = await choose(pending, null)
+
+      if (!result.ok) tried.add(pending)
     }
   }
 
@@ -1574,7 +1596,39 @@ async function v2FillCollaterals(items, openWait = 900) {
     /* 🔴 Success is the modal CLOSING and a row appearing — never the save
        click landing. A blocked save clicks perfectly well and changes nothing. */
     if (dialog()) {
-      results.push({ name: item.name, ok: false, step: 'submit', errors: dialogErrors() })
+      /* The resolver's own verdict, not just the DOM's. These modals refuse a
+         save SILENTLY through handleSubmit, and a field whose error draws no
+         helper text leaves dialogErrors() empty on a loudly invalid form —
+         exactly how the add-rows blocker hid for six hypotheses. Naming the
+         FIELD KEY beats a generic "Field ini wajib diisi" every time. */
+      const rhfErrors = (() => {
+        for (const el of dialog().querySelectorAll('input, textarea, button')) {
+          const key = Object.keys(el).find(k => /^__reactFiber\$/.test(k))
+
+          if (!key) continue
+
+          let fiber = el[key]
+          let depth = 0
+
+          while (fiber && depth++ < 200) {
+            const props = fiber.memoizedProps
+
+            if (props && props.control && typeof props.name === 'string') {
+              const flat = (obj, path = []) =>
+                Object.entries(obj || {}).flatMap(([k, v]) =>
+                  v && typeof v === 'object' && !v.message ? flat(v, [...path, k]) : [[...path, k].join('.') + ': ' + (v?.message ?? v)]
+                )
+
+              return flat(props.control._formState?.errors)
+            }
+            fiber = fiber.return
+          }
+        }
+
+        return null
+      })()
+
+      results.push({ name: item.name, ok: false, step: 'submit', errors: dialogErrors(), rhfErrors })
 
       const cancel = [...(dialog() || document).querySelectorAll('button')]
         .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
