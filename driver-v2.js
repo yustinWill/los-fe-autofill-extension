@@ -2486,7 +2486,7 @@ async function v2AddFacilities(plan, openWait = 900) {
   /* Options come from a BEFORE/AFTER DIFF of the dialog's button set: the panel
      renders INLINE among controls that are also <button>s, so "the first button
      that is not Batal" picks a pill. */
-  const choose = async (triggerText, optionText) => {
+  const choose = async (triggerText, optionText, _exact = false, nth = 0) => {
     const scope = dialog()
 
     if (!scope) return false
@@ -2505,6 +2505,21 @@ async function v2AddFacilities(plan, openWait = 900) {
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    /* `nth` addresses the list positionally — used to walk PRODUCTS when the
+       first one turns out to be unsaveable. Out of range closes the panel and
+       reports, so the caller can stop rather than loop. */
+    if (nth > 0) {
+      if (!usable[nth]) { trigger.click(); return { ok: false, chosen: null, fellBack: false, exhausted: true } }
+
+      const pick = usable[nth]
+      const label = (pick.textContent || '').trim()
+
+      pick.click()
+      await wait(400)
+
+      return { ok: true, chosen: label, fellBack: false }
+    }
 
     const named = optionText
       ? (options.find(b => (b.textContent || '').trim() === optionText)
@@ -2555,6 +2570,10 @@ async function v2AddFacilities(plan, openWait = 900) {
 
   const results = []
 
+  /* Which product to try. Advanced — not reset — when one proves unsaveable,
+     so the walk never revisits a dead product on a later row. */
+  let attempt = 0
+
   for (let n = 0; n < Math.max(0, Number(spec.count) || 0); n++) {
     const opener = [...document.querySelectorAll('button')]
       .find(b => /Tambah Fasilitas/.test(b.textContent || ''))
@@ -2569,10 +2588,29 @@ async function v2AddFacilities(plan, openWait = 900) {
 
     if (!dialog()) { results.push({ ok: false, step: 'open', reason: 'dialog did not mount' }); continue }
 
-    const product = await choose('Pilih produk kredit', null)
+    /**
+     * 🔴 TRY THE NEXT PRODUCT WHEN ONE LEADS TO AN UNSATISFIABLE FORM.
+     *
+     * "Pick the first option available" has to mean the first that WORKS.
+     * Measured 2026-08-16 on Perorangan Konsumtif, which offers exactly two
+     * products:
+     *
+     *   1020 MULTIGUNA FIXED LOAN → schemes Bullet Pokok / Bunga / Pokok+Bunga,
+     *                               and **zero** Metode Perhitungan options for
+     *                               ANY of them ("Tidak ada pilihan yang cocok")
+     *   1021 MULTIGUNA ANGSURAN   → scheme Reguler, which works
+     *
+     * `Metode Perhitungan Bunga` is REQUIRED, so on 1020 the modal cannot be
+     * saved by anyone — driver or human. Taking the first product parked the
+     * run on the one dead product in the list. Recorded as a data gap in its
+     * own right; the driver simply must not stop there.
+     */
+    const productIndex = attempt
+
+    const product = await choose('Pilih produk kredit', null, false, productIndex)
 
     if (!product.ok) {
-      results.push({ ok: false, step: 'product', reason: 'product select did not open or offered nothing' })
+      results.push({ ok: false, step: 'product', reason: `no product at index ${productIndex}` })
 
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
@@ -2596,6 +2634,42 @@ async function v2AddFacilities(plan, openWait = 900) {
     /* A BULLET_* scheme LOCKS the method to Flat and removes the trigger, so
        `choose` finding nothing here is correct rather than a failure. */
     const method = await choose('Pilih metode perhitungan', spec.method)
+
+    /**
+     * 🔴 The method select is STILL PRESENT but offered NOTHING — the modal is
+     * unsatisfiable on this product, so move to the next one rather than
+     * submitting into a required field that can never be filled. A trigger that
+     * has VANISHED is the locked case and is fine; a trigger that remains and
+     * yields no option is the dead one.
+     */
+    const methodDead = !method.ok
+      && [...(dialog() || document).querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
+
+    if (methodDead) {
+      const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
+
+      cancel?.click()
+      await wait(700)
+
+      /* Dismissing a dirty modal raises its own confirm. ⚠️ Answered inline —
+         `answerConfirm` belongs to `v2FillCollaterals` and is NOT in scope
+         here; each driver function is serialised alone. */
+      const ya = [...(dialog() || document).querySelectorAll('button')]
+        .find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+      if (ya) { ya.click(); await wait(800) }
+
+      attempt += 1
+      n -= 1
+
+      /* Bounded: without this a form whose every product is dead loops forever. */
+      if (attempt > 4) {
+        results.push({ ok: false, step: 'product', reason: `no product offers a usable Metode Perhitungan (tried ${attempt})` })
+        break
+      }
+
+      continue
+    }
 
     /* Perpanjangan/Restrukturisasi make seven more figures required. Anything
        still empty gets a zero so the save is not blocked on a field the caller
