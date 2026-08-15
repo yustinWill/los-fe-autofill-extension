@@ -1173,7 +1173,7 @@ async function v2FillCollaterals(items, openWait = 900) {
   /* A Kairos select is a trigger button over an INLINE panel of plain buttons —
      no role="option", not portalled. ⚠️ The trigger TOGGLES: clicking one that
      is already open closes it, which reads as "no options exist". */
-  const choose = async (placeholderOrLabel, optionText) => {
+  const choose = async (placeholderOrLabel, optionText, exact = false) => {
     const scope = dialog() || document
     const trigger = [...scope.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim().toLowerCase().includes(String(placeholderOrLabel).toLowerCase()))
@@ -1194,10 +1194,26 @@ async function v2FillCollaterals(items, openWait = 900) {
     const options = [...(dialog() || document).querySelectorAll('button')]
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
 
-    const hit = optionText
+    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    const named = optionText
       ? options.find(b => (b.textContent || '').trim() === optionText)
         || options.find(b => (b.textContent || '').trim().includes(optionText))
-      : options.find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+      : null
+
+    /**
+     * 🔴 Seed value not offered → TAKE THE FIRST (user, 2026-08-16). A required
+     * select left empty because a mock value was unavailable fails the whole
+     * record over a detail no fixture cares about.
+     *
+     * ⚠️ `exact` opts OUT, and exactly one caller uses it: **Jenis Agunan**.
+     * That choice DECIDES WHICH BRANCH runs, and the branch table then fills
+     * fields belonging to the type it thinks it picked — so substituting there
+     * would quietly build a deposito while filling a vehicle's fields. A
+     * branch-selecting choice must fail loudly; every value INSIDE a branch may
+     * fall back.
+     */
+    const hit = named || (exact ? null : usable[0])
 
     if (!hit) { trigger.click(); return { ok: false, reason: 'no option "' + optionText + '"' } }
 
@@ -1206,7 +1222,7 @@ async function v2FillCollaterals(items, openWait = 900) {
     hit.click()
     await wait(400)
 
-    return { ok: true, chosen }
+    return { ok: true, chosen, fellBack: Boolean(optionText) && !named }
   }
 
   /* Every small closed option set is a row of <button>s. ⚠️ Scope to the pill's
@@ -1550,7 +1566,10 @@ async function v2FillCollaterals(items, openWait = 900) {
     if (!dialog()) { results.push({ name: item.name, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
 
     // The TYPE first: it decides which fields exist below it.
-    const jenis = await choose('Pilih Jenis Agunan', item.jenis)
+    /* `exact` — this choice DECIDES THE BRANCH. Substituting a different type
+       here would fill a deposito's fields into a vehicle, so it must fail
+       loudly rather than fall back. Every value inside a branch may substitute. */
+    const jenis = await choose('Pilih Jenis Agunan', item.jenis, true)
 
     if (!jenis.ok) { results.push({ name: item.name, ok: false, step: 'jenis', reason: jenis.reason }); continue }
 
@@ -2409,10 +2428,55 @@ async function v2AddFacilities(plan, openWait = 900) {
 
   /** Fill every input whose placeholder contains `needle` — BOTH of them where
    *  a block appears twice, the trap the collateral driver paid for. */
+  /**
+   * 🔴 PLACEHOLDER FIRST, THEN LABEL — because this modal has NO placeholders.
+   *
+   * Measured 2026-08-16: every input in "Tambah Fasilitas Kredit" reports
+   * `placeholder: ""`, so a placeholder-only fill matched NOTHING. Plafon,
+   * tenor and rate were never written and the save was refused with no message
+   * — the same silent shape as every other bug on this path. It appeared to
+   * work once only because the product picked on that run prefilled them.
+   *
+   * The label is the reliable key here: walk up from the input to the first
+   * ancestor carrying a label element that is not the input's own wrapper.
+   * Placeholder is kept first because every OTHER v2 modal does have them and
+   * they are cheaper to match.
+   */
+  const labelOf = input => {
+    let node = input
+
+    /* ⚠️ Prefer a real <label>, and never an ADORNMENT. A currency field renders
+       its "Rp" prefix as a span INSIDE the control wrapper, so "first span that
+       is not the input" returns "Rp" — measured 2026-08-16, which is why
+       `Plafon Pinjaman` matched nothing and the zero-fill then wrote 0 into the
+       headline amount. Anything at or under three characters is a unit, not a
+       name. */
+    for (let depth = 0; depth < 6 && node; depth++) {
+      node = node.parentElement
+
+      if (!node) break
+
+      const candidates = [...node.querySelectorAll('label, .kai-label, span')]
+        .filter(el => !el.contains(input) && el.textContent.trim().length > 3)
+
+      if (candidates.length) {
+        const real = candidates.find(el => el.tagName === 'LABEL') || candidates[0]
+
+        return real.textContent.trim()
+      }
+    }
+
+    return ''
+  }
+
   const fill = (needle, value) => {
     const scope = dialog() || document
-    const hits = [...scope.querySelectorAll('input, textarea')]
-      .filter(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
+    const want = String(needle).toLowerCase()
+    const candidates = [...scope.querySelectorAll('input, textarea')].filter(i => !i.disabled && !i.readOnly)
+
+    let hits = candidates.filter(i => (i.placeholder || '').toLowerCase().includes(want))
+
+    if (!hits.length) hits = candidates.filter(i => labelOf(i).toLowerCase().includes(want))
 
     hits.forEach(i => setNative(i, value))
 
@@ -2440,17 +2504,40 @@ async function v2AddFacilities(plan, openWait = 900) {
     const options = [...(dialog() || document).querySelectorAll('button')]
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
 
-    const hit = optionText
+    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    const named = optionText
       ? (options.find(b => (b.textContent || '').trim() === optionText)
         || options.find(b => (b.textContent || '').trim().includes(optionText)))
-      : options.find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+      : null
 
-    if (!hit) { trigger.click(); return false }
+    /**
+     * 🔴 IF THE SEED VALUE IS NOT OFFERED, TAKE THE FIRST OPTION (user,
+     * 2026-08-16: "if none of the mock data avail, just pick the first option
+     * avail").
+     *
+     * The seeds are generic — `Reguler` / `Anuitas` — and a product decides its
+     * own list. `PROD - KK - MULTIGUNA FIXED LOAN` offers only Bullet Pokok,
+     * Bullet Bunga and Bullet Pokok + Bunga, so asking for `Reguler` matched
+     * nothing, the REQUIRED select stayed empty, and the save was refused with
+     * no message at all. Leaving a required select blank because a mock value
+     * was unavailable fails the whole record over a detail nobody cares about
+     * in a fixture.
+     *
+     * ⚠️ The substitution is REPORTED, never silent — `fellBack` rides back to
+     * the caller. Quietly filling something different from what was asked for
+     * is the exact class of bug this driver keeps paying for.
+     */
+    const hit = named || usable[0]
+
+    if (!hit) { trigger.click(); return { ok: false, chosen: null, fellBack: false } }
+
+    const chosen = (hit.textContent || '').trim()
 
     hit.click()
     await wait(400)
 
-    return true
+    return { ok: true, chosen, fellBack: Boolean(optionText) && !named }
   }
 
   const blockingErrors = () => {
@@ -2482,7 +2569,9 @@ async function v2AddFacilities(plan, openWait = 900) {
 
     if (!dialog()) { results.push({ ok: false, step: 'open', reason: 'dialog did not mount' }); continue }
 
-    if (!(await choose('Pilih produk kredit', null))) {
+    const product = await choose('Pilih produk kredit', null)
+
+    if (!product.ok) {
       results.push({ ok: false, step: 'product', reason: 'product select did not open or offered nothing' })
 
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
@@ -2502,11 +2591,11 @@ async function v2AddFacilities(plan, openWait = 900) {
     fill('Suku Bunga', spec.rate)
     await wait(300)
 
-    await choose('Pilih skema pembayaran', spec.scheme)
+    const scheme = await choose('Pilih skema pembayaran', spec.scheme)
 
-    /* A BULLET_* scheme LOCKS the method to Flat and removes the placeholder,
-       so `choose` returning false here is correct, not a failure. */
-    await choose('Pilih metode perhitungan', spec.method)
+    /* A BULLET_* scheme LOCKS the method to Flat and removes the trigger, so
+       `choose` finding nothing here is correct rather than a failure. */
+    const method = await choose('Pilih metode perhitungan', spec.method)
 
     /* Perpanjangan/Restrukturisasi make seven more figures required. Anything
        still empty gets a zero so the save is not blocked on a field the caller
@@ -2523,18 +2612,37 @@ async function v2AddFacilities(plan, openWait = 900) {
     submit?.click()
     await wait(900)
 
-    /* v2 may gate the save behind its own confirm. */
-    const confirm = dialog()
-    const ya = confirm && confirm !== box
-      && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+    /**
+     * v2 gates the save behind its own confirm.
+     *
+     * 🔴 Do NOT require the confirm to be a DIFFERENT element than the modal.
+     * Measured 2026-08-16: after clicking save, the open dialog's button list
+     * reads `Tidak, Ya, Batal, Tambah Fasilitas` — the confirm's buttons are
+     * reachable in the same scope, so a `confirm !== box` guard never fires,
+     * the Ya is never clicked, and the modal simply stays open forever. Look
+     * for the button, not for a second dialog.
+     */
+    const ya = [...(dialog() || document).querySelectorAll('button')]
+      .find(b => /^Ya$/i.test((b.textContent || '').trim()))
 
-    if (ya) { ya.click(); await wait(800) }
+    if (ya) { ya.click(); await wait(900) }
 
     /* Success is the dialog CLOSING, never the click landing. */
     for (let i = 0; i < 12 && dialog(); i++) await wait(200)
 
+    /* Every choice this row actually made — so a substituted option is visible
+       in the report rather than discovered later in the record. */
+    const chosen = {
+      product: product.chosen,
+      scheme: scheme.chosen,
+      method: method.chosen,
+      ...(scheme.fellBack || method.fellBack
+        ? { substituted: [scheme.fellBack && `skema→${scheme.chosen}`, method.fellBack && `metode→${method.chosen}`].filter(Boolean) }
+        : {})
+    }
+
     if (dialog()) {
-      results.push({ ok: false, step: 'submit', errors: blockingErrors() })
+      results.push({ ok: false, step: 'submit', errors: blockingErrors(), chosen })
 
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
@@ -2543,7 +2651,7 @@ async function v2AddFacilities(plan, openWait = 900) {
       continue
     }
 
-    results.push({ ok: true, total: (document.body.innerText.match(/Total Plafon[^\n]*/) || [null])[0] })
+    results.push({ ok: true, total: (document.body.innerText.match(/Total Plafon[^\n]*/) || [null])[0], chosen })
   }
 
   return results
