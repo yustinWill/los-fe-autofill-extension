@@ -314,6 +314,39 @@ if (!S) {
       const folded = fireHandlerThat('click', () => {}, () => S.state.collapsed === true)
 
       folded ? pass('the config folds away') : fail('nothing toggles state.collapsed — the panel cannot be collapsed')
+
+      /**
+       * 🔴 4. EVERY DRIVER MUST IMPLEMENT THE WHOLE MODAL CAPABILITY.
+       *
+       * `walkRecordModals` bails on a missing `listModals` — silently, so
+       * "Fill modals" was a ticked checkbox that did NOTHING on every v2 page,
+       * and Fasilitas Kredit (reachable only via "Tambah Fasilitas") never
+       * filled. Worse, `saveModal`/`closeModal` are called with NO feature
+       * test, so a HALF-registered capability opens a modal and then throws.
+       *
+       * The rule this asserts: a UI control may not advertise a capability that
+       * a driver it can run against lacks, and the capability is all-or-nothing.
+       */
+      /* ⚠️ `const DRIVERS` is a LEXICAL binding, not a property of the context,
+         so `sandbox.DRIVERS` is undefined however well the file loaded. Read it
+         by evaluating in the same context — the alternative, exporting it onto
+         `window` purely to be testable, would change production code to suit
+         the test. */
+      const drivers = vm.runInContext('typeof DRIVERS !== "undefined" ? DRIVERS : null', sandbox)
+      const MODAL_CAPS = ['listModals', 'openModal', 'saveModal', 'closeModal']
+
+      if (!drivers) {
+        fail('DRIVERS not reachable — cannot check driver capability parity')
+      } else {
+        Object.entries(drivers).forEach(([variant, d]) => {
+          const missing = MODAL_CAPS.filter(c => typeof d[c] !== 'function')
+          const partial = missing.length && missing.length < MODAL_CAPS.length
+
+          if (!missing.length) pass(`${variant} implements the modal capability`)
+          else if (partial) fail(`${variant} implements the modal capability PARTIALLY (missing ${missing.join(', ')}) — saveModal/closeModal are called untested and will throw`)
+          else fail(`${variant} implements NO modal capability, but the popup offers a "Fill modals" checkbox — it would tick and do nothing`)
+        })
+      }
     } catch (e) {
       fail(`panel checks: ${e.name}: ${e.message}`)
     } finally {

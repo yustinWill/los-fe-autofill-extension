@@ -1458,16 +1458,41 @@ async function runAllWizardSteps({ onStep } = {}) {
 
 // ── Quick Fill button ─────────────────────────────────────────────────────────
 const quickFillBtn = document.getElementById('quickFillBtn')
+/**
+ * The ONE entry point (user, 2026-08-15: "no need for the 'Isi formulir'
+ * button, as we will use the quick fill for centralized one").
+ *
+ * The panel's own button was removed rather than kept as a second door: two
+ * controls that fill the same form, differing only in whether they honour the
+ * config sitting directly above them, is a question the user should never have
+ * to answer. Quick Fill now IS the panel's run whenever the panel is mounted —
+ * it captures the plan first, and afterwards adds the planned rows and agunan.
+ */
 quickFillBtn.addEventListener('click', async () => {
   quickFillBtn.disabled = true
   setStatus('Starting…')
+
+  /* Mounted only on the credit-application create route, so everywhere else
+     this stays null and Quick Fill behaves exactly as it always did. */
+  const planned = isSimulationMounted()
+
+  if (planned) activePlan = SIM.plan()
+
   try {
     await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
 
-    /* The scope decides what "done" can even mean, so say which one ran rather
-       than a bare "Done" that reads the same whether modals were touched. */
-    const scope = currentScope()
-    setStatus(scope === 'fill' ? 'Done — page + modals filled' : 'Done — page only', 'done')
+    if (!planned) {
+      /* The scope decides what "done" can even mean, so say which one ran
+         rather than a bare "Done" that reads the same whether modals were
+         touched. */
+      const scope = currentScope()
+
+      setStatus(scope === 'fill' ? 'Done — page + modals filled' : 'Done — page only', 'done')
+
+      return
+    }
+
+    await runPlannedExtras()
   } catch (err) {
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
   } finally {
@@ -1530,6 +1555,10 @@ async function fillPlannedRows() {
    * assumption, and hiding that is how "Done" got printed over a short table.
    */
   const specs = activePlan.tables
+    /* Tables with their own driver capability are handled elsewhere — the
+       facility modal needs a ~3s wait for its product's find-one, which a
+       uniform opener/fill/save loop cannot express. */
+    .filter(t => !t.isOwnCapability)
     .map(t => ({ opener: t.opener, count: Math.max(0, t.count - 1), target: t.count }))
     .filter(t => t.count > 0)
 
@@ -1549,6 +1578,41 @@ async function fillPlannedRows() {
     return (result || []).map(r => ({ ...r, target: (specs.find(s => s.opener === r.table) || {}).target }))
   } catch (e) {
     return [{ table: 'inject', error: e && e.message ? e.message : String(e) }]
+  }
+}
+
+/**
+ * Step 1's credit facilities, through the driver's own facility capability.
+ *
+ * 🔴 Runs FIRST of the three passes, and before the wizard leaves step 1 is not
+ * enough — it must run while a Jenis Kredit is set, because "Tambah Fasilitas"
+ * does not exist until then. It also gates everything downstream: an
+ * application with no facility cannot be submitted at all
+ * ("Minimal satu fasilitas kredit wajib ditambahkan").
+ */
+async function fillPlannedFacilities() {
+  if (!activePlan || !activePlan.tables) return []
+
+  const wanted = activePlan.tables.find(t => t.key === 'facility')
+
+  if (!wanted || !wanted.count) return []
+
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.facilities !== 'function') return []
+
+  const tab = await getActiveTab()
+
+  setStatus(`Fasilitas kredit (${wanted.count})…`)
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.facilities, args: [{ count: wanted.count }]
+    })
+
+    return result || []
+  } catch (e) {
+    return [{ ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }]
   }
 }
 
@@ -1662,74 +1726,67 @@ async function mountSimulation() {
      typed themselves always wins over the session's. */
   await SIMUI.mount(simPanel, { onChange: () => {}, defaultUserName: await loggedInUserName(tab.id) })
 
-  /* The panel's own primary action. Deliberately NOT the header Quick Fill
-     button: that one means "fill this page now" and still does, while this one
-     means "build the record I just described". */
-  const run = document.createElement('button')
-
-  run.className = 'btn btn-primary btn-sm'
-  run.style.cssText = 'width:100%;margin-top:10px'
-  run.textContent = 'Isi formulir'
-  run.addEventListener('click', async () => {
-    run.disabled = true
-    activePlan = SIM.plan()
-    setStatus('Starting…')
-
-    try {
-      await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
-
-      /* Both passes come AFTER the wizard fill: the Agunan modal refuses to open
-         until a debtor is set on step 2, so running either first fails on every
-         item for the same reason. Rows run first so a shortfall there is not
-         confused with anything the collateral pass did.
-
-         Wired 2026-08-15 — the addRows blocker was never a driver-sequence bug:
-         the underlying nominal MOUNTS showing "0" (its form default), so the
-         `!i.value` fill filter skipped it and the save failed on a field the
-         driver had never written. Fixed in the driver's blank test. */
-      const rows = await fillPlannedRows()
-      const agunan = await fillPlannedCollaterals()
-      /* `wanted` is the driver's own spec count, already reduced by the
-         wizard-seeded row; `target` is what the user actually asked for. A
-         shortfall against `wanted` is a real failure — the driver could not add
-         a row it tried to add. */
-      const shortRows = rows.filter(r => r.error || (r.added ?? 0) < (r.wanted ?? 0))
-      const failed = agunan.filter(r => !r.ok)
-
-      const problems = []
-
-      if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
-      if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
-
-      /**
-       * 🔴 Report the name the FORM ended up with, not the one we planned.
-       *
-       * This used to print `'Done — ' + activePlan.projectName` unconditionally,
-       * which on a pre-filled form named a project the run had never written —
-       * a green "Done — Testing Yusti N BU-P …" over an application still
-       * called something else. Deliberate values now bypass skipFilled so the
-       * two usually agree, but a disabled field still cannot be written, and a
-       * status line must never assert something it has not checked.
-       */
-      const actualName = await readProjectName()
-      const nameMismatch = actualName && activePlan.projectName && actualName !== activePlan.projectName
-
-      if (nameMismatch) problems.push(`nama proyek tetap "${actualName}"`)
-
-      setStatus(
-        problems.length ? 'Done, ' + problems.join(' · ') : 'Done — ' + (actualName || activePlan.projectName),
-        problems.length ? 'error' : 'done'
-      )
-    } catch (err) {
-      setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
-    } finally {
-      run.disabled = false
-    }
-  })
-
-  simPanel.appendChild(run)
-
+  /* ⚠️ NO run button here. Quick Fill is the single entry point (user,
+     2026-08-15) — it detects the mounted panel and runs the plan itself. */
   return true
+}
+
+/** Whether the config panel is mounted, i.e. whether Quick Fill should honour
+ *  a plan. Keyed on the panel's own body rather than a flag, so it cannot fall
+ *  out of step with what is actually on screen. */
+function isSimulationMounted() {
+  return Boolean(simPanel && !simPanel.classList.contains('hidden') && simPanel.querySelector('.sim-body'))
+}
+
+/**
+ * The planned rows and agunan, plus the honest report — everything Quick Fill
+ * does BEYOND the wizard fill when a plan is active.
+ *
+ * Both passes come AFTER the wizard fill: the Agunan modal refuses to open
+ * until a debtor is set on step 2, so running either first fails on every item
+ * for the same reason. Rows run first so a shortfall there is not confused
+ * with anything the collateral pass did.
+ */
+async function runPlannedExtras() {
+  const facilities = await fillPlannedFacilities()
+  const rows = await fillPlannedRows()
+  const agunan = await fillPlannedCollaterals()
+
+  /* `wanted` is the driver's own spec count, already reduced by the
+     wizard-seeded row; `target` is what the user actually asked for. A
+     shortfall against `wanted` is a real failure — the driver could not add a
+     row it tried to add. */
+  const shortRows = rows.filter(r => r.error || (r.added ?? 0) < (r.wanted ?? 0))
+  const failed = agunan.filter(r => !r.ok)
+
+  const noFacility = facilities.filter(f => !f.ok)
+
+  const problems = []
+
+  /* Reported FIRST because it is the one that blocks submission outright. */
+  if (noFacility.length) problems.push(`${noFacility.length}/${facilities.length} fasilitas (${noFacility[0].step || '?'})`)
+  if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
+  if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
+
+  /**
+   * 🔴 Report the name the FORM ended up with, not the one we planned.
+   *
+   * This used to print `'Done — ' + activePlan.projectName` unconditionally,
+   * which on a pre-filled form named a project the run had never written — a
+   * green "Done — Testing Yusti N BU-P …" over an application still called
+   * something else. Deliberate values now bypass skipFilled so the two usually
+   * agree, but a disabled field still cannot be written, and a status line must
+   * never assert something it has not checked.
+   */
+  const actualName = await readProjectName()
+  const nameMismatch = actualName && activePlan.projectName && actualName !== activePlan.projectName
+
+  if (nameMismatch) problems.push(`nama proyek tetap "${actualName}"`)
+
+  setStatus(
+    problems.length ? 'Done, ' + problems.join(' · ') : 'Done — ' + (actualName || activePlan.projectName),
+    problems.length ? 'error' : 'done'
+  )
 }
 
 // ── Auto-run on popup open ────────────────────────────────────────────────────

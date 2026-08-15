@@ -57,7 +57,16 @@ window.SIM = (() => {
    * models it as a list and the driver has a separate capability for it.
    */
   const TABLES = [
-    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas Kredit', def: 1, max: 5 },
+    /* 🔴 The button reads "Tambah Fasilitas". "Tambah Fasilitas Kredit" is the
+       MODAL'S TITLE, and this entry carried it for weeks — so the generic
+       row-adder matched nothing and the facility was never added, which is the
+       third of three independent reasons Fasilitas Kredit would not fill
+       (measured 2026-08-15). The warning directly above this list is about
+       exactly this pair of strings.
+       ⚠️ It also has its OWN driver capability now — see `isOwnCapability`
+       below — because the modal is not uniform: it needs a ~3s wait after the
+       product picker for that product's find-one. */
+    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
     { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
     { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
     { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8 },
@@ -162,7 +171,7 @@ window.SIM = (() => {
          expressed once. */
       tables: TABLES
         .filter(t => (state.rows[t.key] ?? 0) > 0)
-        .map(t => ({ key: t.key, opener: t.opener, count: state.rows[t.key] })),
+        .map(t => ({ key: t.key, opener: t.opener, count: state.rows[t.key], isOwnCapability: Boolean(t.isOwnCapability) })),
       collaterals: state.collaterals.map(item => ({
         type: item.type,
         jenis: (COLLATERAL_TYPES.find(t => t.key === item.type) || {}).jenis,

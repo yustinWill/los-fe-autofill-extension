@@ -2563,6 +2563,435 @@ function v2AdvanceStep() {
   return 'no_next'
 }
 
+// ─── Record modals ────────────────────────────────────────────────────────────
+/**
+ * 🔴 THESE DID NOT EXIST, AND THAT MADE "Fill modals" A NO-OP ON EVERY v2 PAGE.
+ *
+ * `walkRecordModals` opens with `if (!driver.listModals) return null`, and
+ * `drivers.js` wired `listModals`/`openModal` for v1 ONLY. So on v2 the entire
+ * modal phase returned null before doing anything: the checkbox was ticked, the
+ * run reported success, and Fasilitas Kredit — which only exists behind
+ * "Tambah Fasilitas" — was never filled (user, 2026-08-15).
+ *
+ * Same shape as the other defects found that night: a setting produced and
+ * never consumed. The contract below matches v1's exactly so `walkRecordModals`
+ * needs no branch.
+ */
+function v2ListModals() {
+  /* Scope to the open dialog if there is one — a modal can host its own
+     "Tambah" (the agunan modal hosts none today, but step 2's records do) —
+     otherwise to the step card, which is what the v2 driver keys on
+     everywhere else. */
+  const open = [...document.querySelectorAll('[role="dialog"]')]
+    .filter(d => d.getAttribute('aria-hidden') !== 'true')
+  const scope = open[open.length - 1] || document.querySelector('[data-m="stepcard"]') || document
+
+  return [...scope.querySelectorAll('button')]
+    .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
+    .filter(x => /^Tambah/i.test(x.label))
+    .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled, opensModal: null }))
+}
+
+/**
+ * Open the nth "Tambah …" control, probing whether it is a modal or a repeater.
+ *
+ * ⚠️ Indexing must agree with `v2ListModals` — same scope, same filter, same
+ * order — or an index from that list addresses a different button here.
+ */
+async function v2OpenModal(nth) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+  const openDialogs = () =>
+    [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+  const before = openDialogs().length
+  const openNow = openDialogs()
+  const scope = openNow[openNow.length - 1] || document.querySelector('[data-m="stepcard"]') || document
+
+  const buttons = [...scope.querySelectorAll('button')].filter(b => /^Tambah/i.test((b.textContent || '').trim()))
+  const btn = buttons[nth]
+
+  if (!btn) return { opened: false, isModal: false, title: null, reason: 'no_button' }
+  if (btn.disabled) return { opened: false, isModal: false, title: null, reason: 'disabled' }
+
+  const label = (btn.textContent || '').trim()
+
+  const inputCount = () => document.querySelectorAll('input:not([type="hidden"]), textarea, select').length
+  const buttonsBefore = new Set([...document.querySelectorAll('button')])
+  const countBefore = inputCount()
+
+  btn.click()
+
+  /* A v2 dialog mounts without a backdrop class to key on, so the signal is a
+     NEW `[role="dialog"]` appearing — counted, because one may already be open
+     when a modal hosts its own opener. */
+  for (let i = 0; i < 40; i++) {
+    if (openDialogs().length > before) break
+    await sleep(50)
+  }
+  await sleep(400)
+
+  const after = openDialogs()
+  const isModal = after.length > before
+
+  if (isModal) {
+    const paper = after[after.length - 1]
+
+    /* 🔴 A v2 dialog has NO heading element — measured 2026-08-15 on "Tambah
+       Fasilitas Kredit": `querySelectorAll('h1,h2,h3,h4,h5,h6')` returns ZERO
+       and the title is a plain div. v1's heading lookup was transcribed here
+       and returned '' for every modal, which reads in a run report as an
+       unnamed modal rather than as a broken extractor. On this design system
+       the first line of the dialog's own text IS the title. */
+    const heading = paper.querySelector('h1,h2,h3,h4,h5,h6')
+    const title = heading
+      ? (heading.textContent || '').trim()
+      : ((paper.innerText || '').split('\n')[0] || '').trim()
+
+    return { opened: true, isModal: true, label, title }
+  }
+
+  // ── No modal: it was a repeater. Put the row back. ────────────────────────
+  const countAfter = inputCount()
+
+  if (countAfter <= countBefore) {
+    return { opened: true, isModal: false, label, title: null, reason: 'no_modal_no_change' }
+  }
+
+  /* v2 labels its destructive row control in Indonesian ("Hapus agunan"), which
+     is a far better key than v1's red-text heuristic — colour is a design token
+     that moves. Colour is kept as a fallback for rows that carry no label. */
+  const appeared = [...document.querySelectorAll('button')].filter(b => !buttonsBefore.has(b))
+  const isRed = el => {
+    const rgb = (getComputedStyle(el).color || '').match(/\d+/g)
+
+    return rgb && +rgb[0] > 150 && +rgb[1] < 90 && +rgb[2] < 90
+  }
+
+  const del = appeared.find(b => /hapus/i.test(b.getAttribute('aria-label') || b.title || ''))
+    || appeared.filter(isRed).pop()
+
+  if (del) {
+    del.click()
+    await sleep(700)
+  }
+
+  return {
+    opened: true,
+    isModal: false,
+    label,
+    title: null,
+    addedInputs: countAfter - countBefore,
+    reason: inputCount() <= countBefore ? 'repeater_reverted' : 'repeater_NOT_reverted'
+  }
+}
+
+/**
+ * Save the open record modal.
+ *
+ * ⚠️ `walkRecordModals` calls this and `v2CloseModal` WITHOUT a feature test
+ * (popup.js:1332-1333), unlike `reveal`/`pendingConfirm`. So shipping
+ * `listModals`/`openModal` alone would have opened every v2 modal and then
+ * thrown on `executeScript({func: undefined})` — leaving a modal open over a
+ * half-filled form, which is strictly worse than the no-op it replaced.
+ *
+ * 🔴 The save button often carries the SAME label as the opener ("Tambah
+ * Agunan"), told apart only by living inside the dialog — searching the
+ * document re-clicks the opener. And success is the dialog CLOSING, never the
+ * click landing: a blocked save clicks perfectly well.
+ */
+async function v2SaveModal() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const open = () => [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+  const before = open()
+  const box = before[before.length - 1]
+
+  if (!box) return 'no_modal'
+
+  const buttons = [...box.querySelectorAll('button')]
+  const save = buttons.find(b => /^Simpan$/i.test((b.textContent || '').trim()))
+    || buttons.find(b => /^(Simpan|Tambah)/i.test((b.textContent || '').trim()))
+
+  if (!save) return 'no_button'
+  if (save.disabled) return 'blocked'
+
+  save.click()
+  await sleep(700)
+
+  /* v2 gates a record save behind its own confirm — a SECOND `[role=dialog]`,
+     never sweetalert2. Answering it is part of saving, not a separate step. */
+  const confirm = open().pop()
+  const ya = confirm && confirm !== box
+    && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+  if (ya) { ya.click(); await sleep(800) }
+
+  for (let i = 0; i < 40; i++) {
+    if (!open().includes(box)) return 'saved'
+    await sleep(100)
+  }
+
+  return 'blocked'
+}
+
+/** Dismiss the open modal without saving. v2 record modals DO carry a Batal or
+ *  Tutut-style dismissive, unlike v1's, so Escape is only the fallback. */
+async function v2CloseModal() {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const open = () => [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+  const box = open().pop()
+
+  if (!box) return 'closed'
+
+  const cancel = [...box.querySelectorAll('button')]
+    .find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+
+  if (cancel) {
+    cancel.click()
+    await sleep(700)
+
+    /* Dismissing a dirty form can itself raise a confirm. */
+    const confirm = open().pop()
+    const ya = confirm && confirm !== box
+      && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (ya) { ya.click(); await sleep(700) }
+    if (!open().includes(box)) return 'closed'
+  }
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await sleep(700)
+
+  return open().includes(box) ? 'stuck' : 'closed'
+}
+
+/** A confirmation is a dialog with DECISIVE buttons and no inputs — the same
+ *  test v1 uses, retargeted at `[role=dialog]`. */
+function v2PendingConfirm() {
+  const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+  const top = open[open.length - 1]
+
+  if (!top) return null
+  if (top.querySelectorAll('input:not([type="hidden"]), textarea, select').length) return null
+
+  const buttons = [...top.querySelectorAll('button')].map(b => (b.textContent || '').trim()).filter(Boolean)
+
+  if (!buttons.length) return null
+
+  const decisive = buttons.filter(t => /^(ya|tidak|yes|no|ok|batal|cancel|lanjutkan|hapus|simpan)$/i.test(t))
+
+  if (!decisive.length) return null
+
+  return { text: (top.innerText || '').trim().slice(0, 200), buttons, decisive }
+}
+
+/** ⚠️ Defaults to REFUSING, like v1 — most confirmations here guard a
+ *  destructive change, and `walkRecordModals` passes `false` deliberately. */
+async function v2AnswerConfirm(accept) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+  const top = open[open.length - 1]
+
+  if (!top) return 'no_dialog'
+
+  const want = accept ? /^(ya|yes|ok|lanjutkan)$/i : /^(tidak|no|batal|cancel)$/i
+  const btn = [...top.querySelectorAll('button')].find(b => want.test((b.textContent || '').trim()))
+
+  if (!btn) return 'no_button'
+
+  btn.click()
+  await sleep(800)
+
+  return 'answered'
+}
+
+// ─── Credit facilities ────────────────────────────────────────────────────────
+/**
+ * Add N credit facilities through "Tambah Fasilitas".
+ *
+ * 🔴 WHY THIS NEEDS ITS OWN CAPABILITY, like the Agunan modal did.
+ *
+ * `FacilityFormModal` does NOT use react-hook-form — it holds its state in a
+ * plain `useState` (`FacilityFormModal.tsx:154`) with `value`/`onChange` on
+ * every control. The whole v2 discovery contract is "walk the fiber to a
+ * `Controller` carrying `control` + `name`", so `v2Detect` sees **0 of its 12
+ * inputs** and the generic fill has nothing to work with. Measured live
+ * 2026-08-15: the modal opens, reports 12 inputs, and every fiber walk returns
+ * null. That is the SECOND blocker on Fasilitas Kredit — the first was the v2
+ * driver having no modal capability at all.
+ *
+ * So the sequence is ported from the proven `addFacility`
+ * (`los-create-autofill/scripts/helpers.js`), whose ordering is the part that
+ * matters, while the PRIMITIVES stay the driver's own — `choose` takes options
+ * from a before/after button diff, which is what stops it re-clicking a pill.
+ *
+ * @param plan { count, plafon, tenor, rate, scheme, method, restructDefault }
+ */
+async function v2AddFacilities(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
+  const spec = Object.assign(
+    { count: 1, plafon: '900000000', tenor: '24', rate: '11', scheme: 'Reguler', method: 'Anuitas', restructDefault: '0' },
+    plan || {}
+  )
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  /** Fill every input whose placeholder contains `needle` — BOTH of them where
+   *  a block appears twice, the trap the collateral driver paid for. */
+  const fill = (needle, value) => {
+    const scope = dialog() || document
+    const hits = [...scope.querySelectorAll('input, textarea')]
+      .filter(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
+
+    hits.forEach(i => setNative(i, value))
+
+    return hits.length > 0
+  }
+
+  /* Options come from a BEFORE/AFTER DIFF of the dialog's button set: the panel
+     renders INLINE among controls that are also <button>s, so "the first button
+     that is not Batal" picks a pill. */
+  const choose = async (triggerText, optionText) => {
+    const scope = dialog()
+
+    if (!scope) return false
+
+    const trigger = [...scope.querySelectorAll('button')]
+      .find(b => (b.textContent || '').toLowerCase().includes(String(triggerText).toLowerCase()))
+
+    if (!trigger) return false
+
+    const before = new Set([...scope.querySelectorAll('button')])
+
+    trigger.click()
+    await wait(openWait)
+
+    const options = [...(dialog() || document).querySelectorAll('button')]
+      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+
+    const hit = optionText
+      ? (options.find(b => (b.textContent || '').trim() === optionText)
+        || options.find(b => (b.textContent || '').trim().includes(optionText)))
+      : options.find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    if (!hit) { trigger.click(); return false }
+
+    hit.click()
+    await wait(400)
+
+    return true
+  }
+
+  const blockingErrors = () => {
+    const scope = dialog()
+
+    if (!scope) return []
+
+    return [...new Set(
+      [...scope.querySelectorAll('*')]
+        .filter(e => !e.children.length)
+        .map(e => (e.textContent || '').trim())
+        .filter(t => /wajib|tidak boleh/i.test(t) && !/^•/.test(t) && !/^Format /i.test(t))
+    )].slice(0, 4)
+  }
+
+  const results = []
+
+  for (let n = 0; n < Math.max(0, Number(spec.count) || 0); n++) {
+    const opener = [...document.querySelectorAll('button')]
+      .find(b => /Tambah Fasilitas/.test(b.textContent || ''))
+
+    if (!opener) {
+      results.push({ ok: false, step: 'open', reason: 'no "Tambah Fasilitas" — is a Jenis Kredit chosen?' })
+      break
+    }
+
+    opener.click()
+    await wait(600)
+
+    if (!dialog()) { results.push({ ok: false, step: 'open', reason: 'dialog did not mount' }); continue }
+
+    if (!(await choose('Pilih produk kredit', null))) {
+      results.push({ ok: false, step: 'product', reason: 'product select did not open or offered nothing' })
+
+      const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
+
+      cancel?.click()
+      await wait(500)
+      continue
+    }
+
+    /* 🔴 The product's find-one. EVERYTHING below depends on it — the helper
+       this is ported from records 3000ms as the working number, and a shorter
+       wait fills fields that are about to be replaced. */
+    await wait(3000)
+
+    fill('Plafon Pinjaman', spec.plafon)
+    fill('Jangka Waktu', spec.tenor)
+    fill('Suku Bunga', spec.rate)
+    await wait(300)
+
+    await choose('Pilih skema pembayaran', spec.scheme)
+
+    /* A BULLET_* scheme LOCKS the method to Flat and removes the placeholder,
+       so `choose` returning false here is correct, not a failure. */
+    await choose('Pilih metode perhitungan', spec.method)
+
+    /* Perpanjangan/Restrukturisasi make seven more figures required. Anything
+       still empty gets a zero so the save is not blocked on a field the caller
+       never named. */
+    const stillEmpty = [...(dialog()?.querySelectorAll('input') || [])].filter(i => i.value === '' && !i.disabled)
+
+    stillEmpty.forEach(i => setNative(i, spec.restructDefault))
+    await wait(250)
+
+    const box = dialog()
+    const submit = box && [...box.querySelectorAll('button')]
+      .find(b => /^(Tambah Fasilitas|Simpan)/.test((b.textContent || '').trim()))
+
+    submit?.click()
+    await wait(900)
+
+    /* v2 may gate the save behind its own confirm. */
+    const confirm = dialog()
+    const ya = confirm && confirm !== box
+      && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (ya) { ya.click(); await wait(800) }
+
+    /* Success is the dialog CLOSING, never the click landing. */
+    for (let i = 0; i < 12 && dialog(); i++) await wait(200)
+
+    if (dialog()) {
+      results.push({ ok: false, step: 'submit', errors: blockingErrors() })
+
+      const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
+
+      cancel?.click()
+      await wait(600)
+      continue
+    }
+
+    results.push({ ok: true, total: (document.body.innerText.match(/Total Plafon[^\n]*/) || [null])[0] })
+  }
+
+  return results
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 window.__autofill = {
   detect: v2Detect,

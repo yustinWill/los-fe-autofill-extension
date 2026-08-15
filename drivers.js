@@ -46,10 +46,36 @@ const DRIVERS = {
     /* Generic N-rows-per-table. Uniform modals only — Agunan branches on type
        and has its own capability above. */
     addRows: v2AddRows,
+
+    /* Step 1's Fasilitas Kredit. Its own capability because
+       `FacilityFormModal` holds state in `useState`, not react-hook-form — so
+       `detect`/`fill` see ZERO of its 12 inputs and the generic path cannot
+       touch it. Sequence ported from the proven `addFacility` helper. */
+    facilities: v2AddFacilities,
     read:    v2ReadValues,
     current: v2CurrentStep,
     goTo:    v2GoToStep,
-    advance: v2AdvanceStep
+    advance: v2AdvanceStep,
+
+    /* 🔴 Absent until 2026-08-15, which made "Fill modals" a SILENT NO-OP on
+       every v2 page: `walkRecordModals` returns null the moment `listModals`
+       is missing, so the checkbox was ticked, the run reported success, and
+       Fasilitas Kredit — reachable only through "Tambah Fasilitas" — was never
+       filled. Feature-testing a capability is right; shipping a UI control for
+       one that half the drivers lack is not. */
+    listModals:     v2ListModals,
+    openModal:      v2OpenModal,
+
+    /* 🔴 saveModal and closeModal are called with NO feature test
+       (popup.js:1332-1333), unlike reveal/pendingConfirm. Registering the pair
+       above without these would open every v2 modal and then throw on
+       `executeScript({func: undefined})`, leaving a modal open over a
+       half-filled form — worse than the no-op it replaced. Ship the whole
+       capability or none of it. */
+    saveModal:      v2SaveModal,
+    closeModal:     v2CloseModal,
+    pendingConfirm: v2PendingConfirm,
+    answerConfirm:  v2AnswerConfirm
   }
 }
 
