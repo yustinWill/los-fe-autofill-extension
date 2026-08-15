@@ -1619,12 +1619,56 @@ async function v2AddRows(specs, openWait = 900) {
     return open[open.length - 1] || null
   }
 
+  /**
+   * 🔴 `input` only, then VERIFY — and re-set if the field did not take it.
+   *
+   * A Cleave-masked currency input collapses to "0" when a `change` event
+   * follows the `input` one: the mask re-reads the raw value mid-format and
+   * lands on zero. The field then holds a legal value, so nothing reports it as
+   * missing — the save is simply refused with NO message anywhere in the dialog.
+   *
+   * Measured 2026-08-15 by diffing the filler's output against a manual fill
+   * that saved: `Isi Nominal Underlying` read "0" after the filler and
+   * "100.000.000" after the manual set. Three earlier hypotheses (date format,
+   * close timing, upload settling) were all wrong, and only the value diff
+   * found it.
+   *
+   * The re-set is belt and braces: masks differ per field, and a value that
+   * silently became 0 is the worst kind of failure — plausible, legal, and
+   * invisible.
+   */
   const setNative = (el, value) => {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+    const write = v => {
+      Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, v)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    }
 
-    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-    el.dispatchEvent(new Event('change', { bubbles: true }))
+    write(value)
+  }
+
+  /**
+   * Re-set anything the mask ate. MUST run after a delay: the collapse is
+   * ASYNCHRONOUS, so a check in the same tick as the write still sees the good
+   * value and passes. Measured 2026-08-15 — a synchronous verify shipped and
+   * changed nothing, and the field still read 0 at save time.
+   */
+  const repairMasked = async (written, waitFor) => {
+    await waitFor(600)
+
+    for (const [el, value] of written) {
+      const want = String(value).replace(/\D/g, '')
+      const got = String(el.value || '').replace(/\D/g, '')
+
+      if (!want || want === '0' || got === want) continue
+      if (got && want.startsWith(got.slice(0, Math.min(3, got.length))) && got.length >= 3) continue
+
+      Object.getOwnPropertyDescriptor(
+        (el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement).prototype, 'value'
+      ).set.call(el, value)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitFor(150)
+    }
   }
 
   /**
@@ -1725,9 +1769,18 @@ async function v2AddRows(specs, openWait = 900) {
       const scope = dialog()
 
       if (scope) {
+        const written = []
+
         ;[...scope.querySelectorAll('input, textarea')]
           .filter(i => i.type !== 'file' && !i.value && !i.disabled && !i.readOnly)
-          .forEach((input, i) => setNative(input, guess(input.placeholder, n + 1 + i)))
+          .forEach((input, i) => {
+            const value = guess(input.placeholder, n + 1 + i)
+
+            setNative(input, value)
+            written.push([input, value])
+          })
+
+        await repairMasked(written, wait)
 
         for (const input of [...scope.querySelectorAll('input[type=file]')]) {
           const transfer = new DataTransfer()
@@ -1776,7 +1829,12 @@ async function v2AddRows(specs, openWait = 900) {
            before anyone asked the form. */
         const box3 = dialog()
 
-        lastError = 'save blocked: ' + ([...new Set(
+        /* The VALUES at the moment of refusal. A message-only report cost four
+           wrong hypotheses; the values named the cause in one run. */
+        lastError = 'save blocked | fields: ' + [...box3.querySelectorAll('input, textarea')]
+          .filter(i => i.type !== 'file')
+          .map(i => (i.placeholder || '?').replace(/^Isi\s+/, '') + '=' + (i.value || '∅'))
+          .join(', ') + ' | msg: ' + ([...new Set(
           [...box3.querySelectorAll('*')]
             .filter(e => !e.children.length)
             .map(e => (e.textContent || '').trim())
