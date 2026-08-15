@@ -149,5 +149,91 @@ if (!S) {
     : pass('ignores non-create routes')
 }
 
-console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
-process.exit(failures ? 1 : 0)
+// ── 3. Typing must not rebuild the panel, and the name prefills ───────────────
+/**
+ * 🔴 Both of these shipped broken and NEITHER was visible to the checks above
+ * (user, 2026-08-15: "on type at popup autofill, it loses focus each time").
+ *
+ * Focus loss cannot be observed in a stub DOM, but its CAUSE can: `render()`
+ * begins by clearing `root.textContent`, so a root that COUNTS writes to that
+ * property tells you whether a keystroke rebuilt the panel — and a rebuild is
+ * what destroys the input being typed into. Assert on the mechanism, not the
+ * symptom you cannot see from here.
+ *
+ * ⚠️ Proven to fire: restore `commit()` in either name handler and the focus
+ * assertion fails while everything else still passes.
+ */
+;(async () => {
+  console.log('\npanel behaviour')
+
+  const SU = sandbox.SIMUI
+
+  if (!SU || !S) {
+    fail('SIMUI/SIM unavailable — skipping panel checks')
+  } else {
+    const listeners = []
+    const realCreate = sandbox.document.createElement
+
+    sandbox.document.createElement = () => {
+      const node = stubEl()
+
+      node.addEventListener = (type, fn) => listeners.push({ node, type, fn })
+
+      return node
+    }
+
+    let clears = 0
+    const root = stubEl()
+
+    Object.defineProperty(root, 'textContent', { get: () => '', set: () => { clears++ } })
+
+    try {
+      S.state.userName = ''
+      await SU.mount(root, { defaultUserName: 'Budi Santoso' })
+
+      // The hook existed in `mount` from the start; nothing ever fed it.
+      S.state.userName === 'Budi Santoso'
+        ? pass('name prefills from the session')
+        : fail(`name prefill: got "${S.state.userName}", want "Budi Santoso"`)
+
+      // A name the user typed themselves must survive a re-mount.
+      S.state.userName = 'Diketik Sendiri'
+      await SU.mount(root, { defaultUserName: 'Budi Santoso' })
+      S.state.userName === 'Diketik Sendiri'
+        ? pass('a typed name beats the session name')
+        : fail(`typed name lost: got "${S.state.userName}"`)
+
+      /* Identify the handler by BEHAVIOUR, never by position — the panel's
+         append order is not a contract, and keying on it would make this fail
+         for the wrong reason the next time a row moves. */
+      const rendersBefore = clears
+      let fired = false
+
+      for (const { node, type, fn } of listeners) {
+        if (type !== 'input') continue
+
+        S.state.userName = ''
+        node.value = 'Zed'
+
+        try {
+          fn()
+        } catch (_) {
+          continue
+        }
+
+        if (S.state.userName === 'Zed') { fired = true; break }
+      }
+
+      if (!fired) fail('could not find the userName input handler — this check never ran')
+      else if (clears > rendersBefore) fail(`typing rebuilt the panel (${clears - rendersBefore}× re-render) — focus is lost per keystroke`)
+      else pass('typing does not rebuild the panel')
+    } catch (e) {
+      fail(`panel checks: ${e.name}: ${e.message}`)
+    } finally {
+      sandbox.document.createElement = realCreate
+    }
+  }
+
+  console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
+  process.exit(failures ? 1 : 0)
+})()

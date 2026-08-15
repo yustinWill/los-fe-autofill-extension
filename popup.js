@@ -1529,12 +1529,46 @@ async function fillPlannedCollaterals() {
  */
 const simPanel = document.getElementById('simPanel')
 
+/**
+ * The signed-in user's name, from the app's own session store.
+ *
+ * 🔑 The key is `USER_DATA`, NOT `userData` — the wrong casing returns null and
+ * reads exactly like "nobody is logged in". The name is at `.name`; measured
+ * 2026-08-15, the object also carries `user_id`, `email`, `office_code` and the
+ * permission list.
+ *
+ * Returns null rather than throwing where injection is blocked or no session
+ * exists — the panel then falls back to its placeholder, which is the same
+ * behaviour it had before this existed.
+ */
+async function loggedInUserName(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        try {
+          return JSON.parse(localStorage.getItem('USER_DATA') || '{}').name || null
+        } catch (_) {
+          return null
+        }
+      }
+    })
+
+    return result || null
+  } catch (_) {
+    return null
+  }
+}
+
 async function mountSimulation() {
   const tab = await getActiveTab()
 
   if (!tab || !SIM.isCreditApplication(tab.url)) return false
 
-  await SIMUI.mount(simPanel, { onChange: () => {} })
+  /* `mount` applies this only when the stored name is empty, so a name the user
+     typed themselves always wins over the session's. */
+  await SIMUI.mount(simPanel, { onChange: () => {}, defaultUserName: await loggedInUserName(tab.id) })
 
   /* The panel's own primary action. Deliberately NOT the header Quick Fill
      button: that one means "fill this page now" and still does, while this one

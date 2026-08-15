@@ -26,6 +26,39 @@ window.SIMUI = (() => {
   let root = null
   let onChange = () => {}
 
+  /**
+   * 🔴 The derived text, refreshed IN PLACE — never by re-rendering.
+   *
+   * `commit()` rebuilds the whole panel (`root.textContent = ''`), which
+   * destroys and recreates the very input being typed into: focus is lost on
+   * EVERY keystroke, so a name has to be typed one character per click. The
+   * name boxes therefore save + refresh instead of committing.
+   *
+   * Only two things derive from those names — the project-name preview and each
+   * collateral row's placeholder — so patching them directly is both cheaper
+   * and the only version that keeps the caret.
+   */
+  const refreshDerived = () => {
+    if (!root) return
+
+    const preview = root.querySelector('.sim-preview-input')
+
+    if (preview && !SIM.state.projectOverride) {
+      preview.value = SIM.projectName()
+      preview.title = preview.value
+    }
+
+    root.querySelectorAll('.sim-collateral').forEach((row, index) => {
+      const item = SIM.state.collaterals[index]
+      const name = row.querySelector('.sim-name')
+
+      if (!item || !name) return
+
+      name.placeholder = SIM.collateralName({ ...item, name: null })
+      name.title = name.placeholder
+    })
+  }
+
   /** One pill group — the scenario dimensions. A radio would need three names
    *  and a legend to say the same thing in more space. */
   const pills = (group, options, current) =>
@@ -135,12 +168,15 @@ window.SIMUI = (() => {
     root.appendChild(labelled('Debitur', pills('debitur', SIM.SCENARIO.debitur, SIM.state.debitur)))
     root.appendChild(labelled('Sifat', pills('sifat', SIM.SCENARIO.sifat, SIM.state.sifat)))
 
+    /* save + refresh, NOT commit — see `refreshDerived`. A re-render here costs
+       the caret on every keystroke. */
     root.appendChild(
       labelled(
         'Nama Anda',
         textField(SIM.state.userName, 'Yusti', v => {
           SIM.state.userName = v
-          commit()
+          SIM.save()
+          refreshDerived()
         })
       )
     )
@@ -153,7 +189,8 @@ window.SIMUI = (() => {
         'Nama debitur',
         textField(SIM.state.debtorName, 'diisi saat pengisian', v => {
           SIM.state.debtorName = v
-          commit()
+          SIM.save()
+          refreshDerived()
         })
       )
     )
