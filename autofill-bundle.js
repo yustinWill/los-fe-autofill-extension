@@ -1544,6 +1544,396 @@ async function v2FillTables() {
   return 0
 }
 
+/**
+ * Add collateral rows to step 4's Agunan table — one modal per item.
+ *
+ * 🔴 The extension has never driven this modal. `popup.js` has always skipped
+ * step 4's tables, so a Quick Fill produced an application with no agunan at
+ * all. The field sets below are ported from
+ * `los/.claude/skills/los-create-autofill/scripts/step4.js`, which drove them
+ * for real, rather than rediscovered — so the extension exercises what the
+ * scripted runs already proved.
+ *
+ * ⚠️ Serialised alone by chrome.scripting, like every driver function here, so
+ * every helper is inline and nothing may close over module scope.
+ *
+ * @param items [{ jenis, name }] — `jenis` is the DROPDOWN OPTION LABEL.
+ */
+async function v2FillCollaterals(items, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
+  /* 🔴 The LAST paper whose root is not aria-hidden. MUI leaves earlier dialogs
+     mounted and both keep a non-zero box, so size and visibility do not
+     separate them — reading paper 0 finds an empty shell and looks exactly like
+     a modal that failed to load. */
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')]
+      .filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  const fillByPlaceholder = (needle, value) => {
+    const scope = dialog() || document
+    const field = [...scope.querySelectorAll('input, textarea')]
+      .find(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
+
+    if (!field) return false
+    setNative(field, value)
+
+    return true
+  }
+
+  /* A Kairos select is a trigger button over an INLINE panel of plain buttons —
+     no role="option", not portalled. ⚠️ The trigger TOGGLES: clicking one that
+     is already open closes it, which reads as "no options exist". */
+  const choose = async (placeholderOrLabel, optionText) => {
+    const scope = dialog() || document
+    const trigger = [...scope.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim().toLowerCase().includes(String(placeholderOrLabel).toLowerCase()))
+
+    if (!trigger) return { ok: false, reason: 'no trigger for ' + placeholderOrLabel }
+
+    /* 🔴 Take the options from a BEFORE/AFTER DIFF, not from the dialog's whole
+       button list. The panel renders inline among controls that are also
+       <button>s, so "first button that is not Batal" picked the Jenis Rekening
+       PILL — re-clicking a pill instead of choosing a province, and leaving
+       every geo select unset. Measured 2026-08-15: the Deposito branch failed
+       to save with no visible error for exactly this reason. */
+    const before = new Set([...(dialog() || document).querySelectorAll('button')])
+
+    trigger.click()
+    await wait(openWait)
+
+    const options = [...(dialog() || document).querySelectorAll('button')]
+      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+
+    const hit = optionText
+      ? options.find(b => (b.textContent || '').trim() === optionText)
+        || options.find(b => (b.textContent || '').trim().includes(optionText))
+      : options.find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+
+    if (!hit) { trigger.click(); return { ok: false, reason: 'no option "' + optionText + '"' } }
+
+    const chosen = hit.textContent.trim()
+
+    hit.click()
+    await wait(400)
+
+    return { ok: true, chosen }
+  }
+
+  /* Every small closed option set is a row of <button>s. ⚠️ Scope to the pill's
+     OWN label — "Deposito" also appears as a Jenis Agunan option, and a
+     document-wide search hits that one first. */
+  const pill = (label, text) => {
+    const scope = dialog() || document
+    const holder = [...scope.querySelectorAll('*')]
+      .filter(e => e.children.length && (e.textContent || '').includes(label))
+      .sort((a, b) => a.textContent.length - b.textContent.length)[0]
+
+    if (!holder) return { ok: false, reason: 'no pill group "' + label + '"' }
+
+    const hit = [...holder.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === text)
+
+    if (!hit) return { ok: false, reason: 'no pill "' + text + '" under "' + label + '"' }
+    hit.click()
+
+    return { ok: true }
+  }
+
+  const answerConfirm = async (word = 'Ya') => {
+    const box = dialog()
+
+    if (!box) return false
+
+    const btn = [...box.querySelectorAll('button')].find(b => (b.textContent || '').trim() === word)
+
+    if (!btn) return false
+    btn.click()
+    await wait(500)
+
+    return true
+  }
+
+  /* Every "Pilih …" trigger still showing its placeholder — the geo cascades
+     resolve themselves because Provinsi precedes Kota precedes Kecamatan in the
+     DOM, so taking the first option of each in order is sufficient. */
+  /**
+   * 🔴 "Pilih File" is NOT a select, and it is why this used to leave the whole
+   * address empty.
+   *
+   * The upload control's trigger reads "Pilih File", which matches `^Pilih\s`
+   * exactly like a real select. Worse, the loop used to RETURN on the first
+   * failure — so hitting the upload trigger aborted the run before the four
+   * geo selects were touched, and the modal then failed validation with an
+   * empty address and no obvious cause. Measured 2026-08-15 on the Deposito
+   * branch, which reported a blocked save and zero errors.
+   *
+   * Two fixes: skip upload triggers by name, and treat a failure as "move on"
+   * rather than "stop", so one unresolvable control cannot strand the rest.
+   */
+  const resolveRemainingSelects = async (rounds = 10) => {
+    const tried = new Set()
+
+    for (let i = 0; i < rounds; i++) {
+      const scope = dialog()
+
+      if (!scope) return
+
+      const pending = [...scope.querySelectorAll('button')]
+        .map(b => (b.textContent || '').trim())
+        .find(t => /^Pilih\s/.test(t) && !/^Pilih File/i.test(t) && !tried.has(t))
+
+      if (!pending) return
+      tried.add(pending)
+      await choose(pending, null)
+    }
+  }
+
+  /* ⚠️ Reports only real validation messages. Matching any text containing
+     "harus" also catches the dropzones' FORMAT HINTS — "• Format gambar harus
+     .jpg, .jpeg, atau .png" is permanent helper copy, not a failure — and a
+     failure report full of hints sends the reader after the wrong thing.
+     Measured 2026-08-15: the first run of this driver reported two hints as
+     errors on a modal whose real blocker was a missing owner relation. */
+  const dialogErrors = () => {
+    const box = dialog()
+
+    if (!box) return []
+
+    return [...new Set(
+      [...box.querySelectorAll('*')]
+        .filter(e => !e.children.length)
+        .map(e => (e.textContent || '').trim())
+        .filter(t => /wajib|tidak boleh/i.test(t) && !/^•/.test(t) && !/^Format /i.test(t))
+    )].slice(0, 6)
+  }
+
+  /** A <2KB PDF and a 1x1 PNG, each carrying its own name so a file picked out
+   *  of a failure is identifiable. Inline because this function is serialised
+   *  alone and cannot import the seed helpers. */
+  const makePdf = name =>
+    new File([new Blob([`%PDF-1.4\n% ${name}\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF`],
+      { type: 'application/pdf' })], name, { type: 'application/pdf' })
+
+  const makePng = name => {
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+
+    return new File([new Blob([bytes], { type: 'image/png' })], name, { type: 'image/png' })
+  }
+
+  /* Every dropzone in the modal gets a file of the type its own hint demands —
+     the hint is the only thing distinguishing an image dropzone from a document
+     one, since both render the same control. */
+  const attachAll = async () => {
+    const box = dialog()
+
+    if (!box) return 0
+
+    const inputs = [...box.querySelectorAll('input[type=file]')]
+    let done = 0
+
+    for (const input of inputs) {
+      const accept = (input.getAttribute('accept') || '').toLowerCase()
+      const wantsImage = /image|png|jpe?g/.test(accept)
+      const file = wantsImage ? makePng('agunan.png') : makePdf('agunan.pdf')
+      const transfer = new DataTransfer()
+
+      transfer.items.add(file)
+      input.files = transfer.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      done++
+      await wait(1800)
+    }
+
+    return done
+  }
+
+  /**
+   * 🔴 v2's agunan table is a `FlushTable` — a CSS GRID of divs, not a
+   * `<table>`. Counting `tbody tr` returned 0 unconditionally, which made
+   * `rowCount() > before` false even on a save that worked. Measured
+   * 2026-08-15.
+   *
+   * There is no stable row hook to count, so this reads the section's own
+   * summary line ("Total Nilai Agunan · 2 agunan"), which the block renders
+   * from the array it is iterating. Returns null when it cannot tell, and the
+   * caller treats null as "unknown" rather than "zero".
+   */
+  const rowCount = () => {
+    const summary = [...document.querySelectorAll('*')]
+      .filter(e => !e.children.length && /\d+\s*agunan/i.test(e.textContent || ''))
+      .map(e => (e.textContent.match(/(\d+)\s*agunan/i) || [])[1])
+      .find(Boolean)
+
+    return summary === undefined ? null : Number(summary)
+  }
+
+  /**
+   * The six branches. `pills` run BEFORE `text`: a pill decides which fields
+   * exist below it, so filling text first writes into inputs that are about to
+   * be replaced.
+   *
+   * ⚠️ `general` (Mesin) has NO detail block — the shared fields are the whole
+   * form. It is not a mistake that its entry is almost empty; that branch is
+   * worth running precisely because "nothing appeared" is the one most easily
+   * read as a failure.
+   */
+  const BRANCHES = {
+    'Rumah': {
+      pills: [['Tanah / Bangunan', 'Tanah']],
+      text: {
+        'Luas Tanah': '250',
+        'Batas Tanah Utara': 'Jl. Melati',
+        'Batas Tanah Selatan': 'Rumah No. 12',
+        'Batas Tanah Timur': 'Saluran air',
+        'Batas Tanah Barat': 'Rumah No. 8'
+      }
+    },
+    'Kendaraan': {
+      pills: [['Jenis Kendaraan', 'Mobil']],
+      text: {
+        'Nomor Mesin': '2NZX1234567',
+        'Kapasitas Mesin': '1500',
+        'Warna Kendaraan Sesuai STNK': 'Putih',
+        'Warna Kendaraan Saat Ini': 'Putih'
+      }
+    },
+    'Tabungan': {
+      pills: [['Jenis Rekening', 'Tabungan']],
+      text: { 'Nomor Rekening': '1234567890', 'Nominal Tabungan': '250000000' }
+    },
+    'Deposito': {
+      pills: [['Jenis Rekening', 'Deposito']],
+      text: {
+        'Nomor Bilyet': 'BLY-2026-0771',
+        'Nomor Rekening': '9876543210',
+        'Nominal Deposito': '500000000'
+      }
+    },
+    'Emas dan mata uang emas': {
+      pills: [['Memiliki Sertifikat', 'Ya']],
+      text: {
+        'Jumlah': '10',
+        'Berat': '100',
+        'Kadar / Karat': '24K',
+        'Nomor Sertifikat': 'ANTAM-0099887',
+        'Tempat Penyimpanan': 'Safe Deposit Box Cabang Bandung'
+      }
+    },
+    'Mesin': { pills: [], text: {} }
+  }
+
+  const SHARED = {
+    'Deskripsi Agunan': 'Objek agunan untuk pengajuan ini.',
+    'Catatan': 'Dokumen fisik tersimpan di cabang.',
+    'Perkiraaan Nilai Agunan': '2500000000',
+    'Nama Pemilik Agunan': 'Pemilik Agunan',
+    /* 🔴 Dropped on the first pass and it is what blocked every save: "Hubungan
+       dengan Calon Debitur wajib diisi apabila Data Pemilik Agunan tidak sama
+       dengan Calon Debitur". Setting an owner name makes this one required. */
+    'Hubungan dengan Calon Debitur': 'Debitur Sendiri',
+    'Alamat': 'Jl. Raya Bekasi Km. 21 No. 45',
+    'Kode Pos': '17530',
+    'RW': '007',
+    'RT': '004',
+    'Keterangan': 'Berada di kawasan industri.'
+  }
+
+  const results = []
+
+  for (const item of items || []) {
+    const before = rowCount()
+    const branch = BRANCHES[item.jenis] || { pills: [], text: {} }
+
+    const opener = [...document.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === 'Tambah Agunan')
+
+    if (!opener) {
+      results.push({ name: item.name, ok: false, step: 'open', reason: 'no "Tambah Agunan" — is the Agunan toggle Ya, and is a debtor set on step 2?' })
+      break
+    }
+
+    opener.click()
+    await wait(1000)
+
+    if (!dialog()) { results.push({ name: item.name, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
+
+    // The TYPE first: it decides which fields exist below it.
+    const jenis = await choose('Pilih Jenis Agunan', item.jenis)
+
+    if (!jenis.ok) { results.push({ name: item.name, ok: false, step: 'jenis', reason: jenis.reason }); continue }
+
+    /* Silent on a fresh modal — the confirm only fires when the block already
+       held something — so no popup here is correct, not a miss. */
+    await answerConfirm('Ya')
+    await wait(600)
+
+    for (const [label, text] of branch.pills) { pill(label, text); await wait(450) }
+
+    /* The NAME is the whole point of the panel's list, so it is set explicitly
+       rather than left to a default. */
+    fillByPlaceholder('Nama Agunan', item.name)
+
+    for (const [label, value] of Object.entries({ ...SHARED, ...branch.text })) fillByPlaceholder(label, value)
+
+    await wait(300)
+    await resolveRemainingSelects()
+    await wait(300)
+
+    const attached = await attachAll()
+
+    await wait(400)
+
+    /* ⚠️ The SAVE button carries the SAME label as the opener — "Tambah
+       Agunan" — and is told apart only by being inside the dialog. Searching
+       the document would re-click the opener. */
+    const save = [...(dialog() || document).querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === 'Tambah Agunan')
+
+    save?.click()
+    await wait(800)
+    await answerConfirm('Ya')
+    await wait(1200)
+
+    /* 🔴 Success is the modal CLOSING and a row appearing — never the save
+       click landing. A blocked save clicks perfectly well and changes nothing. */
+    if (dialog()) {
+      results.push({ name: item.name, ok: false, step: 'submit', errors: dialogErrors() })
+
+      const cancel = [...(dialog() || document).querySelectorAll('button')]
+        .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
+
+      cancel?.click()
+      await wait(600)
+      continue
+    }
+
+    /* 🔴 Success is the modal CLOSING. The row count is reported when it can be
+       read but never gates the verdict — a save that works on a table this
+       cannot count would otherwise be filed as a failure. */
+    const after = rowCount()
+
+    results.push({ name: item.name, ok: true, jenis: jenis.chosen, attached, before, after })
+  }
+
+  return results
+}
+
 // ─── Read values back ─────────────────────────────────────────────────────────
 // One fiber walk yields the whole RHF store, which is both cheaper and more
 // accurate than scraping: it returns the stored codes rather than the labels

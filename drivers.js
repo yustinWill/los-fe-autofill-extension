@@ -40,6 +40,9 @@ const DRIVERS = {
     detect:  v2Detect,
     fill:    v2FillField,
     tables:  v2FillTables,
+    /* Step 4's Agunan modal, one call per plan. v1 has no equivalent yet, so
+       callers must feature-test rather than assume it exists. */
+    collaterals: v2FillCollaterals,
     read:    v2ReadValues,
     current: v2CurrentStep,
     goTo:    v2GoToStep,

@@ -1444,6 +1444,38 @@ document.querySelectorAll('input[name="onOpen"]').forEach(r => {
   r.addEventListener('change', () => chrome.storage.local.set({ pref_onOpen: r.value }))
 })
 
+/**
+ * Drive the Agunan modal once per planned collateral.
+ *
+ * Feature-tested rather than assumed: only the v2 driver has `collaterals`, and
+ * a v1 page reaching this would otherwise throw on an undefined function rather
+ * than simply skipping a capability it does not have.
+ */
+async function fillPlannedCollaterals() {
+  if (!activePlan || !activePlan.collaterals || !activePlan.collaterals.length) return []
+
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.collaterals !== 'function') return []
+
+  const tab = await getActiveTab()
+
+  setStatus(`Agunan (${activePlan.collaterals.length})…`)
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: driver.collaterals,
+      args: [activePlan.collaterals]
+    })
+
+    return result || []
+  } catch (e) {
+    return [{ ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }]
+  }
+}
+
 // ── Simulation panel ──────────────────────────────────────────────────────────
 /**
  * On the credit-application CREATE route the popup asks before it acts.
@@ -1481,7 +1513,19 @@ async function mountSimulation() {
 
     try {
       await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
-      setStatus('Done — ' + activePlan.projectName, 'done')
+
+      /* Collateral comes AFTER the wizard pass: the Agunan modal refuses to
+         open until a debtor is set on step 2, so running it first fails on
+         every item with the same reason. */
+      const agunan = await fillPlannedCollaterals()
+      const failed = agunan.filter(r => !r.ok)
+
+      setStatus(
+        failed.length
+          ? `Done, ${failed.length}/${agunan.length} agunan gagal — ${failed[0].step || ''} ${failed[0].reason || ''}`.trim()
+          : 'Done — ' + activePlan.projectName,
+        failed.length ? 'error' : 'done'
+      )
     } catch (err) {
       setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
     } finally {
