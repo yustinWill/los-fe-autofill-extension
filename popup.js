@@ -1554,13 +1554,18 @@ async function mountSimulation() {
 
       /* Both passes come AFTER the wizard fill: the Agunan modal refuses to open
          until a debtor is set on step 2, so running either first fails on every
-         item for the same reason. */
-      /* ⚠️ fillPlannedRows is NOT called yet — the driver's addRows capability
-         does not work (see its note). Calling it would spend minutes per run
-         failing every table, so the counters stay inert and the panel says so
-         rather than the run pretending. */
+         item for the same reason. Rows run first so a shortfall there is not
+         confused with anything the collateral pass did.
+
+         Wired 2026-08-15 — the addRows blocker was never a driver-sequence bug:
+         the underlying nominal MOUNTS showing "0" (its form default), so the
+         `!i.value` fill filter skipped it and the save failed on a field the
+         driver had never written. Fixed in the driver's blank test. */
+      const rows = await fillPlannedRows()
       const agunan = await fillPlannedCollaterals()
-      const shortRows = []
+      /* `wanted` is the driver's own spec count, which fillPlannedRows already
+         reduced by the wizard-seeded row — compare it as-is. */
+      const shortRows = rows.filter(r => r.error || (r.added ?? 0) < (r.wanted ?? 0))
       const failed = agunan.filter(r => !r.ok)
 
       const problems = []

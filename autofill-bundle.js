@@ -2053,23 +2053,38 @@ async function v2AddRows(specs, openWait = 900) {
     return open[open.length - 1] || null
   }
 
+  /** The RHF control behind a modal, by walking up the fiber from any control
+   *  in it — the same walk `v2ReadValues` uses, scoped to a subtree. */
+  const rhfControl = scopeEl => {
+    for (const el of scopeEl.querySelectorAll('input, textarea, button')) {
+      const key = Object.keys(el).find(k => /^__reactFiber\$/.test(k))
+
+      if (!key) continue
+
+      let fiber = el[key]
+      let depth = 0
+
+      while (fiber && depth++ < 200) {
+        const props = fiber.memoizedProps
+
+        if (props && props.control && typeof props.name === 'string') return props.control
+        fiber = fiber.return
+      }
+    }
+
+    return null
+  }
+
   /**
-   * 🔴 `input` only, then VERIFY — and re-set if the field did not take it.
+   * `input` only — no `change`.
    *
-   * A Cleave-masked currency input collapses to "0" when a `change` event
-   * follows the `input` one: the mask re-reads the raw value mid-format and
-   * lands on zero. The field then holds a legal value, so nothing reports it as
-   * missing — the save is simply refused with NO message anywhere in the dialog.
-   *
-   * Measured 2026-08-15 by diffing the filler's output against a manual fill
-   * that saved: `Isi Nominal Underlying` read "0" after the filler and
-   * "100.000.000" after the manual set. Three earlier hypotheses (date format,
-   * close timing, upload settling) were all wrong, and only the value diff
-   * found it.
-   *
-   * The re-set is belt and braces: masks differ per field, and a value that
-   * silently became 0 is the worst kind of failure — plausible, legal, and
-   * invisible.
+   * ⚠️ This block used to claim a Cleave mask "collapses to 0 when a `change`
+   * event follows the `input` one". That was never observed; it was inferred
+   * from a field the filler had SKIPPED (see the `isBlank` note below).
+   * Measured 2026-08-15 on `Isi Nominal Underlying`: a native write plus one
+   * `input` event puts "100000000" in the RHF store and it is still there
+   * 500ms later. `input` alone remains right — it is what React listens for —
+   * but nothing here is working around a mask.
    */
   const setNative = (el, value) => {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
@@ -2082,10 +2097,12 @@ async function v2AddRows(specs, openWait = 900) {
   }
 
   /**
-   * Re-set anything the mask ate. MUST run after a delay: the collapse is
-   * ASYNCHRONOUS, so a check in the same tick as the write still sees the good
-   * value and passes. Measured 2026-08-15 — a synchronous verify shipped and
-   * changed nothing, and the field still read 0 at save time.
+   * Verify what the fields actually hold, and re-set anything that did not take.
+   *
+   * ⚠️ Kept as a SAFETY NET, not as a fix — the one masked control measured
+   * takes a plain write cleanly. Masks differ per field and only one was
+   * tested, so a verify pass is cheap insurance; if it ever repairs something,
+   * that is a finding worth chasing rather than a routine occurrence.
    */
   const repairMasked = async (written, waitFor) => {
     await waitFor(600)
@@ -2205,16 +2222,26 @@ async function v2AddRows(specs, openWait = 900) {
       if (scope) {
         const written = []
 
+        /* 🔴 A MOUNTED `0` IS A PLACEHOLDER, NOT DATA — and this is the whole of
+           the add-rows blocker. `Isi Nominal Underlying` renders "0" because its
+           form default is the number 0, so a bare `!i.value` filter skipped it,
+           the field was never written, and the save failed on a value the driver
+           had never touched. The report said `Nominal Underlying=0`, which reads
+           as a write that collapsed — six hypotheses chased that reading (mask
+           collapse, `change` events, date format, close timing, upload settling,
+           attach re-render) and every one was downstream of a write that never
+           happened. Measured 2026-08-15: a native write to that same field lands
+           in the store as "100000000" and holds. Same trap as v1's `skipFilled`. */
+        const isBlank = value => !String(value ?? '').trim() || /^0([.,]0+)?$/.test(String(value).trim())
+
         ;[...scope.querySelectorAll('input, textarea')]
-          .filter(i => i.type !== 'file' && !i.value && !i.disabled && !i.readOnly)
+          .filter(i => i.type !== 'file' && isBlank(i.value) && !i.disabled && !i.readOnly)
           .forEach((input, i) => {
             const value = guess(input.placeholder, n + 1 + i)
 
             setNative(input, value)
             written.push([input, value])
           })
-
-        await repairMasked(written, wait)
 
         for (const input of [...scope.querySelectorAll('input[type=file]')]) {
           const transfer = new DataTransfer()
@@ -2231,6 +2258,12 @@ async function v2AddRows(specs, openWait = 900) {
              blocked: no message in the dialog". */
           await wait(3200)
         }
+
+        /* Last thing before the save, so the verify sees the state the save
+           will. (It sits here because "the attach re-renders and undoes the
+           repair" was the sixth hypothesis — also wrong, but this is the right
+           place for a verify pass regardless.) */
+        await repairMasked(written, wait)
       }
 
       await wait(400)
@@ -2274,6 +2307,27 @@ async function v2AddRows(specs, openWait = 900) {
             .map(e => (e.textContent || '').trim())
             .filter(t => /wajib|tidak boleh/i.test(t) && !/^•/.test(t) && !/^Format /i.test(t))
         )].slice(0, 4).join(' | ') || 'no message in the dialog')
+
+        /* 🔴 The errors REACT-HOOK-FORM holds, which are not the errors the
+           modal renders. These modals submit through `methods.handleSubmit`, so
+           a resolver failure refuses SILENTLY — and a field whose error has no
+           visible slot (an array, a control that draws no helper text) leaves
+           the DOM scrape above reporting "no message in the dialog" on a form
+           that is loudly invalid inside. Reading the store is the only way to
+           see it. */
+        const rhf = rhfControl(box3)
+
+        if (rhf) {
+          const flat = (obj, path = []) =>
+            Object.entries(obj || {}).flatMap(([k, v]) =>
+              v && typeof v === 'object' && !v.message ? flat(v, [...path, k]) : [[...path, k].join('.') + ': ' + (v?.message ?? v)]
+            )
+
+          lastError += ' | rhf errors: ' + (flat(rhf._formState?.errors).join(' · ') || 'none') +
+            ' | rhf values: ' + JSON.stringify(rhf._formValues || {})
+        } else {
+          lastError += ' | rhf: control not found'
+        }
 
         const cancel = [...box3.querySelectorAll('button')]
           .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
