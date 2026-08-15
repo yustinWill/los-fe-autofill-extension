@@ -1581,15 +1581,27 @@ async function v2FillCollaterals(items, openWait = 900) {
     el.dispatchEvent(new Event('change', { bubbles: true }))
   }
 
+  /**
+   * Fills EVERY matching field, not the first.
+   *
+   * 🔴 The modal carries the address block TWICE — once for where the
+   * collateral is, once for its owner — with identical placeholders ("Isi
+   * Alamat", "Isi Kode Pos", "Isi RW", "Isi RT"). A `.find()` filled the
+   * collateral's and left the owner's empty, and the save then blocked on a
+   * bare "Field ini wajib diisi" with no clue which of two identical fields it
+   * meant. Measured 2026-08-15 on the logam-mulia branch.
+   *
+   * Filling both with the same value is right here: these are fixture records,
+   * and an owner at the collateral's address is a legitimate shape.
+   */
   const fillByPlaceholder = (needle, value) => {
     const scope = dialog() || document
-    const field = [...scope.querySelectorAll('input, textarea')]
-      .find(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
+    const fields = [...scope.querySelectorAll('input, textarea')]
+      .filter(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
 
-    if (!field) return false
-    setNative(field, value)
+    fields.forEach(f => setNative(f, value))
 
-    return true
+    return fields.length > 0
   }
 
   /* A Kairos select is a trigger button over an INLINE panel of plain buttons —
@@ -1634,18 +1646,37 @@ async function v2FillCollaterals(items, openWait = 900) {
   /* Every small closed option set is a row of <button>s. ⚠️ Scope to the pill's
      OWN label — "Deposito" also appears as a Jenis Agunan option, and a
      document-wide search hits that one first. */
+  /**
+   * 🔴 The smallest element containing the label is the LABEL, and it holds no
+   * buttons.
+   *
+   * Picking it by text length alone found `<label>Jenis Rekening *</label>` and
+   * reported "no pill group" — so the branch's detail block never rendered, its
+   * fields never existed, and the save was blocked by a required section the
+   * driver had not even seen. Measured 2026-08-15: this one bug failed EVERY
+   * branch, and presented differently on each (Kendaraan complained about a
+   * type-specific field, Deposito said nothing at all).
+   *
+   * The group is the smallest element that contains the label AND the option
+   * button — never one without the other.
+   */
   const pill = (label, text) => {
     const scope = dialog() || document
     const holder = [...scope.querySelectorAll('*')]
-      .filter(e => e.children.length && (e.textContent || '').includes(label))
-      .sort((a, b) => a.textContent.length - b.textContent.length)[0]
+      .filter(e => {
+        const t = e.textContent || ''
 
-    if (!holder) return { ok: false, reason: 'no pill group "' + label + '"' }
+        if (!t.includes(label)) return false
+
+        return [...e.querySelectorAll('button')].some(b => (b.textContent || '').trim() === text)
+      })
+      .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0]
+
+    if (!holder) return { ok: false, reason: 'no pill group "' + label + '" offering "' + text + '"' }
 
     const hit = [...holder.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim() === text)
 
-    if (!hit) return { ok: false, reason: 'no pill "' + text + '" under "' + label + '"' }
     hit.click()
 
     return { ok: true }
@@ -1793,40 +1824,96 @@ async function v2FillCollaterals(items, openWait = 900) {
    * worth running precisely because "nothing appeared" is the one most easily
    * read as a failure.
    */
+  /**
+   * The six branches, ported in FULL from
+   * `los-create-autofill/scripts/step4.js`.
+   *
+   * ⚠️ The first version of this table was a COMPACTED port — a few
+   * representative fields per branch — and every branch failed to save because
+   * of what it left out. Deposito wanted `Nama Pemilik` and `Tanggal Jatuh
+   * Tempo`; vehicle wanted a year picker. A partial port of a required-field
+   * set is not a smaller version of the feature, it is a broken one.
+   *
+   * `pills` run BEFORE `selects` and `text`: a pill decides which fields exist
+   * below it, so filling first writes into inputs that are about to be replaced.
+   *
+   * ⚠️ `general` (Mesin) has NO detail block — the shared fields are the whole
+   * form. Not a mistake that its entry is empty; that branch is worth running
+   * precisely because "nothing appeared" reads as a failure.
+   */
   const BRANCHES = {
     'Rumah': {
-      pills: [['Tanah / Bangunan', 'Tanah']],
+      pills: [['Tanah / Bangunan', 'Tanah'], ['Jenis', 'SHM'], ['Jenis Surat', 'SU']],
       text: {
+        'Nomor SHM': 'SHM-1234',
+        'Nomor SU': 'SU-5678',
+        'Tanggal SU': '15/01/2020',
+        'Nomor NIB': '1234567890123',
+        'Nomor IMB': 'IMB-2020-0451',
+        'Nama Pemilik': 'Budi Santoso',
+        'Nomor AJB': 'AJB-2020-118',
+        'Tanggal AJB': '20/01/2020',
         'Luas Tanah': '250',
+        'Luas Bangunan': '180',
         'Batas Tanah Utara': 'Jl. Melati',
         'Batas Tanah Selatan': 'Rumah No. 12',
         'Batas Tanah Timur': 'Saluran air',
         'Batas Tanah Barat': 'Rumah No. 8'
       }
     },
+
     'Kendaraan': {
-      pills: [['Jenis Kendaraan', 'Mobil']],
+      pills: [['Jenis Kendaraan', 'Mobil'], ['Transmisi', 'Automatic']],
+
+      /* ⚠️ Tahun Produksi is a YEAR PICKER, not a text field (dateViewMode:
+         YEAR_ONLY), so its placeholder reads "Pilih …" and typing into it does
+         nothing. It is the one required vehicle field a placeholder fill
+         silently skips — and the save then blocks on it. */
+      selects: {
+        'Pilih Merk Kendaraan': null,
+        'Pilih Tipe Kendaraan': null,
+        'Pilih Varian Kendaraan': null,
+        'Pilih Jenis Bahan Bakar': null,
+        'Pilih Tahun Produksi': '2022'
+      },
       text: {
+        'Nomor Polisi': 'D 1234 ABC',
+        'Nomor Rangka': 'MHFXW42G5N1234567',
         'Nomor Mesin': '2NZX1234567',
+        'Nomor BPKB': 'BPKB-9988776',
+        'Nomor STNK': 'STNK-1122334',
         'Kapasitas Mesin': '1500',
+        'Masa Berlaku STNK': '15/06/2027',
         'Warna Kendaraan Sesuai STNK': 'Putih',
         'Warna Kendaraan Saat Ini': 'Putih'
       }
     },
+
     'Tabungan': {
       pills: [['Jenis Rekening', 'Tabungan']],
-      text: { 'Nomor Rekening': '1234567890', 'Nominal Tabungan': '250000000' }
+      selects: { 'Pilih Bank Pemilik Rekening': null },
+      text: {
+        'Nomor Rekening': '1234567890',
+        'Nama Pemilik': 'Pemilik Rekening',
+        'Nominal Tabungan': '250000000'
+      }
     },
+
     'Deposito': {
       pills: [['Jenis Rekening', 'Deposito']],
+      selects: { 'Pilih Bank Pemilik Rekening': null },
       text: {
         'Nomor Bilyet': 'BLY-2026-0771',
         'Nomor Rekening': '9876543210',
-        'Nominal Deposito': '500000000'
+        'Nama Pemilik': 'Pemilik Rekening',
+        'Nominal Deposito': '500000000',
+        'Tanggal Jatuh Tempo': '31/12/2026'
       }
     },
+
     'Emas dan mata uang emas': {
       pills: [['Memiliki Sertifikat', 'Ya']],
+      selects: { 'Pilih Jenis Logam Mulia': null, 'Pilih Bentuk Fisik': null },
       text: {
         'Jumlah': '10',
         'Berat': '100',
@@ -1835,7 +1922,8 @@ async function v2FillCollaterals(items, openWait = 900) {
         'Tempat Penyimpanan': 'Safe Deposit Box Cabang Bandung'
       }
     },
-    'Mesin': { pills: [], text: {} }
+
+    'Mesin': { pills: [], selects: {}, text: {} }
   }
 
   const SHARED = {
@@ -1884,6 +1972,13 @@ async function v2FillCollaterals(items, openWait = 900) {
     await wait(600)
 
     for (const [label, text] of branch.pills) { pill(label, text); await wait(450) }
+
+    /* Named selects BEFORE the generic sweep: some carry a required VALUE
+       (Tahun Produksi) that "take the first option" would get wrong. */
+    for (const [label, want] of Object.entries(branch.selects || {})) {
+      await choose(label, want)
+      await wait(250)
+    }
 
     /* The NAME is the whole point of the panel's list, so it is set explicitly
        rather than left to a default. */
