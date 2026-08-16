@@ -136,6 +136,47 @@ const isCheckboxField = f =>
   f && (f.type === 'checkbox' || f.type === 'checkbox_group' || f.type === 'toggle')
 
 /**
+ * Fields the run must NEVER answer, whatever the options say.
+ *
+ * 🔴 "Menggunakan Referensi Pengajuan Kredit" is a BUSINESS QUESTION wearing a
+ * gate's clothes (B53 #1, user, 2026-08-16). Turning it on puts step 1 into
+ * reference mode, which makes a reference picker REQUIRED — so a Quick Fill run
+ * finished on a form that could not be submitted, having answered a question
+ * only the user can answer. Revealing a hidden section and answering a business
+ * question are two jobs, and they were sharing one switch.
+ *
+ * ⚠️ v1's reveal already tried to catch this by COUNTING live inputs before and
+ * after, and its own comment (`driver-v1.js:1342`) records that the count RISES
+ * here — 6 → 8, because reference mode ADDS a picker while removing the
+ * facility section — so the heuristic kept the tick on the very control it
+ * cites. A count cannot tell a gate from a mode switch. This names them.
+ *
+ * Keyed on the SHAPE rather than one field: `*USE_REFERENCE*` and
+ * `*USING_REFERENCE*` all mean "reuse another record instead of filling this
+ * one" — today `CREDIT_APPLICATION_REFERENCE_DATA_USE_REFERENCE`,
+ * `DEBTOR_GENERAL_DATA_IS_USING_REFERENCE_DEBTOR` and
+ * `CREDIT_APPLICATION_APPLICATION_DATA_RESTRUCT_OR_EXTENSION_USE_REFERENCE`.
+ * The asymmetry favours skipping: leaving one OFF keeps the form in its normal
+ * mode, turning one ON is what breaks validation.
+ *
+ * SKIPPED, never written false — writing false would close a gate the user
+ * opened BY HAND and take that section's fields with it, the same reasoning as
+ * `shouldSkipCheckboxFills` above.
+ */
+const isUserGate = f => Boolean(f && /USE_REFERENCE|USING_REFERENCE/.test(f.name || ''))
+
+/**
+ * The ONE predicate every fill site filters on.
+ *
+ * ⚠️ There are three of them, and "a filter applied to one branch of a
+ * two-branch fill is not applied" is a trap this extension has already paid for
+ * (2026-08-15: "reveal on, tick off" still answered every gate, because the
+ * filter fed only the single-step path while the multi-step path iterated raw
+ * buckets). Adding a rule to one site and not the others is how that recurs.
+ */
+const skipField = f => isUserGate(f) || (shouldSkipCheckboxFills() && isCheckboxField(f))
+
+/**
  * Run the reveal and wait only as long as it actually needs.
  *
  * A flat sleep here was 600ms on EVERY step — paid in full on the steps with no
@@ -818,10 +859,9 @@ executeBtn.addEventListener('click', async () => {
   /* Reveal-on + tick-off means "open the gates, then leave them alone" — so
      checkbox fields drop out of the fill entirely rather than being answered
      No, which would close what the scan just opened. See
-     shouldSkipCheckboxFills. */
-  const fillable = shouldSkipCheckboxFills()
-    ? lastDetectedFields.filter(f => !isCheckboxField(f))
-    : lastDetectedFields
+     shouldSkipCheckboxFills. `skipField` also drops the reference gates, which
+     no option may switch on. */
+  const fillable = lastDetectedFields.filter(f => !skipField(f))
 
   /**
    * 🔑 A DELIBERATE value must beat an already-filled field; an INVENTED one
@@ -917,7 +957,7 @@ executeBtn.addEventListener('click', async () => {
            path clicks its off segment with no state check — so a gate the user
            had set to Ya was clicked back to Tidak, taking its whole gated
            section with it. */
-        if (shouldSkipCheckboxFills() && isCheckboxField(f)) continue
+        if (skipField(f)) continue
 
         /* Precedence: an explicit per-field override, then the simulation plan
            (the scenario pills and the generated project name), then the smart
@@ -1299,7 +1339,7 @@ async function walkRecordModals(driver, tabId, { delayMs = 120, onStep } = {}) {
     for (let round = 0; round < 6; round++) {
       const fields = ((await run(driver.detect)) || [])
         .filter(f => !seen.has(f.name))
-        .filter(f => !(shouldSkipCheckboxFills() && isCheckboxField(f)))
+        .filter(f => !skipField(f))
       if (!fields.length) break
 
       for (const f of fields) {
@@ -1523,6 +1563,52 @@ document.querySelectorAll('input[name="onOpen"]').forEach(r => {
  * than simply skipping a capability it does not have.
  */
 /**
+ * Bring `opener` on screen by walking the rail until a button carrying that
+ * exact label exists. Returns the step index it landed on, `-1` if the opener
+ * was already there, or `null` if no step has it.
+ *
+ * 🔴 THE BUG THIS EXISTS FOR (B53 #2, 2026-08-16). All three passes below
+ * search `document` for their opener, and all three run AFTER
+ * `runAllWizardSteps` has walked to the LAST step. "Tambah Fasilitas" exists on
+ * step 1 ONLY, so the facility pass reported
+ * `no "Tambah Fasilitas" — is a Jenis Kredit chosen?` on a form that had one,
+ * on every real run — a question about a GATE for a fault that was ORDERING.
+ * "Tambah Agunan" and every row opener have exactly the same shape; the
+ * collateral pass only ever appeared to work because it was verified by calling
+ * the driver directly, with the form already parked on the right step.
+ *
+ * Walks rather than carrying a step index per table: eleven hardcoded indices
+ * would rot the first time a table moves between steps, and the walk opens with
+ * "is it already here?", so it costs one probe on the common path.
+ */
+async function goToOpener(driver, tabId, opener, maxSteps = 10) {
+  const hasOpener = label =>
+    [...document.querySelectorAll('button')].some(b => (b.textContent || '').trim() === label)
+
+  const present = async () => {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: hasOpener, args: [opener]
+    })
+
+    return Boolean(result)
+  }
+
+  if (await present()) return -1
+  if (typeof driver.goTo !== 'function') return null
+
+  for (let i = 0; i < maxSteps; i++) {
+    await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: driver.goTo, args: [i]
+    })
+    await sleep(700)
+
+    if (await present()) return i
+  }
+
+  return null
+}
+
+/**
  * Add the planned extra rows to each repeatable table.
  *
  * ⚠️ Runs BEFORE the collateral pass and AFTER the wizard fill: the wizard fill
@@ -1568,17 +1654,35 @@ async function fillPlannedRows() {
 
   setStatus(`Baris tambahan (${specs.length} tabel)…`)
 
-  try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, world: 'MAIN', func: driver.addRows, args: [specs.map(s => ({ opener: s.opener, count: s.count }))]
-    })
+  /* ONE INJECTION PER SPEC, because each opener lives on a different step and
+     the rail has to move between them. The single batched call this replaced
+     could only ever reach the tables that happened to be on whichever step the
+     wizard fill ended on — every other spec broke out of the driver's loop at
+     `no opener "…"` and reported a table that was simply off screen. */
+  const out = []
 
-    /* Re-attach the target the driver never saw, so a shortfall is reported
-       against what the USER asked for. */
-    return (result || []).map(r => ({ ...r, target: (specs.find(s => s.opener === r.table) || {}).target }))
-  } catch (e) {
-    return [{ table: 'inject', error: e && e.message ? e.message : String(e) }]
+  for (const spec of specs) {
+    try {
+      if ((await goToOpener(driver, tab.id, spec.opener)) === null) {
+        out.push({ table: spec.opener, added: 0, wanted: spec.count, target: spec.target,
+          error: `no opener "${spec.opener}" on any step` })
+        continue
+      }
+
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN', func: driver.addRows,
+        args: [[{ opener: spec.opener, count: spec.count }]]
+      })
+
+      /* Re-attach the target the driver never saw, so a shortfall is reported
+         against what the USER asked for. */
+      out.push(...(result || []).map(r => ({ ...r, target: spec.target })))
+    } catch (e) {
+      out.push({ table: spec.opener, error: e && e.message ? e.message : String(e), target: spec.target })
+    }
   }
+
+  return out
 }
 
 /**
@@ -1605,6 +1709,11 @@ async function fillPlannedFacilities() {
 
   setStatus(`Fasilitas kredit (${wanted.count})…`)
 
+  /* Step 1's opener, and this pass runs after the wizard walked past it. */
+  if ((await goToOpener(driver, tab.id, wanted.opener)) === null) {
+    return [{ ok: false, step: 'open', reason: `no "${wanted.opener}" on any step` }]
+  }
+
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id }, world: 'MAIN', func: driver.facilities, args: [{ count: wanted.count }]
@@ -1626,6 +1735,13 @@ async function fillPlannedCollaterals() {
   const tab = await getActiveTab()
 
   setStatus(`Agunan (${activePlan.collaterals.length})…`)
+
+  /* Step 4's opener — same ordering fault as the facility pass above. */
+  if ((await goToOpener(driver, tab.id, 'Tambah Agunan')) === null) {
+    return activePlan.collaterals.map(item => ({
+      name: item.name, ok: false, step: 'open', reason: 'no "Tambah Agunan" on any step'
+    }))
+  }
 
   try {
     const [{ result }] = await chrome.scripting.executeScript({

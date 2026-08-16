@@ -354,6 +354,148 @@ if (!S) {
     }
   }
 
+  // ── 4. The extras passes navigate before they search ────────────────────────
+  console.log('\nopener navigation')
+
+  {
+    /**
+     * 🔴 B53 #2, 2026-08-16. All three passes in `runPlannedExtras` searched
+     * `document` for their opener while `runAllWizardSteps` had already walked
+     * to the LAST step, so the facility pass reported
+     * `no "Tambah Fasilitas" — is a Jenis Kredit chosen?` on a form that had
+     * one, every real run. NOTHING could catch it: the driver's own reason
+     * string described a plausible gate, and every direct-call verification
+     * happened with the form parked on the right step.
+     *
+     * The sabotage that makes exactly this fail: delete the `for` loop from
+     * `goToOpener` — the first assertion then returns null instead of 3.
+     */
+    const goToOpener = vm.runInContext('typeof goToOpener !== "undefined" ? goToOpener : null', sandbox)
+
+    if (typeof goToOpener !== 'function') {
+      fail('goToOpener not reachable — the extras passes cannot navigate')
+    } else {
+      const realTimeout = sandbox.setTimeout
+      const OPENER = 'Tambah Fasilitas'
+      const OWNING_STEP = 3
+
+      sandbox.setTimeout = fn => realTimeout(fn, 0)
+
+      /* ONE stub for both injections, told apart by their args: `goTo` is given
+         a step index, the presence probe an opener label. */
+      const rail = startOn => {
+        let current = startOn
+        const visited = []
+
+        return {
+          visited,
+          exec: async ({ args }) => {
+            if (typeof args[0] === 'number') { current = args[0]; visited.push(args[0]); return [{ result: true }] }
+
+            return [{ result: current === OWNING_STEP }]
+          }
+        }
+      }
+
+      try {
+        const driver = { goTo: () => true }
+
+        sandbox.chrome.scripting.executeScript = rail(8).exec
+
+        const landed = await goToOpener(driver, 1, OPENER)
+
+        landed === OWNING_STEP
+          ? pass(`walks the rail from the last step to the one owning "${OPENER}"`)
+          : fail(`goToOpener returned ${landed} starting from step 8 — "${OPENER}" is on step ${OWNING_STEP}, and every extras pass runs from the LAST step`)
+
+        const here = rail(OWNING_STEP)
+
+        sandbox.chrome.scripting.executeScript = here.exec
+
+        const already = await goToOpener(driver, 1, OPENER)
+
+        already === -1 && !here.visited.length
+          ? pass('an opener already on screen costs one probe and no navigation')
+          : fail(`goToOpener moved the rail (${here.visited.join(',')}) for an opener already on screen`)
+
+        sandbox.chrome.scripting.executeScript = async () => [{ result: false }]
+
+        const nowhere = await goToOpener(driver, 1, 'Tambah Yang Tidak Ada')
+
+        nowhere === null
+          ? pass('an opener no step has reports null rather than looping')
+          : fail(`goToOpener returned ${nowhere} for an opener no step has`)
+      } catch (e) {
+        fail(`opener navigation: ${e.name}: ${e.message}`)
+      } finally {
+        sandbox.setTimeout = realTimeout
+        sandbox.chrome.scripting.executeScript = async () => [{ result: null }]
+      }
+    }
+  }
+
+  // ── 5. The run never answers a business question ────────────────────────────
+  console.log('\nuser gates')
+
+  {
+    /**
+     * 🔴 B53 #1, 2026-08-16. Quick Fill turned on "Menggunakan Referensi
+     * Pengajuan Kredit", which puts step 1 into reference mode and makes a
+     * reference picker required — the run ended on a form that could not be
+     * submitted. v1's reveal tried to catch this by counting live inputs, and
+     * `driver-v1.js:1342` records that the count RISES here, so the heuristic
+     * kept the tick on the very control its own comment cites.
+     *
+     * Sabotage that makes exactly this fail: drop `isUserGate(f) ||` from
+     * `skipField`, and the wiring assertion goes red while the shape ones stay
+     * green — which is the split that says the predicate, not the regex, broke.
+     */
+    const read = expr => vm.runInContext(`typeof ${expr} !== "undefined" ? ${expr} : null`, sandbox)
+    const isUserGate = read('isUserGate')
+    const skipField = read('skipField')
+
+    if (typeof isUserGate !== 'function' || typeof skipField !== 'function') {
+      fail('isUserGate/skipField not reachable — the run can still answer a gate')
+    } else {
+      const GATES = [
+        'CREDIT_APPLICATION_REFERENCE_DATA_USE_REFERENCE',
+        'DEBTOR_GENERAL_DATA_IS_USING_REFERENCE_DEBTOR',
+        'CREDIT_APPLICATION_APPLICATION_DATA_RESTRUCT_OR_EXTENSION_USE_REFERENCE'
+      ]
+
+      const missed = GATES.filter(name => !isUserGate({ name, type: 'toggle' }))
+
+      missed.length
+        ? fail(`isUserGate does not recognise ${missed.join(', ')} — the run would answer ${missed.length} business question(s)`)
+        : pass(`the ${GATES.length} reference gates are recognised`)
+
+      /* An ordinary gate must still be reachable, or "reveal" reveals nothing.
+         Asserted on isUserGate alone so it does not depend on the checkbox
+         option's state. */
+      isUserGate({ name: 'CREDIT_APPLICATION_COLLATERAL_DATA_IS_HAVE_COLLATERAL', type: 'toggle' })
+        ? fail('isUserGate blocks an ordinary gate — the collateral section would never open')
+        : pass('an ordinary gate is left reachable')
+
+      /**
+       * The wiring: every fill site filters on `skipField`, so a gate that
+       * `isUserGate` recognises but `skipField` does not fold in is recognised
+       * for nothing.
+       *
+       * 🔴 Asserted with a NON-checkbox type ON PURPOSE, and this matters.
+       * With "Tick checkboxes" ON — the setting during the run that found the
+       * bug — `shouldSkipCheckboxFills()` is false, so `isUserGate` is the ONLY
+       * thing dropping the gate. Written with `type: 'toggle'` this assertion
+       * PASSED with the gate rule deleted, because the sandbox stubs the option
+       * element as unchecked and the checkbox branch swallowed it. Measured
+       * 2026-08-16 by deleting `isUserGate(f) ||` and watching nothing go red.
+       * An assertion that cannot fail is not evidence.
+       */
+      skipField({ name: GATES[0], type: 'select' })
+        ? pass('skipField carries the gate rule to every fill site')
+        : fail('skipField does not drop a reference gate — isUserGate is recognised but never applied')
+    }
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

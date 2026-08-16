@@ -1357,6 +1357,23 @@ async function v1RevealGated(includeCheckboxes = true) {
     const fc = box.closest('.MuiFormControlLabel-root') || box.closest('.MuiFormControl-root')
     const label = fc ? (fc.textContent || '').trim().slice(0, 60) : (box.name || '')
 
+    /**
+     * 🔴 NAMED, because the count above cannot catch these — see the comment on
+     * `liveInputs` for the measurement (6 → 8 on this very control).
+     *
+     * A reference switch is a BUSINESS QUESTION, not a gate: turning it on puts
+     * the form into reference mode and makes a picker required, so the run ends
+     * on a form that cannot be submitted, having answered something only the
+     * user can answer (B53 #1, 2026-08-16 — reported on v2, and v1 does the
+     * same thing here).
+     *
+     * Both keys are tested because this loop works off the DOM: `name` carries
+     * the RHF field on most of these inputs, and the label is the fallback for
+     * any that do not. `popup.js:isUserGate` is the same rule on the field-name
+     * side, for the fill pass.
+     */
+    if (/USE_REFERENCE|USING_REFERENCE/i.test(box.name || '') || /menggunakan referensi/i.test(label)) continue
+
     const before = liveInputs()
     box.click()
     await sleep(260)
