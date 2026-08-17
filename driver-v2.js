@@ -199,8 +199,42 @@ async function v2Detect() {
   const isChipRemove = el =>
     el.tagName === 'BUTTON' && /^hapus\b/i.test((el.getAttribute('aria-label') || el.textContent || '').trim())
 
+  /**
+   * The ProseMirror node belonging to THIS control, or null.
+   *
+   * 🔴 SCOPED TO THE FIELD'S OWN CELL. A bare "walk up 5 levels and look for a
+   * ProseMirror" reaches a NEIGHBOURING field's editor: measured 2026-08-17,
+   * step 5's `QUALITATIVE_DATA_DEBTOR_TYPE` — a pill group with no editable
+   * node of its own — was classified `editor` because a Catatan field sat
+   * nearby. `[data-field]` is the boundary the renderer already draws around
+   * every named control, so the search stops there.
+   *
+   * ⚠️ A rich-text field is reached through its TOOLBAR BUTTONS; the editable
+   * node itself carries no React fiber (ProseMirror builds it outside React),
+   * so it never appears in `els`.
+   */
+  const editorHost = el => {
+    const cell = el.closest && el.closest('[data-field]')
+
+    if (!cell) return null
+
+    return cell.querySelector('.ProseMirror, [contenteditable="true"]')
+  }
+
   // Shape → kind. Ordered most-specific first; each test rules out the next.
   function classify(els) {
+    /**
+     * 🔴 RICH TEXT FIRST, because it looks like a select to every later test.
+     *
+     * A Tiptap editor ships a 21-button toolbar (Batalkan, Ulangi, Judul 1…),
+     * so the `buttons.length` branch below classified it `select`; the driver
+     * then opened a panel that does not exist, found no options, and moved on.
+     * Step 5's "Catatan Data Pinjaman" and "Catatan Data Mutasi Rekening" were
+     * never written by any run. Measured 2026-08-17: both cells report
+     * `contentEditable: 1`, `ProseMirror: 1`, `buttons: 21`.
+     */
+    if (els.some(e => Boolean(editorHost(e)))) return 'editor'
+
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
     const buttons = els.filter(e => e.tagName === 'BUTTON')
@@ -317,6 +351,12 @@ async function v2Detect() {
   }
 
   const groups = new Map()
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     if (!visible(el) || inPanel(el)) continue
     const name = fiberName(el)
@@ -925,7 +965,35 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     return false
   }
 
+  /**
+   * ⚠️ DUPLICATED FROM `v2Detect` ON PURPOSE. Each driver function is injected
+   * on its own via `Function.toString()`, so a helper declared in one is
+   * `undefined` in the other — this file's header says so, and it is the same
+   * trap `answerConfirm` paid for. Keep the two copies identical.
+   *
+   * Scoped to the field's own `[data-field]` cell: an unbounded upward search
+   * finds a NEIGHBOURING field's editor and misclassifies a pill group.
+   */
+  const editorHost = el => {
+    const cell = el.closest && el.closest('[data-field]')
+
+    if (!cell) return null
+
+    return cell.querySelector('.ProseMirror, [contenteditable="true"]')
+  }
   function classify(els) {
+    /**
+     * 🔴 RICH TEXT FIRST, because it looks like a select to every later test.
+     *
+     * A Tiptap editor ships a 21-button toolbar (Batalkan, Ulangi, Judul 1…),
+     * so the `buttons.length` branch below classified it `select`; the driver
+     * then opened a panel that does not exist, found no options, and moved on.
+     * Step 5's "Catatan Data Pinjaman" and "Catatan Data Mutasi Rekening" were
+     * never written by any run. Measured 2026-08-17: both cells report
+     * `contentEditable: 1`, `ProseMirror: 1`, `buttons: 21`.
+     */
+    if (els.some(e => Boolean(editorHost(e)))) return 'editor'
+
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
     const buttons = els.filter(e => e.tagName === 'BUTTON')
@@ -995,6 +1063,12 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   const groups = new Map()
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     if (!visible(el) || inPanel(el)) continue
     const n = fiberName(el)
@@ -1030,6 +1104,37 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       const empty = cur === '' || cur === false || (Array.isArray(cur) && cur.length === 0)
       if (!empty) return 'skipped_filled'
     }
+  }
+
+  /**
+   * Rich text — write into the ProseMirror node, not into any input.
+   *
+   * 🔑 `execCommand('insertText')` rather than setting `innerHTML`: Tiptap owns
+   * this node through ProseMirror's own state, and markup written behind its
+   * back is either reverted on the next transaction or never reaches the form
+   * at all. `insertText` goes through the browser's editing pipeline, which
+   * ProseMirror observes, so the change lands in the document AND fires the
+   * `onChange` the form is listening to. Deprecated, and still the only thing
+   * that works from outside the editor.
+   *
+   * ⚠️ selectAll first, so a re-run replaces rather than appends — the fill can
+   * run twice (the double-check pass) and two copies of a memo is worse than
+   * none.
+   */
+  if (type === 'editor') {
+    /* Same cell-scoped lookup `classify` used to recognise it. */
+    const host = group.els.map(editorHost).find(Boolean)
+
+    if (!host) return 'not_found'
+
+    host.focus()
+    await sleep(60)
+    document.execCommand('selectAll', false, null)
+    document.execCommand('insertText', false, String(value == null ? '' : value))
+    host.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(80)
+
+    return (host.textContent || '').trim() ? 'ok' : 'not_found'
   }
 
   if (type === 'select') {
@@ -2203,6 +2308,12 @@ function v2ReadValues(fieldNames) {
   }
 
   let store = null
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     const c = fiberControl(el)
     if (c && c._formValues) { store = c._formValues; break }
