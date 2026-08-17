@@ -3727,6 +3727,337 @@ async function v2AddFacilities(plan, openWait = 900) {
   return results
 }
 
+/**
+ * Step 8's documents — the two document TABLES plus the SLIK dropzone.
+ *
+ * 🔴 THREE THINGS MADE THIS UNREACHABLE BY THE GENERIC ROW-ADDER, and each one
+ * alone would have been enough (all measured live 2026-08-17):
+ *
+ *   1. **The rows have no "Tambah" opener at all.** A mandatory document row
+ *      already EXISTS — the BE seeds it from the product — and is opened by the
+ *      row's PENCIL, an IconButton whose only handle is `aria-label="Ubah"`.
+ *      `v2AddRows` finds its opener by exact BUTTON TEXT, and a pencil has none.
+ *   2. **Both blocks' add buttons carry the SAME label, "Upload Dokumen"**, so
+ *      even the add path cannot tell Dokumen Pengajuan Kredit from Dokumen
+ *      Calon Debitur by text. (`simulation.js` also had the wrong string
+ *      entirely — "Tambah Dokumen Pengajuan Kredit" — which is a third
+ *      instance of the opener-label bug already recorded for Fasilitas and
+ *      Kunjungan.)
+ *   3. **The SLIK attachment is not in a modal at all** — it is a page-level
+ *      dropzone on the step card.
+ *
+ * 🔑 SCOPED BY `[data-block]`, which los-fe emits for every RAW block
+ * (`DynamicField.tsx` — added 2026-08-17 for the submit-guard highlight and
+ * reused here). That is the only handle that distinguishes the two tables.
+ * ⚠️ A heading fallback is kept for any build predating that attribute:
+ * "DOKUMEN PENGAJUAN KREDIT" / "DOKUMEN CALON DEBITUR". Without it this fails
+ * TOTALLY and silently on an older FE, which is the failure mode this repo
+ * keeps paying for.
+ */
+async function v2FillDocuments(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  const spec = Object.assign({ required: true, optional: 1, slik: true }, plan || {})
+  const report = { required: [], optional: [], slik: null }
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  /* A tiny but STRUCTURALLY VALID pdf. A text file renamed .pdf is accepted by
+     the dropzone's accept filter and rejected downstream, which reads as an
+     upload bug rather than a fixture one. */
+  const makePdf = name => {
+    const body = '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+      + '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+      + '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n'
+      + 'trailer<</Root 1 0 R>>\n%%EOF'
+
+    return new File([body], name, { type: 'application/pdf' })
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  /** Drop a file on a dropzone and WAIT for the DMS temp upload to settle.
+   *  🔴 3200ms is not arbitrary — `v2AddRows` measured 1500ms as too short, and
+   *  saving before the round trip returns leaves the form holding no document
+   *  with NO validation message to explain the refusal. */
+  const dropFile = async (input, name) => {
+    const transfer = new DataTransfer()
+
+    transfer.items.add(makePdf(name))
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await wait(3200)
+  }
+
+  const blockEl = (id, heading) => {
+    const direct = document.querySelector(`[data-block="${id}"]`)
+
+    if (direct) return direct
+
+    /* Fallback for an FE without `data-block`: the SMALLEST element that
+       contains the heading AND an upload control — smallest, because anything
+       larger swallows the sibling block and the two become indistinguishable
+       again, which is the exact bug this scoping exists to fix. */
+    const candidates = [...document.querySelectorAll('div')].filter(el => {
+      const t = el.innerText || ''
+
+      return t.toUpperCase().includes(heading) && el.querySelector('button')
+    })
+
+    return candidates.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0] || null
+  }
+
+  const saveModal = async () => {
+    const box = dialog()
+
+    if (!box) return 'no_modal'
+
+    const save = [...box.querySelectorAll('button')].find(b => /^Simpan$/i.test((b.textContent || '').trim()))
+      || [...box.querySelectorAll('button')].find(b => /^(Simpan|Tambah|Upload)/i.test((b.textContent || '').trim()))
+
+    if (!save) return 'no_save_button'
+    if (save.disabled) return 'save_disabled'
+
+    save.click()
+    await wait(900)
+
+    /* v2 gates a record save behind its own confirm — a SECOND dialog. */
+    const confirm = dialog()
+    const ya = confirm && confirm !== box
+      && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (ya) { ya.click(); await wait(900) }
+
+    for (let i = 0; i < 30; i++) {
+      if (!dialog()) return 'saved'
+      await wait(150)
+    }
+
+    /* 🔑 REPORT THE STATE AT THE MOMENT OF REFUSAL, before anything closes.
+       A driver that must cancel to reach the next row destroys its own
+       evidence — the lesson the mutation modal was rebuilt around. */
+    const box2 = dialog()
+    const reds = box2
+      ? [...box2.querySelectorAll('*')].filter(e => {
+        const c = getComputedStyle(e).color
+
+        return /rgb\((223|200|210), (42|30|31)/.test(c) && (e.textContent || '').trim().length < 120 && !e.children.length
+      }).map(e => e.textContent.trim())
+      : []
+    const values = box2 ? [...box2.querySelectorAll('input, textarea')].map(i => `${i.placeholder || i.name || '?'}=${i.value}`) : []
+
+    await (async () => {
+      const cancel = box2 && [...box2.querySelectorAll('button')].find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+
+      if (cancel) { cancel.click(); await wait(600) }
+      const c2 = dialog()
+      const ya2 = c2 && [...c2.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+      if (ya2) { ya2.click(); await wait(600) }
+    })()
+
+    return { blocked: true, errors: reds, values }
+  }
+
+  /**
+   * Answer an UNSET select inside the modal.
+   *
+   * 🔴 Without this the optional-document save was refused with "Field ini
+   * wajib diisi" and nothing else — measured 2026-08-17. Four of the modal's
+   * fields are text and filled fine; `Tipe Dokumen *` is a SELECT whose trigger
+   * still read "Pilih Tipe Dokumen", and a text-and-file-only fill cannot see
+   * it. `Ketentuan Dokumen *` is a select too, but arrives already showing
+   * "Opsional" — which is why only one of the two ever complained, and why the
+   * "Pilih " prefix rather than the asterisk is the right tell for unanswered.
+   *
+   * ⚠️ Options are diffed from the BUTTON SET, never queried: Kairos renders
+   * the panel INLINE among controls that are themselves `<button>`s, so "the
+   * first button that is not Batal" picks a neighbouring control and re-clicks
+   * it — the trap already paid for in the collateral driver.
+   */
+  const chooseFirst = async triggerText => {
+    const box = dialog()
+
+    if (!box) return false
+
+    const trigger = [...box.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim().toLowerCase() === triggerText.toLowerCase())
+
+    if (!trigger) return false
+
+    const before = new Set([...box.querySelectorAll('button')])
+
+    trigger.click()
+    await wait(openWait)
+
+    const option = [...(dialog() || box).querySelectorAll('button')]
+      .filter(b => !before.has(b) && (b.textContent || '').trim())
+      .find(b => !/^(Batal|Tutup|Simpan|Tambah|Upload)/i.test((b.textContent || '').trim()))
+
+    /* Close the panel again rather than leaving it open over the next control —
+       an open panel makes every later button lookup ambiguous. */
+    if (!option) { trigger.click(); return false }
+
+    const label = (option.textContent || '').trim()
+
+    option.click()
+    await wait(400)
+
+    return label
+  }
+
+  /** Fill whatever the open modal still needs, then attach and save. */
+  const completeModal = async (fileName) => {
+    const box = dialog()
+
+    if (!box) return 'no_modal'
+
+    /* Only genuinely EMPTY text fields — a mounted "0" is a placeholder, not
+       data, but a document modal has no numeric defaults so blank is blank. */
+    ;[...box.querySelectorAll('input, textarea')]
+      .filter(i => i.type !== 'file' && !i.value.trim() && !i.disabled && !i.readOnly)
+      .forEach(i => setNative(i, 'Uji autofill'))
+
+    /* Any trigger still reading "Pilih …" is an UNANSWERED select. Snapshotted
+       as TEXT before the loop, because choosing re-renders the modal and
+       renames the trigger — holding element references across the loop would
+       address detached nodes. "Pilih File" is the upload button, not a select. */
+    const unset = [...box.querySelectorAll('button')]
+      .map(b => (b.textContent || '').trim())
+      .filter(t => /^Pilih /i.test(t) && !/^Pilih File$/i.test(t))
+
+    for (const triggerText of unset) await chooseFirst(triggerText)
+
+    for (const input of [...box.querySelectorAll('input[type=file]')]) await dropFile(input, fileName)
+
+    await wait(300)
+
+    return saveModal()
+  }
+
+  // ── 1. Mandatory rows: opened by the row PENCIL, never a Tambah button ─────
+  if (spec.required) {
+    const block = blockEl('v2CreditApplicationDocumentBlock', 'DOKUMEN PENGAJUAN KREDIT')
+
+    if (!block) {
+      report.required.push({ ok: false, reason: 'no Dokumen Pengajuan Kredit block on this step' })
+    } else {
+      /* Re-query every iteration: saving a row re-renders the table, so a
+         pencil captured up front is detached by the time its turn comes. */
+      for (let i = 0; i < 12; i++) {
+        const block2 = blockEl('v2CreditApplicationDocumentBlock', 'DOKUMEN PENGAJUAN KREDIT')
+        const pencils = [...block2.querySelectorAll('button[aria-label="Ubah"]')]
+        /**
+         * 🔴 BOUND THE UPWARD WALK. `FlushTable` is a CSS grid of divs with no
+         * row element to key on, so the row has to be reconstructed by climbing
+         * from the pencil — and an unbounded climb does not stop at the row, it
+         * reaches the TABLE. Measured 2026-08-17: one row's reconstructed text
+         * came back as "NAMA DOKUMEN TIPE DOKUMEN KETENTUAN LAMPIRAN AKSI …"
+         * — the whole table — so a sibling's "1 file" badge counted as THIS
+         * row's attachment and a genuinely empty row was skipped. The run
+         * reported success having filled one row fewer than it should.
+         *
+         * The upper bound is the fix: a single document row is comfortably
+         * under 200 characters, a table of them is not. Same length-bounded
+         * `cellOf` trick `v2AssignCollateralFacilities` already uses.
+         */
+        const ROW_TEXT_LIMIT = 200
+        const rowTextOf = p => {
+          let row = p.parentElement
+          let best = ''
+
+          for (let d = 0; d < 6 && row; d++) {
+            const t = (row.innerText || '').replace(/\s+/g, ' ').trim()
+
+            if (t.length > ROW_TEXT_LIMIT) break
+            if (t.length > best.length) best = t
+            row = row.parentElement
+          }
+
+          return best
+        }
+
+        const target = pencils.find(p => {
+          const text = rowTextOf(p)
+
+          /* Wajib AND nothing attached yet. The attachment cell prints "N file"
+             once a document is on the row, so its absence is the tell. */
+          return /Wajib/.test(text) && !/\d+\s*file/i.test(text)
+        })
+
+        if (!target) break
+
+        target.click()
+        await wait(openWait)
+
+        const label = (() => {
+          const box = dialog()
+
+          return box ? (box.innerText || '').split('\n').find(l => l.trim()) : '?'
+        })()
+
+        const outcome = await completeModal(`dokumen-wajib-${i + 1}.pdf`)
+
+        report.required.push({ row: label, outcome })
+
+        if (outcome !== 'saved') break
+        await wait(500)
+      }
+    }
+  }
+
+  // ── 2. Optional rows on Dokumen Calon Debitur ─────────────────────────────
+  for (let i = 0; i < Math.max(0, Number(spec.optional) || 0); i++) {
+    const block = blockEl('v2PotentialDebtorDocumentBlock', 'DOKUMEN CALON DEBITUR')
+
+    if (!block) { report.optional.push({ ok: false, reason: 'no Dokumen Calon Debitur block' }); break }
+
+    /* 🔴 SCOPED to the block. Both blocks' add buttons read "Upload Dokumen",
+       so a document-wide search always hits the first one. */
+    const add = [...block.querySelectorAll('button')]
+      .find(b => /^(Upload Dokumen|Tambah)/i.test((b.textContent || '').trim()))
+
+    if (!add) { report.optional.push({ ok: false, reason: 'no add button inside the block' }); break }
+
+    add.click()
+    await wait(openWait)
+
+    if (!dialog()) { report.optional.push({ ok: false, reason: 'dialog did not mount' }); break }
+
+    const outcome = await completeModal(`dokumen-calon-debitur-${i + 1}.pdf`)
+
+    report.optional.push({ outcome })
+
+    if (outcome !== 'saved') break
+    await wait(500)
+  }
+
+  // ── 3. The SLIK dropzone — page level, not a modal ────────────────────────
+  if (spec.slik) {
+    const cell = document.querySelector('[data-field="CREDIT_APPLICATION_SLIK_FILE_LIST"]')
+    const input = cell && cell.querySelector('input[type=file]')
+
+    if (!input) {
+      report.slik = { ok: false, reason: 'no SLIK dropzone on this step' }
+    } else {
+      const before = (cell.innerText || '')
+
+      await dropFile(input, 'slik-calon-debitur.pdf')
+      report.slik = { ok: /file diunggah|\.pdf/i.test(cell.innerText || '') && cell.innerText !== before }
+    }
+  }
+
+  return report
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 window.__autofill = {
   detect: v2Detect,
