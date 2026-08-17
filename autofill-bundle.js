@@ -575,7 +575,16 @@ async function v2Detect() {
     let f = el[key], d = 0
     while (f && d++ < 200) {
       const p = f.memoizedProps
-      if (p && p.control && typeof p.name === 'string' && /^[A-Z][A-Z0-9_]+$/.test(p.name)) return p.name
+      /* 🔴 The trailing group is what makes REPEATER ROWS visible. `expandFieldArrays`
+         names every row control `${ARRAY}.${index}.${member}` — e.g.
+         `CREDIT_APPLICATION_FINANCIAL_DATA_INCOME.0.type` — and the old
+         uppercase-only pattern rejected every one of them, so NO v2 repeater row
+         was fillable on any step. Measured 2026-08-17: the DOM had all four of
+         step 3's income/expense fields and the driver saw zero.
+         ⚠️ Inlined, not a shared const: these functions are serialised with
+         Function.toString() and must stay self-contained (see this file's header). */
+      if (p && p.control && typeof p.name === 'string' &&
+          /^[A-Z][A-Z0-9_]+(\.\d+\.[A-Za-z0-9_]+)?$/.test(p.name)) return p.name
       f = f.return
     }
     return null
@@ -633,8 +642,42 @@ async function v2Detect() {
   const isChipRemove = el =>
     el.tagName === 'BUTTON' && /^hapus\b/i.test((el.getAttribute('aria-label') || el.textContent || '').trim())
 
+  /**
+   * The ProseMirror node belonging to THIS control, or null.
+   *
+   * 🔴 SCOPED TO THE FIELD'S OWN CELL. A bare "walk up 5 levels and look for a
+   * ProseMirror" reaches a NEIGHBOURING field's editor: measured 2026-08-17,
+   * step 5's `QUALITATIVE_DATA_DEBTOR_TYPE` — a pill group with no editable
+   * node of its own — was classified `editor` because a Catatan field sat
+   * nearby. `[data-field]` is the boundary the renderer already draws around
+   * every named control, so the search stops there.
+   *
+   * ⚠️ A rich-text field is reached through its TOOLBAR BUTTONS; the editable
+   * node itself carries no React fiber (ProseMirror builds it outside React),
+   * so it never appears in `els`.
+   */
+  const editorHost = el => {
+    const cell = el.closest && el.closest('[data-field]')
+
+    if (!cell) return null
+
+    return cell.querySelector('.ProseMirror, [contenteditable="true"]')
+  }
+
   // Shape → kind. Ordered most-specific first; each test rules out the next.
   function classify(els) {
+    /**
+     * 🔴 RICH TEXT FIRST, because it looks like a select to every later test.
+     *
+     * A Tiptap editor ships a 21-button toolbar (Batalkan, Ulangi, Judul 1…),
+     * so the `buttons.length` branch below classified it `select`; the driver
+     * then opened a panel that does not exist, found no options, and moved on.
+     * Step 5's "Catatan Data Pinjaman" and "Catatan Data Mutasi Rekening" were
+     * never written by any run. Measured 2026-08-17: both cells report
+     * `contentEditable: 1`, `ProseMirror: 1`, `buttons: 21`.
+     */
+    if (els.some(e => Boolean(editorHost(e)))) return 'editor'
+
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
     const buttons = els.filter(e => e.tagName === 'BUTTON')
@@ -751,6 +794,12 @@ async function v2Detect() {
   }
 
   const groups = new Map()
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     if (!visible(el) || inPanel(el)) continue
     const name = fiberName(el)
@@ -1316,7 +1365,16 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     let f = el[key], d = 0
     while (f && d++ < 200) {
       const p = f.memoizedProps
-      if (p && p.control && typeof p.name === 'string' && /^[A-Z][A-Z0-9_]+$/.test(p.name)) return p.name
+      /* 🔴 The trailing group is what makes REPEATER ROWS visible. `expandFieldArrays`
+         names every row control `${ARRAY}.${index}.${member}` — e.g.
+         `CREDIT_APPLICATION_FINANCIAL_DATA_INCOME.0.type` — and the old
+         uppercase-only pattern rejected every one of them, so NO v2 repeater row
+         was fillable on any step. Measured 2026-08-17: the DOM had all four of
+         step 3's income/expense fields and the driver saw zero.
+         ⚠️ Inlined, not a shared const: these functions are serialised with
+         Function.toString() and must stay self-contained (see this file's header). */
+      if (p && p.control && typeof p.name === 'string' &&
+          /^[A-Z][A-Z0-9_]+(\.\d+\.[A-Za-z0-9_]+)?$/.test(p.name)) return p.name
       f = f.return
     }
     return null
@@ -1350,7 +1408,35 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     return false
   }
 
+  /**
+   * ⚠️ DUPLICATED FROM `v2Detect` ON PURPOSE. Each driver function is injected
+   * on its own via `Function.toString()`, so a helper declared in one is
+   * `undefined` in the other — this file's header says so, and it is the same
+   * trap `answerConfirm` paid for. Keep the two copies identical.
+   *
+   * Scoped to the field's own `[data-field]` cell: an unbounded upward search
+   * finds a NEIGHBOURING field's editor and misclassifies a pill group.
+   */
+  const editorHost = el => {
+    const cell = el.closest && el.closest('[data-field]')
+
+    if (!cell) return null
+
+    return cell.querySelector('.ProseMirror, [contenteditable="true"]')
+  }
   function classify(els) {
+    /**
+     * 🔴 RICH TEXT FIRST, because it looks like a select to every later test.
+     *
+     * A Tiptap editor ships a 21-button toolbar (Batalkan, Ulangi, Judul 1…),
+     * so the `buttons.length` branch below classified it `select`; the driver
+     * then opened a panel that does not exist, found no options, and moved on.
+     * Step 5's "Catatan Data Pinjaman" and "Catatan Data Mutasi Rekening" were
+     * never written by any run. Measured 2026-08-17: both cells report
+     * `contentEditable: 1`, `ProseMirror: 1`, `buttons: 21`.
+     */
+    if (els.some(e => Boolean(editorHost(e)))) return 'editor'
+
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
     const buttons = els.filter(e => e.tagName === 'BUTTON')
@@ -1420,6 +1506,12 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   const groups = new Map()
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     if (!visible(el) || inPanel(el)) continue
     const n = fiberName(el)
@@ -1455,6 +1547,37 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       const empty = cur === '' || cur === false || (Array.isArray(cur) && cur.length === 0)
       if (!empty) return 'skipped_filled'
     }
+  }
+
+  /**
+   * Rich text — write into the ProseMirror node, not into any input.
+   *
+   * 🔑 `execCommand('insertText')` rather than setting `innerHTML`: Tiptap owns
+   * this node through ProseMirror's own state, and markup written behind its
+   * back is either reverted on the next transaction or never reaches the form
+   * at all. `insertText` goes through the browser's editing pipeline, which
+   * ProseMirror observes, so the change lands in the document AND fires the
+   * `onChange` the form is listening to. Deprecated, and still the only thing
+   * that works from outside the editor.
+   *
+   * ⚠️ selectAll first, so a re-run replaces rather than appends — the fill can
+   * run twice (the double-check pass) and two copies of a memo is worse than
+   * none.
+   */
+  if (type === 'editor') {
+    /* Same cell-scoped lookup `classify` used to recognise it. */
+    const host = group.els.map(editorHost).find(Boolean)
+
+    if (!host) return 'not_found'
+
+    host.focus()
+    await sleep(60)
+    document.execCommand('selectAll', false, null)
+    document.execCommand('insertText', false, String(value == null ? '' : value))
+    host.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(80)
+
+    return (host.textContent || '').trim() ? 'ok' : 'not_found'
   }
 
   if (type === 'select') {
@@ -1973,6 +2096,30 @@ async function v2FillCollaterals(items, openWait = 900) {
     'Mesin': { pills: [], selects: {}, text: {} }
   }
 
+  /**
+   * Valuation PER COLLATERAL TYPE (user, 2026-08-17: "it also needs a valuation
+   * value variants matching the normal context").
+   *
+   * 🔴 This used to be one shared `2500000000`, so a run produced six agunan of
+   * six different kinds all valued at exactly Rp 2.500.000.000 — a deposit book
+   * worth the same as a factory. That is not merely untidy: the total drives the
+   * Loan-to-Value ratio the step exists to compute, so a uniform figure makes
+   * every LTV in the fixture meaningless.
+   *
+   * ⚠️ Spread deliberately AROUND the plafon rather than all above it, so a
+   * fixture exercises both a comfortable and a thin LTV instead of always the
+   * same one. Keyed on the Jenis Agunan label, falling back for any branch added
+   * later.
+   */
+  const VALUE_BY_TYPE = {
+    'Rumah': '2500000000',
+    'Kendaraan': '385000000',
+    'Tabungan': '175000000',
+    'Deposito': '600000000',
+    'Emas dan mata uang emas': '1250000000',
+    'Mesin': '850000000'
+  }
+
   const SHARED = {
     'Deskripsi Agunan': 'Objek agunan untuk pengajuan ini.',
     'Catatan': 'Dokumen fisik tersimpan di cabang.',
@@ -2008,6 +2155,40 @@ async function v2FillCollaterals(items, openWait = 900) {
 
     if (!dialog()) { results.push({ name: item.name, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
 
+    /**
+     * 🔴 "Tambah Agunan" OPENS TWO DIFFERENT MODALS, and this branch was missing.
+     *
+     * With a debtor set on step 2 — which every real run has, because a
+     * collateral must belong to someone — the button opens **Daftar Agunan**, a
+     * PICKER of that debtor's already-registered collaterals, not the
+     * registration form. The driver assumed registration and died at
+     * `no trigger for Pilih Jenis Agunan`, which reads like a broken selector
+     * rather than the wrong modal. Measured 2026-08-17 on a debtor with no
+     * collaterals: the picker says "Calon debitur ini belum punya agunan
+     * terdaftar. Gunakan Daftarkan Agunan untuk menambahkannya."
+     *
+     * "Daftarkan Agunan" REPLACES the picker in place (the dialog count stays
+     * 1), so this is a branch, not a stack — after clicking it the same
+     * `dialog()` is the registration form.
+     *
+     * ⚠️ Detected by the ABSENCE of the type trigger rather than by the modal's
+     * title: a v2 dialog has no heading element (its title is a plain div), a
+     * trap this file already carries for `v2OpenModal`.
+     */
+    const hasTypeTrigger = () =>
+      [...(dialog() || document).querySelectorAll('button')]
+        .some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+
+    if (!hasTypeTrigger()) {
+      const register = [...(dialog() || document).querySelectorAll('button')]
+        .find(b => /^Daftarkan Agunan$/.test((b.textContent || '').trim()))
+
+      if (register) {
+        register.click()
+        await wait(1600)
+      }
+    }
+
     // The TYPE first: it decides which fields exist below it.
     /* `exact` — this choice DECIDES THE BRANCH. Substituting a different type
        here would fill a deposito's fields into a vehicle, so it must fail
@@ -2034,7 +2215,11 @@ async function v2FillCollaterals(items, openWait = 900) {
        rather than left to a default. */
     fillByPlaceholder('Nama Agunan', item.name)
 
-    for (const [label, value] of Object.entries({ ...SHARED, ...branch.text })) fillByPlaceholder(label, value)
+    /* The type's own valuation overrides SHARED's placeholder figure; a branch's
+       own `text` still wins over both, so a fixture can pin an exact number. */
+    const shared = { ...SHARED, 'Perkiraaan Nilai Agunan': VALUE_BY_TYPE[item.jenis] || SHARED['Perkiraaan Nilai Agunan'] }
+
+    for (const [label, value] of Object.entries({ ...shared, ...branch.text })) fillByPlaceholder(label, value)
 
     await wait(300)
     await resolveRemainingSelects()
@@ -2125,6 +2310,343 @@ async function v2FillCollaterals(items, openWait = 900) {
  *
  * @param specs [{ opener, count }] — `opener` is the button's exact label.
  */
+/**
+ * Step 5's "Tambah Data Mutasi Rekening" — the THIRD `useState` modal in v2.
+ *
+ * 🔴 IT NEEDS ITS OWN CAPABILITY, like the facility and agunan modals, and for
+ * the same reason: none of its inputs is an RHF `<Controller>`. Measured
+ * 2026-08-17 — all six resolve to NO_CONTROLLER, so `v2Detect` reports ZERO
+ * fields inside a modal that plainly has six. Treat "v2Detect sees 0 fields in
+ * an OPEN modal" as the tell for this shape.
+ *
+ * 🔑 ONE MODAL IS ONE ACCOUNT FOR ONE MONTH. The header takes the account and a
+ * single `Periode`; the Detail Transaksi table inside takes that month's rows.
+ * So "3 months across 2 accounts" is SIX saves, not two.
+ *
+ * Layout, measured (row inputs carry NO placeholders, so they are anchored on
+ * the row's `dd/mm/yyyy` date box and read positionally from there):
+ *   header  Bank(select) · Nomor Rekening · Nama Pemilik · Periode · Saldo Awal
+ *   row     Tanggal · Nama Nasabah · Keterangan · Debit · Kredit
+ *
+ * ⚠️ A row must carry a Debit OR a Kredit — the modal says so itself ("Baris 1
+ * harus diisi salah satu"). Rows alternate so a fixture exercises both sides.
+ */
+async function v2AddMutations(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  const spec = Object.assign({ accounts: 2, months: 3, rowsPerMonth: 2 }, plan || {})
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  const byPlaceholder = needle =>
+    [...(dialog() || document).querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase()))
+
+  /* Options render INLINE among buttons, so a before/after diff is the only
+     reliable read — and a trigger click TOGGLES, so an already open panel gives
+     an empty diff. Retried once for exactly that. */
+  const chooseBank = async (label, bankIndex) => {
+    const open = async () => {
+      const trigger = [...(dialog() || document).querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
+      if (!trigger) return []
+      const before = new Set([...document.querySelectorAll('button')])
+      trigger.click()
+      await wait(openWait)
+      return [...document.querySelectorAll('button')].filter(b => !before.has(b) && (b.textContent || '').trim())
+    }
+    let options = await open()
+    if (!options.length) options = await open()
+    if (!options.length) return null
+    /* ⚠️ Falls back by INDEX, not to options[0]. The seeded names are unlikely
+       to match this deployment's bank master data, and sending every account to
+       the first option gives a fixture two "different" accounts at the SAME
+       bank — the same uniformity the agunan valuation fix removed. `bankIndex`
+       is the account's ordinal, so accounts land on different banks. */
+    const hit = options.find(o => (o.textContent || '').trim() === label) ||
+      options[(bankIndex || 0) % options.length]
+    const chosen = (hit.textContent || '').trim()
+    hit.click()
+    await wait(300)
+    return chosen
+  }
+
+  const ACCOUNTS = [
+    { bank: 'BANK CENTRAL ASIA', nomor: '1180457723', nama: 'Budi Santoso' },
+    { bank: 'BANK MANDIRI', nomor: '1400089912345', nama: 'Budi Santoso' }
+  ]
+  const MONTHS = ['Jun 2026', 'Jul 2026', 'Agu 2026']
+  const results = []
+
+  for (let a = 0; a < spec.accounts; a++) {
+    const account = ACCOUNTS[a % ACCOUNTS.length]
+
+    for (let m = 0; m < spec.months; m++) {
+      const period = MONTHS[m % MONTHS.length]
+      const opener = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === 'Tambah Data Mutasi Rekening')
+
+      if (!opener) { results.push({ account: account.nomor, period, ok: false, step: 'open', reason: 'no opener — is step 5 current?' }); break }
+
+      opener.click()
+      await wait(openWait + 400)
+      if (!dialog()) { results.push({ account: account.nomor, period, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
+
+      const bank = await chooseBank(account.bank, a)
+      const nomor = byPlaceholder('nomor rekening')
+      const nama = byPlaceholder('nama pemilik')
+      const periode = byPlaceholder('MMM YYYY')
+
+      if (nomor) setNative(nomor, account.nomor)
+      if (nama) setNative(nama, account.nama)
+
+      /**
+       * 🔴 PERIODE IS READ-ONLY — it can only be set through its PICKER.
+       * `DateField.tsx:287` sets `readOnly={isMonth}` on purpose ("Apr 2026 has
+       * no sane partial-typing behaviour"), so a native write reverts and the
+       * field submits EMPTY. Measured 2026-08-17: every other field on the
+       * modal filled and the save still refused with "Field ini wajib diisi"
+       * against `MMM YYYY=`.
+       *
+       * ⚠️ The trigger is a SPAN with `role="button"` and
+       * `aria-label="Pilih tanggal"` — not the input, and not the first span in
+       * the wrapper (the Input renders its own). Clicking either of those does
+       * nothing at all, which reads as a dead control.
+       */
+      const setPeriode = async label => {
+        const month = String(label).split(' ')[0]
+        const box = byPlaceholder('MMM YYYY')
+
+        if (!box) return null
+
+        let node = box
+        let trigger = null
+
+        for (let up = 0; up < 4 && node && !trigger; up++) {
+          node = node.parentElement
+          trigger = node && node.querySelector('[aria-label="Pilih tanggal"]')
+        }
+
+        if (!trigger) return null
+
+        trigger.click()
+        await wait(openWait)
+
+        const pick = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === month)
+
+        if (!pick) return null
+
+        pick.click()
+        await wait(500)
+
+        return box.value
+      }
+
+      const periodeSet = periode ? await setPeriode(period) : null
+
+      /* Saldo Awal is the first decimal box: the row decimals do not exist
+         until a row has been added, which has not happened yet. */
+      const saldo = [...dialog().querySelectorAll('input')].find(i => i.getAttribute('inputmode') === 'decimal')
+      if (saldo) setNative(saldo, String(50000000 + a * 25000000))
+      await wait(300)
+
+      const rowDates = () => [...dialog().querySelectorAll('input')].filter(i => (i.placeholder || '').includes('dd/mm/yyyy'))
+
+      for (let r = rowDates().length; r < spec.rowsPerMonth; r++) {
+        const add = [...dialog().querySelectorAll('button')].find(b => /Tambah Baris/i.test(b.textContent || ''))
+        if (!add) break
+        add.click()
+        await wait(500)
+      }
+
+      const inputs = [...dialog().querySelectorAll('input')]
+
+      rowDates().forEach((dateBox, r) => {
+        const at = inputs.indexOf(dateBox)
+        const nasabah = inputs[at + 1]
+        const keterangan = inputs[at + 2]
+        const debit = inputs[at + 3]
+        const kredit = inputs[at + 4]
+        const day = String(5 + r * 7).padStart(2, '0')
+        const monthNo = String(6 + (m % 3)).padStart(2, '0')
+
+        setNative(dateBox, day + '/' + monthNo + '/2026')
+        if (nasabah) setNative(nasabah, r % 2 === 0 ? 'PT Sumber Rejeki' : 'CV Mitra Abadi')
+        if (keterangan) setNative(keterangan, r % 2 === 0 ? 'Transfer masuk penjualan' : 'Pembayaran supplier')
+        if (r % 2 === 0 && kredit) setNative(kredit, String(12000000 + r * 1500000))
+        if (r % 2 === 1 && debit) setNative(debit, String(4500000 + r * 900000))
+      })
+
+      await wait(400)
+      const save = [...dialog().querySelectorAll('button')].find(b => /^Simpan$/.test((b.textContent || '').trim()))
+      if (!save) { results.push({ account: account.nomor, period, ok: false, step: 'save', reason: 'no Simpan' }); continue }
+
+      save.click()
+      await wait(openWait + 600)
+      const closed = !dialog()
+
+      /**
+       * 🔴 CAPTURE THE STATE AT THE MOMENT OF REFUSAL, before anything closes
+       * the modal. "Save blocked" with no detail cost four rounds on the
+       * collateral modal — and this function MUST cancel to reach the next row,
+       * which destroys the evidence a moment later.
+       *
+       * ⚠️ Scraped by COLOUR, not by text: this modal is `useState`, so there is
+       * no RHF `_formState.errors` to read, and matching "wajib"/"harus" over
+       * text with no sentence breaks swallows the entire dialog — which is
+       * exactly what the first version reported.
+       */
+      const refusal = closed ? null : (() => {
+        const box = dialog()
+        const red = [...box.querySelectorAll('*')]
+          .filter(e => !e.children.length && (e.textContent || '').trim() &&
+            /^rgb\(2[0-9]{2},\s*[0-9]{1,2},\s*[0-9]{1,2}\)$/.test(getComputedStyle(e).color))
+          .map(e => (e.textContent || '').trim())
+
+        return {
+          errors: [...new Set(red)].slice(0, 6),
+          values: [...box.querySelectorAll('input')].map(i => ((i.placeholder || '?') + '=' + i.value).slice(0, 42))
+        }
+      })()
+
+      results.push({
+        account: account.nomor, period, periodeSet, bank, ok: closed,
+        step: closed ? 'saved' : 'save', refusal: refusal || undefined
+      })
+
+      if (!closed) {
+        const cancel = [...dialog().querySelectorAll('button')].find(b => /^Batal$/.test((b.textContent || '').trim()))
+        if (cancel) { cancel.click(); await wait(600) }
+        const yes = [...(dialog() || document).querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
+        if (yes) { yes.click(); await wait(600) }
+      }
+    }
+  }
+
+  return { saved: results.filter(r => r.ok).length, wanted: spec.accounts * spec.months, results }
+}
+
+/**
+ * Link every agunan row to a credit facility (user, 2026-08-17: "it also needs
+ * to check the 'Pilih Fasilitas Kredit' one as currently all of it not
+ * assigned, it should be assigned to our created Facility").
+ *
+ * 🔴 Registering a collateral does NOT attach it to anything. The agunan TABLE
+ * carries a per-row "Pilih Fasilitas Kredit" select that nothing in the run
+ * touched, so every fixture ended with collaterals floating free of the
+ * facility they are supposed to secure — the record looked populated and was
+ * incoherent.
+ *
+ * Takes the FIRST offered option per row rather than matching a name: the
+ * options are the facilities THIS application created, and a fixture with one
+ * facility has exactly one to choose. ⚠️ With several facilities this spreads
+ * nothing — every agunan lands on the first. Fine for a fixture, and stated
+ * here rather than discovered later.
+ *
+ * 🔑 Re-querying by the PLACEHOLDER is what makes this idempotent: a row that
+ * has been assigned no longer reads "Pilih Fasilitas Kredit", so a second run
+ * finds only what is still unassigned and cannot double-click a select shut.
+ */
+async function v2AssignCollateralFacilities(delayMs = 700) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
+  /**
+   * 🔴 THE CONTROL IS A `SearchableMultiSelect`, NOT A SELECT, and that decides
+   * what "already assigned" looks like. It keeps the PLACEHOLDER on its trigger
+   * for ever and renders chosen values as CHIPS in their own row above the
+   * input (`controls.tsx:620`). So "the trigger still says Pilih Fasilitas
+   * Kredit" is TRUE of an assigned row and is the wrong success test — using it
+   * made the driver report an assignment it had genuinely made and then count
+   * the same row as still pending, which would loop until the guard tripped.
+   *
+   * The honest test is whether the CELL carries a chip, i.e. any text besides
+   * the placeholder.
+   */
+  /**
+   * ⚠️ BOUNDED BY LENGTH, because "the nearest ancestor with other text" climbs
+   * straight past the cell into the ROW — whose text always contains the agunan
+   * name and its rupiah value, so every row read as assigned and the pass did
+   * nothing. A facility cell holds a placeholder plus at most a chip or two;
+   * anything longer is the row.
+   */
+  const CELL_TEXT_LIMIT = 80
+
+  const cellOf = trigger => {
+    let node = trigger.parentElement
+    let best = trigger.parentElement
+
+    for (let i = 0; i < 4 && node; i++) {
+      if ((node.textContent || '').trim().length <= CELL_TEXT_LIMIT) best = node
+      node = node.parentElement
+    }
+
+    return best
+  }
+
+  const isAssigned = trigger => {
+    const rest = (cellOf(trigger).textContent || '').split('Pilih Fasilitas Kredit').join('').trim()
+
+    return rest.length > 0
+  }
+
+  const pending = () =>
+    [...document.querySelectorAll('button')]
+      .filter(b => /Pilih Fasilitas Kredit/.test(b.textContent || ''))
+      .filter(b => !isAssigned(b))
+
+  const results = []
+  let guard = 0
+
+  while (pending().length && guard++ < 20) {
+    const trigger = pending()[0]
+
+    /**
+     * The option panel renders INLINE among controls that are also <button>s,
+     * so the only reliable read is a before/after diff — the same rule the
+     * collateral driver's `choose` uses.
+     *
+     * ⚠️ RETRIED ONCE, because a trigger click TOGGLES. If a panel was already
+     * open when this ran, the first click CLOSES it and the diff is empty —
+     * indistinguishable from "this select has no options". Measured 2026-08-17
+     * when a probe left one open: the driver reported "no facility offered" on
+     * a select that had one. The second click opens it for real.
+     */
+    const openAndRead = async () => {
+      const before = new Set([...document.querySelectorAll('button')])
+
+      trigger.click()
+      await wait(delayMs)
+
+      return [...document.querySelectorAll('button')].filter(b => !before.has(b) && (b.textContent || '').trim())
+    }
+
+    let options = await openAndRead()
+
+    if (!options.length) options = await openAndRead()
+
+    if (!options.length) {
+      results.push({ ok: false, reason: 'no facility offered — was a facility created on step 1?' })
+      trigger.click()
+      await wait(300)
+      break
+    }
+
+    const chosen = (options[0].textContent || '').trim()
+
+    options[0].click()
+    await wait(delayMs)
+
+    results.push({ ok: true, facility: chosen })
+  }
+
+  return { assigned: results.filter(r => r.ok).length, remaining: pending().length, results }
+}
+
 async function v2AddRows(specs, openWait = 900) {
   const wait = ms => new Promise(r => setTimeout(r, ms))
 
@@ -2450,6 +2972,12 @@ function v2ReadValues(fieldNames) {
   }
 
   let store = null
+  /* ⚠️ Do NOT add `[contenteditable]` here. ProseMirror builds its own DOM
+     OUTSIDE React, so that node carries no `__reactFiber$` key at all
+     (measured 2026-08-17) and can never resolve to a field name — it would be
+     swept up and then dropped. A rich-text field is reached through its TOOLBAR
+     BUTTONS, which do carry the Controller; `classify` recognises it from
+     there. */
   for (const el of root.querySelectorAll('input, textarea, button')) {
     const c = fiberControl(el)
     if (c && c._formValues) { store = c._formValues; break }
@@ -2596,6 +3124,26 @@ function v2AdvanceStep() {
  * never consumed. The contract below matches v1's exactly so `walkRecordModals`
  * needs no branch.
  */
+/**
+ * The "Tambah …" controls the GENERIC modal walk may drive.
+ *
+ * 🔴 "Tambah Agunan" and "Tambah Fasilitas" are EXCLUDED because each has its
+ * own capability — `v2FillCollaterals` and `v2AddFacilities`. Without the
+ * exclusion agunan was walked TWICE: the generic phase opened it, filled it
+ * with whatever the sweep chose and SAVED it, and then the collateral pass
+ * added the configured list on top. Measured 2026-08-17 from a user run — a
+ * config of 6 produced 7 rows, and the extra one was a "Pesawat Udara", a
+ * collateral TYPE nobody had asked for, because the generic fill simply took an
+ * option from the Jenis Agunan select.
+ *
+ * 🔑 The same reasoning already excludes agunan from the generic row-adder
+ * (`simulation.js` TABLES: "Agunan is deliberately ABSENT — it needs a type per
+ * row"). This applies it to the modal walk as well.
+ *
+ * ⚠️ The identical filter MUST be repeated in `v2OpenModal` — its own comment
+ * requires same scope, same filter, same order, so filtering one alone would
+ * make every index address a different button.
+ */
 function v2ListModals() {
   /* Scope to the open dialog if there is one — a modal can host its own
      "Tambah" (the agunan modal hosts none today, but step 2's records do) —
@@ -2607,7 +3155,7 @@ function v2ListModals() {
 
   return [...scope.querySelectorAll('button')]
     .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
-    .filter(x => /^Tambah/i.test(x.label))
+    .filter(x => /^Tambah/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(x.label))
     .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled, opensModal: null }))
 }
 
@@ -2627,7 +3175,12 @@ async function v2OpenModal(nth) {
   const openNow = openDialogs()
   const scope = openNow[openNow.length - 1] || document.querySelector('[data-m="stepcard"]') || document
 
-  const buttons = [...scope.querySelectorAll('button')].filter(b => /^Tambah/i.test((b.textContent || '').trim()))
+  const buttons = [...scope.querySelectorAll('button')].filter(b => {
+    const label = (b.textContent || '').trim()
+
+    return /^Tambah/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(label)
+  })
+
   const btn = buttons[nth]
 
   if (!btn) return { opened: false, isModal: false, title: null, reason: 'no_button' }
