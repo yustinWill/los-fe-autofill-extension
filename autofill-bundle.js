@@ -4058,6 +4058,141 @@ async function v2FillDocuments(plan, openWait = 900) {
   return report
 }
 
+/**
+ * Step 5's Data Kualitatif — the 16 analyst narratives.
+ *
+ * 🔴 THE ROWS ALREADY EXIST AND HAVE NO "Tambah" ANYWHERE, so the generic
+ * row-adder has nothing to key on. Each row is opened by its own pencil, an
+ * IconButton whose only handle is `aria-label="Ubah analisa {name}"` — the same
+ * shape as step 8's document rows, and the reason both needed a capability
+ * rather than a `v2AddRows` spec.
+ *
+ * 🔑 THE MODAL IS A TIPTAP EDITOR, NOT A FORM. Measured 2026-08-17: one file
+ * input, a 7-button toolbar (H1 H2 H3 B I U S) and a single `.ProseMirror` —
+ * and ZERO text inputs. A fill that writes into inputs writes nothing here,
+ * which is exactly why `..._DEBTOR_TYPE` above the table filled while the table
+ * itself never did.
+ *
+ * ⚠️ Labels are snapshotted as STRINGS, never as elements: saving re-renders
+ * the table, so a pencil captured up front is a detached node by the time its
+ * turn comes. Same rule the document pass records.
+ */
+async function v2FillQualitative(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  const spec = Object.assign({ limit: 16 }, plan || {})
+  const results = []
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  const block = () => document.querySelector('[data-block="v2QualitativeBlock"]')
+    /* Heading fallback for an FE predating `data-block` — SMALLEST element
+       carrying the heading and a pencil, so it cannot swallow a sibling block. */
+    || [...document.querySelectorAll('div')]
+      .filter(el => (el.innerText || '').toUpperCase().includes('DATA KUALITATIF')
+        && el.querySelector('button[aria-label^="Ubah analisa"]'))
+      .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+      || null
+
+  const root = block()
+
+  if (!root) return [{ ok: false, reason: 'no Data Kualitatif block on this step' }]
+
+  const labels = [...root.querySelectorAll('button[aria-label^="Ubah analisa"]')]
+    .map(b => b.getAttribute('aria-label'))
+    .slice(0, Math.max(0, Number(spec.limit) || 0))
+
+  for (const label of labels) {
+    const name = label.replace(/^Ubah analisa\s*/, '')
+
+    const opener = document.querySelector(`button[aria-label="${label.replace(/"/g, '\\"')}"]`)
+
+    if (!opener) { results.push({ row: name, ok: false, reason: 'pencil not found on re-query' }); continue }
+
+    opener.click()
+    await wait(openWait)
+
+    const box = dialog()
+
+    if (!box) { results.push({ row: name, ok: false, reason: 'modal did not mount' }); continue }
+
+    const host = box.querySelector('.ProseMirror, [contenteditable="true"]')
+
+    if (!host) { results.push({ row: name, ok: false, reason: 'no editor in the modal' }); continue }
+
+    /**
+     * `execCommand('insertText')`, never `innerHTML` — Tiptap owns this node
+     * through ProseMirror's own state, and markup written behind its back is
+     * reverted on the next transaction or never reaches the form at all.
+     * selectAll first so a re-run REPLACES rather than appends.
+     */
+    host.focus()
+    await wait(80)
+    document.execCommand('selectAll', false, null)
+    document.execCommand(
+      'insertText',
+      false,
+      `Hasil ${name}: tidak ditemukan catatan negatif. Data telah diverifikasi pada proses analisa kredit.`
+    )
+    host.dispatchEvent(new Event('input', { bubbles: true }))
+    await wait(150)
+
+    const wrote = (host.textContent || '').trim()
+
+    const save = [...box.querySelectorAll('button')].find(b => /^Simpan$/i.test((b.textContent || '').trim()))
+
+    if (!save) { results.push({ row: name, ok: false, reason: 'no Simpan button', wrote: Boolean(wrote) }); continue }
+
+    save.click()
+    await wait(800)
+
+    const confirm = dialog()
+    const ya = confirm && confirm !== box
+      && [...confirm.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (ya) { ya.click(); await wait(800) }
+
+    let closed = false
+
+    for (let i = 0; i < 30; i++) {
+      if (!dialog()) { closed = true; break }
+      await wait(150)
+    }
+
+    if (closed) {
+      results.push({ row: name, ok: true })
+    } else {
+      /* 🔑 State at the moment of refusal, before anything closes — a driver
+         that must cancel to reach the next row destroys its own evidence. */
+      const box2 = dialog()
+      const reds = box2
+        ? [...box2.querySelectorAll('*')].filter(e => {
+          const c = getComputedStyle(e).color
+
+          return /rgb\((223|200|210), (42|30|31)/.test(c) && (e.textContent || '').trim().length < 120 && !e.children.length
+        }).map(e => e.textContent.trim())
+        : []
+
+      results.push({ row: name, ok: false, reason: 'save blocked', errors: reds, wrote: Boolean(wrote) })
+
+      const back = box2 && [...box2.querySelectorAll('button')].find(b => /^(Kembali|Batal|Tutup)$/i.test((b.textContent || '').trim()))
+
+      if (back) { back.click(); await wait(700) }
+      const c2 = dialog()
+      const ya2 = c2 && [...c2.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+      if (ya2) { ya2.click(); await wait(700) }
+    }
+
+    await wait(400)
+  }
+
+  return results
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 window.__autofill = {
   detect: v2Detect,
