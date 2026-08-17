@@ -76,7 +76,26 @@ window.SIM = (() => {
     { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
     { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
     { key: 'document', label: 'Dokumen pengajuan', opener: 'Tambah Dokumen Pengajuan Kredit', def: 1, max: 12, more: true },
-    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Data Kunjungan', def: 1, max: 5, more: true }
+
+    /* 🔴 SAME BUG AS `facility` ABOVE, SECOND INSTANCE — measured live
+       2026-08-17. This carried "Tambah Data Kunjungan", which is the DEBTOR
+       module's label (`page/debtor.json:96`). The credit-application form's
+       button reads "Tambah Kunjungan Calon Debitur"
+       (`page/creditApplication.json:1152` → `addDebtorVisitButton`), and
+       `v2AddRows` matches the opener with `===`, so the visit rows were never
+       added and nothing reported a reason.
+
+       ✅ Proven both ways on a blank create form: the configured string appears
+       NOWHERE in the DOM, and running v2AddRows with the correct one returned
+       `{wanted: 2, added: 2, error: null}` with the section header going to
+       "DATA KUNJUNGAN CALON DEBITUR (2)". Step 9 needed no new code at all —
+       only the right string.
+
+       🔑 Safe to hardcode the credit-application wording because the panel is
+       mounted ONLY on that route (`mountSimulation` returns false unless
+       `SIM.isCreditApplication(tab.url)`), so this list never runs against the
+       debtor form. */
+    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Kunjungan Calon Debitur', def: 1, max: 5, more: true }
   ]
 
   const SCENARIO = {
