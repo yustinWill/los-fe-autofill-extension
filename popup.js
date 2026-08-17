@@ -1515,12 +1515,29 @@ const quickFillBtn = document.getElementById('quickFillBtn')
  * to answer. Quick Fill now IS the panel's run whenever the panel is mounted —
  * it captures the plan first, and afterwards adds the planned rows and agunan.
  */
-quickFillBtn.addEventListener('click', async () => {
-  quickFillBtn.disabled = true
+/**
+ * The whole of Quick Fill, callable by BOTH entry points.
+ *
+ * 🔴 Extracted 2026-08-17 because the auto-run block at the bottom of this file
+ * was a STALE COPY of this logic: it called `runAllWizardSteps()` alone, with no
+ * `SIM.plan()` capture and no `runPlannedExtras()`. So an auto-run filled the
+ * wizard and then skipped the agunan, rows, mutation and facility passes
+ * entirely before closing the popup — presenting as "Quick Fill ran and did
+ * half the job", with nothing to say why.
+ *
+ * Nobody noticed because the auto-run path was UNREACHABLE on the only route
+ * that has extras (see the auto-run block's own note). Fixing the reachability
+ * without collapsing the duplicate would have shipped the degraded run instead.
+ * Two code paths for one action, one of them not kept up to date, is a shape
+ * this repo has now paid for three times.
+ *
+ * @returns true when the run completed, false when it threw.
+ */
+async function runQuickFill() {
   setStatus('Starting…')
 
   /* Mounted only on the credit-application create route, so everywhere else
-     this stays null and Quick Fill behaves exactly as it always did. */
+     this stays false and Quick Fill behaves exactly as it always did. */
   const planned = isSimulationMounted()
 
   if (planned) activePlan = SIM.plan()
@@ -1536,12 +1553,24 @@ quickFillBtn.addEventListener('click', async () => {
 
       setStatus(scope === 'fill' ? 'Done — page + modals filled' : 'Done — page only', 'done')
 
-      return
+      return true
     }
 
     await runPlannedExtras()
+
+    return true
   } catch (err) {
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
+
+    return false
+  }
+}
+
+quickFillBtn.addEventListener('click', async () => {
+  quickFillBtn.disabled = true
+
+  try {
+    await runQuickFill()
   } finally {
     quickFillBtn.disabled = false
     // The label never changed, so there is nothing to restore.
@@ -1966,17 +1995,46 @@ async function runPlannedExtras() {
 }
 
 // ── Auto-run on popup open ────────────────────────────────────────────────────
-// If the user chose "Quick Fill", auto-run the wizard loop and close when done.
-// If they chose "Open Popup", just show the panel for manual use.
+/**
+ * If the user chose "Quick Fill", run and close when done. If they chose
+ * "Open Popup", just show the panel for manual use.
+ *
+ * 🔴 THIS USED TO `return` THE MOMENT THE PANEL MOUNTED, which made the setting
+ * dead on the ONLY route it matters on. `mountSimulation()` answers false off
+ * the credit-application create route and TRUE on it, and the old code read
+ * that as "handled — stop here", so `pref_onOpen` was never even fetched on the
+ * create form. The preference worked everywhere it was useless and did nothing
+ * where it was wanted (user, 2026-08-17: "'On open: Quick Fill' not working,
+ * must click manually").
+ *
+ * 🔑 The panel still MOUNTS first — `runQuickFill` reads the plan off it via
+ * `isSimulationMounted()`, so mounting is a precondition of a planned run, not
+ * an alternative to one.
+ *
+ * ⚠️ The gate that was lost is the one the user already has: "Open Popup" IS
+ * the review setting. Adding a second condition on top (only auto-run once a
+ * plan has been saved) was considered and rejected — it would leave the first
+ * open on every create form doing nothing, which is indistinguishable from the
+ * bug being reported here.
+ */
 ;(async () => {
-  // Asks first on the create route; returns false everywhere else.
-  if (await mountSimulation()) return
+  // Mounts the config panel on the create route; false everywhere else.
+  await mountSimulation()
 
   const { pref_onOpen } = await chrome.storage.local.get('pref_onOpen')
   if (pref_onOpen === 'popup') return
 
   await sleep(300)
-  await runAllWizardSteps()
+
+  /* The SAME function the button calls — never a second copy. The previous
+     version called `runAllWizardSteps()` bare, so it skipped every extras pass
+     (agunan, rows, mutations, facilities). */
+  const ok = await runQuickFill()
+
   await sleep(900)
-  window.close()
+
+  /* Leave the popup OPEN on failure, or the only report of what went wrong is
+     destroyed by the very act of finishing — the same "capture state before
+     anything closes" rule the driver's failure reports were rebuilt around. */
+  if (ok) window.close()
 })()

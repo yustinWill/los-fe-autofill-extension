@@ -497,6 +497,59 @@ if (!S) {
     }
   }
 
+  console.log('\nauto-run on open')
+
+  {
+    /**
+     * 🔴 2026-08-17. "On open: Quick Fill" did nothing on the credit-application
+     * create form — the one route it exists for. The auto-run block opened with
+     * `if (await mountSimulation()) return`, and `mountSimulation` answers TRUE
+     * on that route, so `pref_onOpen` was never fetched there at all. The
+     * setting worked everywhere it was useless.
+     *
+     * 🔴 And the block was a STALE COPY of the button: it called
+     * `runAllWizardSteps()` bare, with no `SIM.plan()` capture and no
+     * `runPlannedExtras()`. Restoring reachability ALONE would have shipped a
+     * run that fills the wizard then skips every agunan, row, mutation and
+     * facility pass — worse than the no-op, because it reports success.
+     *
+     * Asserted on SOURCE rather than behaviour: the auto-run is an IIFE that has
+     * already run by the time the sandbox is readable, so it cannot be invoked
+     * again to observe.
+     *
+     * Sabotage that makes exactly these fail — each verified to go red:
+     *   1. restore `if (await mountSimulation()) return`      → the gate one
+     *   2. swap `runQuickFill()` for `runAllWizardSteps()`    → the shared-path one
+     */
+    const source = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+    const autoRun = source.slice(source.indexOf('── Auto-run on popup open'))
+    const read = expr => vm.runInContext(`typeof ${expr} !== "undefined" ? ${expr} : null`, sandbox)
+
+    typeof read('runQuickFill') === 'function'
+      ? pass('runQuickFill is extracted, so both entry points share one path')
+      : fail('runQuickFill is missing — the button and the auto-run are two copies again')
+
+    /* Named rather than inlined: this file omits semicolons, so a statement
+       BEGINNING with a regex literal is parsed as division against the line
+       above and the whole check dies at load with "Invalid or unexpected
+       token". Paid for once, 2026-08-17. */
+    const mountsPanel = /await mountSimulation\(\)/.test(autoRun)
+    const shortCircuits = /if \(await mountSimulation\(\)\) return/.test(autoRun)
+    const usesShared = /runQuickFill\(\)/.test(autoRun)
+    const usesBareWizard = /await runAllWizardSteps\(\)/.test(autoRun)
+
+    mountsPanel && !shortCircuits
+      ? pass('mounting the panel no longer short-circuits the preference')
+      : fail('the auto-run returns on mountSimulation() — "On open: Quick Fill" is dead on the create route')
+
+    /* The point is not that runQuickFill is MENTIONED — it is that the bare
+       wizard call is GONE. A block containing both would still skip the extras
+       on whichever branch ran. */
+    usesShared && !usesBareWizard
+      ? pass('the auto-run goes through runQuickFill, not a bare wizard loop')
+      : fail('the auto-run calls runAllWizardSteps directly — it would skip every extras pass')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
