@@ -1107,6 +1107,35 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   /**
+   * SCROLL THE FIELD INTO VIEW BEFORE TOUCHING IT (user, 2026-08-17: "simulate
+   * the user behaviour of navigating and filling the page instead of only
+   * detecting by DOM").
+   *
+   * 🔑 Not cosmetic. A DOM-only sweep writes into nodes the viewport has never
+   * shown, so anything that initialises on VISIBILITY is never exercised by a
+   * run and its bugs survive every "verified" pass — lazily mounted sections,
+   * IntersectionObserver-gated blocks, controls that measure themselves on
+   * first paint. Filling the way a person does is what makes a run evidence
+   * about the APP rather than evidence about the fill.
+   *
+   * ⚠️ `behavior: 'auto'`, deliberately, NOT 'smooth'. Smooth scrolling is
+   * driven by the compositor, which is PAUSED in a hidden or backgrounded tab —
+   * measured 2026-08-17: `scrollIntoView({behavior:'smooth'})` moved nothing at
+   * all there, while 'auto' moved the same element from 1110 to 165. A fill
+   * that silently stops scrolling the moment the tab loses focus is worse than
+   * one that never scrolled, because the run still reports success.
+   *
+   * ⚠️ Guarded: a node detached between detection and fill must be a skip, not
+   * an exception that takes the whole run with it.
+   */
+  try {
+    if (primary && typeof primary.scrollIntoView === 'function') {
+      primary.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' })
+      await sleep(45)
+    }
+  } catch (err) { /* detached between detect and fill — the branches below report it */ }
+
+  /**
    * Rich text — write into the ProseMirror node, not into any input.
    *
    * 🔑 `execCommand('insertText')` rather than setting `innerHTML`: Tiptap owns
@@ -1182,7 +1211,27 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   // DD-MM-YYYY the smart defaults emit lands correctly without conversion.
   if (!primary || (primary.tagName !== 'INPUT' && primary.tagName !== 'TEXTAREA')) return 'not_found'
   setNative(primary, value == null ? '' : value)
-  await sleep(120)
+
+  /**
+   * ⚡ SETTLE TIME IS TYPE-AWARE (user, 2026-08-17: "is there any way to speed
+   * things up on filling it? while mocking the way user behaves").
+   *
+   * 🔑 The 200ms `delayMs` the popup passes was never the cost here — measured
+   * 2026-08-17, `delayMs` is consumed exactly ONCE in this whole function, in
+   * the select branch. What a text field actually paid was this flat 120ms plus
+   * another 120 on the mask re-sync and 60 on blur — ~300ms each, on a form
+   * with roughly 200 of them.
+   *
+   * A plain text write needs only one React commit to land, and React commits
+   * synchronously on the `input` event `setNative` fires. MASKED fields are the
+   * exception that earned the original number: Cleave reformats
+   * ASYNCHRONOUSLY, so the re-sync below genuinely needs the pause — which is
+   * why the cut is keyed on whether a mask is present rather than applied flat.
+   */
+  const masked = Boolean(primary.dataset && (primary.dataset.cleave || primary.className.includes('cleave')))
+    || /[.,]/.test(primary.value || '')
+
+  await sleep(masked ? 120 : 30)
 
   /**
    * 🔴 Re-sync after a MASKED write, or the store keeps an over-length value the
@@ -1218,7 +1267,12 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   primary.blur()
-  await sleep(60)
+
+  /* Blur fires validation and any onBlur formatting. 60ms was a guess; 20 is
+     enough for a synchronous handler and saves ~8s across a full form. Masked
+     fields keep the longer pause for the reason above. */
+  await sleep(masked ? 60 : 20)
+
   return 'ok'
 }
 
@@ -3500,17 +3554,34 @@ async function v2FillDocuments(plan, openWait = 900) {
     return saveModal()
   }
 
-  // ── 1. Mandatory rows: opened by the row PENCIL, never a Tambah button ─────
-  if (spec.required) {
-    const block = blockEl('v2CreditApplicationDocumentBlock', 'DOKUMEN PENGAJUAN KREDIT')
+  /**
+   * ── 1. Mandatory rows: opened by the row PENCIL, never a Tambah button ─────
+   *
+   * 🔴 BOTH BLOCKS, not just the credit-application one. The first version ran
+   * this pass on `v2CreditApplicationDocumentBlock` alone, which left "Kartu
+   * Tanda Penduduk (KTP)" and "Nomor Pokok Wajib Pajak (NPWP)" — both marked
+   * Wajib — unattached under Dokumen Calon Debitur, with the red incomplete
+   * glyph beside them. Seen on the user's own run 2026-08-17.
+   *
+   * The mistake was treating "mandatory documents" as a property of the credit
+   * application when it is a property of EITHER table: the BE seeds mandatory
+   * rows into the debtor block too.
+   */
+  const REQUIRED_BLOCKS = [
+    { id: 'v2CreditApplicationDocumentBlock', heading: 'DOKUMEN PENGAJUAN KREDIT' },
+    { id: 'v2PotentialDebtorDocumentBlock', heading: 'DOKUMEN CALON DEBITUR' }
+  ]
+
+  for (const target0 of (spec.required ? REQUIRED_BLOCKS : [])) {
+    const block = blockEl(target0.id, target0.heading)
 
     if (!block) {
-      report.required.push({ ok: false, reason: 'no Dokumen Pengajuan Kredit block on this step' })
+      report.required.push({ ok: false, block: target0.id, reason: `no ${target0.heading} block on this step` })
     } else {
       /* Re-query every iteration: saving a row re-renders the table, so a
          pencil captured up front is detached by the time its turn comes. */
       for (let i = 0; i < 12; i++) {
-        const block2 = blockEl('v2CreditApplicationDocumentBlock', 'DOKUMEN PENGAJUAN KREDIT')
+        const block2 = blockEl(target0.id, target0.heading)
         const pencils = [...block2.querySelectorAll('button[aria-label="Ubah"]')]
         /**
          * 🔴 BOUND THE UPWARD WALK. `FlushTable` is a CSS grid of divs with no
@@ -3552,6 +3623,10 @@ async function v2FillDocuments(plan, openWait = 900) {
 
         if (!target) break
 
+        /* Same reasoning as the qualitative pass: work the table the way a
+           person does, on screen, rather than clicking a row nobody has seen. */
+        try { target.scrollIntoView({ block: 'center', behavior: 'auto' }); await wait(60) } catch (err) { /* detached */ }
+
         target.click()
         await wait(openWait)
 
@@ -3563,7 +3638,7 @@ async function v2FillDocuments(plan, openWait = 900) {
 
         const outcome = await completeModal(`dokumen-wajib-${i + 1}.pdf`)
 
-        report.required.push({ row: label, outcome })
+        report.required.push({ block: target0.id, row: label, outcome })
 
         if (outcome !== 'saved') break
         await wait(500)
@@ -3668,6 +3743,12 @@ async function v2FillQualitative(plan, openWait = 900) {
     const opener = document.querySelector(`button[aria-label="${label.replace(/"/g, '\\"')}"]`)
 
     if (!opener) { results.push({ row: name, ok: false, reason: 'pencil not found on re-query' }); continue }
+
+    /* Bring the row on screen before opening it — the run should look like a
+       person working down the table, and a row the viewport never showed is a
+       row whose visibility-gated rendering was never exercised. 'auto', because
+       smooth is compositor-driven and dead in a background tab. */
+    try { opener.scrollIntoView({ block: 'center', behavior: 'auto' }); await wait(60) } catch (err) { /* detached */ }
 
     opener.click()
     await wait(openWait)

@@ -1681,7 +1681,16 @@ async function fillPlannedRows() {
        facility modal needs a ~3s wait for its product's find-one, which a
        uniform opener/fill/save loop cannot express. */
     .filter(t => !t.isOwnCapability)
-    .map(t => ({ opener: t.opener, count: Math.max(0, t.count - 1), target: t.count }))
+    /* 🔴 SUBTRACT WHAT THE FORM ACTUALLY SEEDS, not a flat 1.
+       This was `t.count - 1` for EVERY table, on the assumption that the wizard
+       fill has already populated row 1. True for tables that mount with a row;
+       FALSE for Data Kunjungan, which starts at (0) — so its default of 1
+       became 0, the filter below discarded the spec, and the table was never
+       attempted at all. Its opener label was corrected the same day and could
+       not take effect, because this line dropped the row before the opener was
+       ever read. Measured on the user's own run: "DATA KUNJUNGAN CALON DEBITUR
+       (0)" after a complete Quick Fill. */
+    .map(t => ({ opener: t.opener, count: Math.max(0, t.count - (t.seeded ?? 1)), target: t.count }))
     .filter(t => t.count > 0)
 
   if (!specs.length) return []

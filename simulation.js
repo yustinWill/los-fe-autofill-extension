@@ -75,7 +75,13 @@ window.SIM = (() => {
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
     { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
     { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
-    { key: 'document', label: 'Dokumen pengajuan', opener: 'Tambah Dokumen Pengajuan Kredit', def: 1, max: 12, more: true },
+    /* 🔴 `isOwnCapability` since 2026-08-17: documents are handled by
+       `v2FillDocuments`, not the generic row-adder, and this entry's opener was
+       wrong anyway — BOTH document blocks' add buttons read "Upload Dokumen",
+       never "Tambah Dokumen Pengajuan Kredit". Left in the model so the panel
+       can still show the row, excluded from the generic pass so it cannot fire
+       a second, broken attempt at the same table. */
+    { key: 'document', label: 'Dokumen pengajuan', opener: 'Upload Dokumen', def: 1, max: 12, more: true, isOwnCapability: true },
 
     /* 🔴 SAME BUG AS `facility` ABOVE, SECOND INSTANCE — measured live
        2026-08-17. This carried "Tambah Data Kunjungan", which is the DEBTOR
@@ -95,7 +101,16 @@ window.SIM = (() => {
        mounted ONLY on that route (`mountSimulation` returns false unless
        `SIM.isCreditApplication(tab.url)`), so this list never runs against the
        debtor form. */
-    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Kunjungan Calon Debitur', def: 1, max: 5, more: true }
+    /* 🔴 `seeded: 0` — the second half of why step 9 stayed empty, and the half
+       the label fix could not reach. `fillPlannedRows` subtracts ONE from every
+       count for "the row the wizard already seeded", then drops any spec that
+       reaches zero. Data Kunjungan starts at (0), so a default of 1 became 0
+       and the spec was discarded BEFORE the opener was ever looked up — the
+       corrected label was unreachable code. Measured 2026-08-17 on the user's
+       own run: "DATA KUNJUNGAN CALON DEBITUR (0)" after a full Quick Fill.
+
+       `def: 2` because the user asked for two sample visits. */
+    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Kunjungan Calon Debitur', def: 2, max: 5, seeded: 0, more: true }
   ]
 
   const SCENARIO = {
@@ -190,7 +205,16 @@ window.SIM = (() => {
          expressed once. */
       tables: TABLES
         .filter(t => (state.rows[t.key] ?? 0) > 0)
-        .map(t => ({ key: t.key, opener: t.opener, count: state.rows[t.key], isOwnCapability: Boolean(t.isOwnCapability) })),
+        /* `seeded` rides along because only the TABLE knows whether the form
+           mounts a first row for it — see the note on `visit`. Defaulting here
+           rather than at the consumer keeps the assumption in the model. */
+        .map(t => ({
+          key: t.key,
+          opener: t.opener,
+          count: state.rows[t.key],
+          seeded: t.seeded ?? 1,
+          isOwnCapability: Boolean(t.isOwnCapability)
+        })),
       collaterals: state.collaterals.map(item => ({
         type: item.type,
         jenis: (COLLATERAL_TYPES.find(t => t.key === item.type) || {}).jenis,
