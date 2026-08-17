@@ -44,6 +44,11 @@ const DRIVERS = {
        callers must feature-test rather than assume it exists. */
     collaterals: v2FillCollaterals,
 
+    /* Step 5's account-mutation modal. Its OWN capability for the same reason
+       the facility modal has one: none of its inputs is an RHF Controller, so
+       `detect`/`fill` see zero of them. One save per account PER MONTH. */
+    mutations: v2AddMutations,
+
     /* Links each saved agunan to a credit facility. Separate from
        `collaterals` because it runs on the TABLE after every row exists — a
        row cannot be linked before it is saved, and the control is a

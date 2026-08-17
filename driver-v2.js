@@ -1868,6 +1868,227 @@ async function v2FillCollaterals(items, openWait = 900) {
  * @param specs [{ opener, count }] — `opener` is the button's exact label.
  */
 /**
+ * Step 5's "Tambah Data Mutasi Rekening" — the THIRD `useState` modal in v2.
+ *
+ * 🔴 IT NEEDS ITS OWN CAPABILITY, like the facility and agunan modals, and for
+ * the same reason: none of its inputs is an RHF `<Controller>`. Measured
+ * 2026-08-17 — all six resolve to NO_CONTROLLER, so `v2Detect` reports ZERO
+ * fields inside a modal that plainly has six. Treat "v2Detect sees 0 fields in
+ * an OPEN modal" as the tell for this shape.
+ *
+ * 🔑 ONE MODAL IS ONE ACCOUNT FOR ONE MONTH. The header takes the account and a
+ * single `Periode`; the Detail Transaksi table inside takes that month's rows.
+ * So "3 months across 2 accounts" is SIX saves, not two.
+ *
+ * Layout, measured (row inputs carry NO placeholders, so they are anchored on
+ * the row's `dd/mm/yyyy` date box and read positionally from there):
+ *   header  Bank(select) · Nomor Rekening · Nama Pemilik · Periode · Saldo Awal
+ *   row     Tanggal · Nama Nasabah · Keterangan · Debit · Kredit
+ *
+ * ⚠️ A row must carry a Debit OR a Kredit — the modal says so itself ("Baris 1
+ * harus diisi salah satu"). Rows alternate so a fixture exercises both sides.
+ */
+async function v2AddMutations(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  const spec = Object.assign({ accounts: 2, months: 3, rowsPerMonth: 2 }, plan || {})
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement
+    Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  const byPlaceholder = needle =>
+    [...(dialog() || document).querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase()))
+
+  /* Options render INLINE among buttons, so a before/after diff is the only
+     reliable read — and a trigger click TOGGLES, so an already open panel gives
+     an empty diff. Retried once for exactly that. */
+  const chooseBank = async (label, bankIndex) => {
+    const open = async () => {
+      const trigger = [...(dialog() || document).querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
+      if (!trigger) return []
+      const before = new Set([...document.querySelectorAll('button')])
+      trigger.click()
+      await wait(openWait)
+      return [...document.querySelectorAll('button')].filter(b => !before.has(b) && (b.textContent || '').trim())
+    }
+    let options = await open()
+    if (!options.length) options = await open()
+    if (!options.length) return null
+    /* ⚠️ Falls back by INDEX, not to options[0]. The seeded names are unlikely
+       to match this deployment's bank master data, and sending every account to
+       the first option gives a fixture two "different" accounts at the SAME
+       bank — the same uniformity the agunan valuation fix removed. `bankIndex`
+       is the account's ordinal, so accounts land on different banks. */
+    const hit = options.find(o => (o.textContent || '').trim() === label) ||
+      options[(bankIndex || 0) % options.length]
+    const chosen = (hit.textContent || '').trim()
+    hit.click()
+    await wait(300)
+    return chosen
+  }
+
+  const ACCOUNTS = [
+    { bank: 'BANK CENTRAL ASIA', nomor: '1180457723', nama: 'Budi Santoso' },
+    { bank: 'BANK MANDIRI', nomor: '1400089912345', nama: 'Budi Santoso' }
+  ]
+  const MONTHS = ['Jun 2026', 'Jul 2026', 'Agu 2026']
+  const results = []
+
+  for (let a = 0; a < spec.accounts; a++) {
+    const account = ACCOUNTS[a % ACCOUNTS.length]
+
+    for (let m = 0; m < spec.months; m++) {
+      const period = MONTHS[m % MONTHS.length]
+      const opener = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === 'Tambah Data Mutasi Rekening')
+
+      if (!opener) { results.push({ account: account.nomor, period, ok: false, step: 'open', reason: 'no opener — is step 5 current?' }); break }
+
+      opener.click()
+      await wait(openWait + 400)
+      if (!dialog()) { results.push({ account: account.nomor, period, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
+
+      const bank = await chooseBank(account.bank, a)
+      const nomor = byPlaceholder('nomor rekening')
+      const nama = byPlaceholder('nama pemilik')
+      const periode = byPlaceholder('MMM YYYY')
+
+      if (nomor) setNative(nomor, account.nomor)
+      if (nama) setNative(nama, account.nama)
+
+      /**
+       * 🔴 PERIODE IS READ-ONLY — it can only be set through its PICKER.
+       * `DateField.tsx:287` sets `readOnly={isMonth}` on purpose ("Apr 2026 has
+       * no sane partial-typing behaviour"), so a native write reverts and the
+       * field submits EMPTY. Measured 2026-08-17: every other field on the
+       * modal filled and the save still refused with "Field ini wajib diisi"
+       * against `MMM YYYY=`.
+       *
+       * ⚠️ The trigger is a SPAN with `role="button"` and
+       * `aria-label="Pilih tanggal"` — not the input, and not the first span in
+       * the wrapper (the Input renders its own). Clicking either of those does
+       * nothing at all, which reads as a dead control.
+       */
+      const setPeriode = async label => {
+        const month = String(label).split(' ')[0]
+        const box = byPlaceholder('MMM YYYY')
+
+        if (!box) return null
+
+        let node = box
+        let trigger = null
+
+        for (let up = 0; up < 4 && node && !trigger; up++) {
+          node = node.parentElement
+          trigger = node && node.querySelector('[aria-label="Pilih tanggal"]')
+        }
+
+        if (!trigger) return null
+
+        trigger.click()
+        await wait(openWait)
+
+        const pick = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === month)
+
+        if (!pick) return null
+
+        pick.click()
+        await wait(500)
+
+        return box.value
+      }
+
+      const periodeSet = periode ? await setPeriode(period) : null
+
+      /* Saldo Awal is the first decimal box: the row decimals do not exist
+         until a row has been added, which has not happened yet. */
+      const saldo = [...dialog().querySelectorAll('input')].find(i => i.getAttribute('inputmode') === 'decimal')
+      if (saldo) setNative(saldo, String(50000000 + a * 25000000))
+      await wait(300)
+
+      const rowDates = () => [...dialog().querySelectorAll('input')].filter(i => (i.placeholder || '').includes('dd/mm/yyyy'))
+
+      for (let r = rowDates().length; r < spec.rowsPerMonth; r++) {
+        const add = [...dialog().querySelectorAll('button')].find(b => /Tambah Baris/i.test(b.textContent || ''))
+        if (!add) break
+        add.click()
+        await wait(500)
+      }
+
+      const inputs = [...dialog().querySelectorAll('input')]
+
+      rowDates().forEach((dateBox, r) => {
+        const at = inputs.indexOf(dateBox)
+        const nasabah = inputs[at + 1]
+        const keterangan = inputs[at + 2]
+        const debit = inputs[at + 3]
+        const kredit = inputs[at + 4]
+        const day = String(5 + r * 7).padStart(2, '0')
+        const monthNo = String(6 + (m % 3)).padStart(2, '0')
+
+        setNative(dateBox, day + '/' + monthNo + '/2026')
+        if (nasabah) setNative(nasabah, r % 2 === 0 ? 'PT Sumber Rejeki' : 'CV Mitra Abadi')
+        if (keterangan) setNative(keterangan, r % 2 === 0 ? 'Transfer masuk penjualan' : 'Pembayaran supplier')
+        if (r % 2 === 0 && kredit) setNative(kredit, String(12000000 + r * 1500000))
+        if (r % 2 === 1 && debit) setNative(debit, String(4500000 + r * 900000))
+      })
+
+      await wait(400)
+      const save = [...dialog().querySelectorAll('button')].find(b => /^Simpan$/.test((b.textContent || '').trim()))
+      if (!save) { results.push({ account: account.nomor, period, ok: false, step: 'save', reason: 'no Simpan' }); continue }
+
+      save.click()
+      await wait(openWait + 600)
+      const closed = !dialog()
+
+      /**
+       * 🔴 CAPTURE THE STATE AT THE MOMENT OF REFUSAL, before anything closes
+       * the modal. "Save blocked" with no detail cost four rounds on the
+       * collateral modal — and this function MUST cancel to reach the next row,
+       * which destroys the evidence a moment later.
+       *
+       * ⚠️ Scraped by COLOUR, not by text: this modal is `useState`, so there is
+       * no RHF `_formState.errors` to read, and matching "wajib"/"harus" over
+       * text with no sentence breaks swallows the entire dialog — which is
+       * exactly what the first version reported.
+       */
+      const refusal = closed ? null : (() => {
+        const box = dialog()
+        const red = [...box.querySelectorAll('*')]
+          .filter(e => !e.children.length && (e.textContent || '').trim() &&
+            /^rgb\(2[0-9]{2},\s*[0-9]{1,2},\s*[0-9]{1,2}\)$/.test(getComputedStyle(e).color))
+          .map(e => (e.textContent || '').trim())
+
+        return {
+          errors: [...new Set(red)].slice(0, 6),
+          values: [...box.querySelectorAll('input')].map(i => ((i.placeholder || '?') + '=' + i.value).slice(0, 42))
+        }
+      })()
+
+      results.push({
+        account: account.nomor, period, periodeSet, bank, ok: closed,
+        step: closed ? 'saved' : 'save', refusal: refusal || undefined
+      })
+
+      if (!closed) {
+        const cancel = [...dialog().querySelectorAll('button')].find(b => /^Batal$/.test((b.textContent || '').trim()))
+        if (cancel) { cancel.click(); await wait(600) }
+        const yes = [...(dialog() || document).querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
+        if (yes) { yes.click(); await wait(600) }
+      }
+    }
+  }
+
+  return { saved: results.filter(r => r.ok).length, wanted: spec.accounts * spec.months, results }
+}
+
+/**
  * Link every agunan row to a credit facility (user, 2026-08-17: "it also needs
  * to check the 'Pilih Fasilitas Kredit' one as currently all of it not
  * assigned, it should be assigned to our created Facility").

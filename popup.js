@@ -1879,10 +1879,43 @@ function isSimulationMounted() {
  * for the same reason. Rows run first so a shortfall there is not confused
  * with anything the collateral pass did.
  */
+/**
+ * Step 5's account mutations — 2 accounts x 3 months by default (user,
+ * 2026-08-17: "Data Mutasi Rekening needs to have 3 months, 2 account").
+ *
+ * 🔑 Navigates first, like every other extras pass: its opener lives on step 5
+ * and `runPlannedExtras` runs after the wizard has walked past it.
+ */
+async function fillPlannedMutations() {
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.mutations !== 'function') return []
+
+  const tab = await getActiveTab()
+
+  setStatus('Mutasi rekening (2 rekening x 3 bulan)…')
+
+  if ((await goToOpener(driver, tab.id, 'Tambah Data Mutasi Rekening')) === null) {
+    return [{ ok: false, step: 'open', reason: 'no "Tambah Data Mutasi Rekening" on any step' }]
+  }
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.mutations,
+      args: [{ accounts: 2, months: 3, rowsPerMonth: 2 }, 800]
+    })
+
+    return result ? [result] : []
+  } catch (e) {
+    return [{ ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }]
+  }
+}
+
 async function runPlannedExtras() {
   const facilities = await fillPlannedFacilities()
   const rows = await fillPlannedRows()
   const agunan = await fillPlannedCollaterals()
+  const mutations = await fillPlannedMutations()
 
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
@@ -1899,6 +1932,17 @@ async function runPlannedExtras() {
   if (noFacility.length) problems.push(`${noFacility.length}/${facilities.length} fasilitas (${noFacility[0].step || '?'})`)
   if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
   if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
+
+  /* 🔴 REPORTED, not merely computed. A pass whose result reaches no status
+     line is the shape this extension has already shipped three times — a value
+     produced and never consumed reads to the user as success. */
+  const mutationRun = mutations[0]
+
+  if (mutationRun && typeof mutationRun.wanted === 'number' && mutationRun.saved < mutationRun.wanted) {
+    problems.push(`${mutationRun.saved}/${mutationRun.wanted} mutasi rekening`)
+  } else if (mutationRun && mutationRun.ok === false) {
+    problems.push(`mutasi: ${mutationRun.reason || 'gagal'}`)
+  }
 
   /**
    * 🔴 Report the name the FORM ended up with, not the one we planned.
