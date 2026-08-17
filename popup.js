@@ -151,6 +151,13 @@ const isCheckboxField = f =>
  * facility section — so the heuristic kept the tick on the very control it
  * cites. A count cannot tell a gate from a mode switch. This names them.
  *
+ * ⚠️ `HAS_AVALIST` joined them 2026-08-17 (user). It is not a reference switch
+ * but it is the same KIND of control: turning it Ya makes Kode Avalis required,
+ * and choosing an avalis is a two-click picker the user would rather do
+ * themselves than have a run guess at. The test is "would a wrong answer here
+ * cost the user more than an unanswered one" — for a gate that opens a required
+ * picker, it always does.
+ *
  * Keyed on the SHAPE rather than one field: `*USE_REFERENCE*` and
  * `*USING_REFERENCE*` all mean "reuse another record instead of filling this
  * one" — today `CREDIT_APPLICATION_REFERENCE_DATA_USE_REFERENCE`,
@@ -163,7 +170,7 @@ const isCheckboxField = f =>
  * opened BY HAND and take that section's fields with it, the same reasoning as
  * `shouldSkipCheckboxFills` above.
  */
-const isUserGate = f => Boolean(f && /USE_REFERENCE|USING_REFERENCE/.test(f.name || ''))
+const isUserGate = f => Boolean(f && /USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(f.name || ''))
 
 /**
  * The ONE predicate every fill site filters on.

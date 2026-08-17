@@ -458,6 +458,7 @@ if (!S) {
       fail('isUserGate/skipField not reachable — the run can still answer a gate')
     } else {
       const GATES = [
+        'CREDIT_APPLICATION_AVALIST_HAS_AVALIST',
         'CREDIT_APPLICATION_REFERENCE_DATA_USE_REFERENCE',
         'DEBTOR_GENERAL_DATA_IS_USING_REFERENCE_DEBTOR',
         'CREDIT_APPLICATION_APPLICATION_DATA_RESTRUCT_OR_EXTENSION_USE_REFERENCE'

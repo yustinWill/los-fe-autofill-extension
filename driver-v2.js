@@ -132,7 +132,16 @@ async function v2Detect() {
     let f = el[key], d = 0
     while (f && d++ < 200) {
       const p = f.memoizedProps
-      if (p && p.control && typeof p.name === 'string' && /^[A-Z][A-Z0-9_]+$/.test(p.name)) return p.name
+      /* 🔴 The trailing group is what makes REPEATER ROWS visible. `expandFieldArrays`
+         names every row control `${ARRAY}.${index}.${member}` — e.g.
+         `CREDIT_APPLICATION_FINANCIAL_DATA_INCOME.0.type` — and the old
+         uppercase-only pattern rejected every one of them, so NO v2 repeater row
+         was fillable on any step. Measured 2026-08-17: the DOM had all four of
+         step 3's income/expense fields and the driver saw zero.
+         ⚠️ Inlined, not a shared const: these functions are serialised with
+         Function.toString() and must stay self-contained (see this file's header). */
+      if (p && p.control && typeof p.name === 'string' &&
+          /^[A-Z][A-Z0-9_]+(\.\d+\.[A-Za-z0-9_]+)?$/.test(p.name)) return p.name
       f = f.return
     }
     return null
@@ -873,7 +882,16 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     let f = el[key], d = 0
     while (f && d++ < 200) {
       const p = f.memoizedProps
-      if (p && p.control && typeof p.name === 'string' && /^[A-Z][A-Z0-9_]+$/.test(p.name)) return p.name
+      /* 🔴 The trailing group is what makes REPEATER ROWS visible. `expandFieldArrays`
+         names every row control `${ARRAY}.${index}.${member}` — e.g.
+         `CREDIT_APPLICATION_FINANCIAL_DATA_INCOME.0.type` — and the old
+         uppercase-only pattern rejected every one of them, so NO v2 repeater row
+         was fillable on any step. Measured 2026-08-17: the DOM had all four of
+         step 3's income/expense fields and the driver saw zero.
+         ⚠️ Inlined, not a shared const: these functions are serialised with
+         Function.toString() and must stay self-contained (see this file's header). */
+      if (p && p.control && typeof p.name === 'string' &&
+          /^[A-Z][A-Z0-9_]+(\.\d+\.[A-Za-z0-9_]+)?$/.test(p.name)) return p.name
       f = f.return
     }
     return null
