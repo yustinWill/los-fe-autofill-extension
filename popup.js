@@ -1758,6 +1758,15 @@ async function fillPlannedCollaterals() {
       args: [activePlan.collaterals]
     })
 
+    /* Every agunan is saved by now, so the table's per-row facility select
+       exists and can be linked. Feature-tested: a driver without the capability
+       simply skips it rather than throwing. */
+    if (typeof driver.assignFacilities === 'function') {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN', func: driver.assignFacilities, args: [700]
+      })
+    }
+
     return result || []
   } catch (e) {
     return [{ ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }]

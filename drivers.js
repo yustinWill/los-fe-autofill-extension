@@ -43,6 +43,12 @@ const DRIVERS = {
     /* Step 4's Agunan modal, one call per plan. v1 has no equivalent yet, so
        callers must feature-test rather than assume it exists. */
     collaterals: v2FillCollaterals,
+
+    /* Links each saved agunan to a credit facility. Separate from
+       `collaterals` because it runs on the TABLE after every row exists — a
+       row cannot be linked before it is saved, and the control is a
+       SearchableMultiSelect, not one of the modal's fields. */
+    assignFacilities: v2AssignCollateralFacilities,
     /* Generic N-rows-per-table. Uniform modals only — Agunan branches on type
        and has its own capability above. */
     addRows: v2AddRows,

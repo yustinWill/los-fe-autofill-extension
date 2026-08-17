@@ -1548,6 +1548,30 @@ async function v2FillCollaterals(items, openWait = 900) {
     'Mesin': { pills: [], selects: {}, text: {} }
   }
 
+  /**
+   * Valuation PER COLLATERAL TYPE (user, 2026-08-17: "it also needs a valuation
+   * value variants matching the normal context").
+   *
+   * 🔴 This used to be one shared `2500000000`, so a run produced six agunan of
+   * six different kinds all valued at exactly Rp 2.500.000.000 — a deposit book
+   * worth the same as a factory. That is not merely untidy: the total drives the
+   * Loan-to-Value ratio the step exists to compute, so a uniform figure makes
+   * every LTV in the fixture meaningless.
+   *
+   * ⚠️ Spread deliberately AROUND the plafon rather than all above it, so a
+   * fixture exercises both a comfortable and a thin LTV instead of always the
+   * same one. Keyed on the Jenis Agunan label, falling back for any branch added
+   * later.
+   */
+  const VALUE_BY_TYPE = {
+    'Rumah': '2500000000',
+    'Kendaraan': '385000000',
+    'Tabungan': '175000000',
+    'Deposito': '600000000',
+    'Emas dan mata uang emas': '1250000000',
+    'Mesin': '850000000'
+  }
+
   const SHARED = {
     'Deskripsi Agunan': 'Objek agunan untuk pengajuan ini.',
     'Catatan': 'Dokumen fisik tersimpan di cabang.',
@@ -1583,6 +1607,40 @@ async function v2FillCollaterals(items, openWait = 900) {
 
     if (!dialog()) { results.push({ name: item.name, ok: false, step: 'open', reason: 'modal did not appear' }); continue }
 
+    /**
+     * 🔴 "Tambah Agunan" OPENS TWO DIFFERENT MODALS, and this branch was missing.
+     *
+     * With a debtor set on step 2 — which every real run has, because a
+     * collateral must belong to someone — the button opens **Daftar Agunan**, a
+     * PICKER of that debtor's already-registered collaterals, not the
+     * registration form. The driver assumed registration and died at
+     * `no trigger for Pilih Jenis Agunan`, which reads like a broken selector
+     * rather than the wrong modal. Measured 2026-08-17 on a debtor with no
+     * collaterals: the picker says "Calon debitur ini belum punya agunan
+     * terdaftar. Gunakan Daftarkan Agunan untuk menambahkannya."
+     *
+     * "Daftarkan Agunan" REPLACES the picker in place (the dialog count stays
+     * 1), so this is a branch, not a stack — after clicking it the same
+     * `dialog()` is the registration form.
+     *
+     * ⚠️ Detected by the ABSENCE of the type trigger rather than by the modal's
+     * title: a v2 dialog has no heading element (its title is a plain div), a
+     * trap this file already carries for `v2OpenModal`.
+     */
+    const hasTypeTrigger = () =>
+      [...(dialog() || document).querySelectorAll('button')]
+        .some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+
+    if (!hasTypeTrigger()) {
+      const register = [...(dialog() || document).querySelectorAll('button')]
+        .find(b => /^Daftarkan Agunan$/.test((b.textContent || '').trim()))
+
+      if (register) {
+        register.click()
+        await wait(1600)
+      }
+    }
+
     // The TYPE first: it decides which fields exist below it.
     /* `exact` — this choice DECIDES THE BRANCH. Substituting a different type
        here would fill a deposito's fields into a vehicle, so it must fail
@@ -1609,7 +1667,11 @@ async function v2FillCollaterals(items, openWait = 900) {
        rather than left to a default. */
     fillByPlaceholder('Nama Agunan', item.name)
 
-    for (const [label, value] of Object.entries({ ...SHARED, ...branch.text })) fillByPlaceholder(label, value)
+    /* The type's own valuation overrides SHARED's placeholder figure; a branch's
+       own `text` still wins over both, so a fixture can pin an exact number. */
+    const shared = { ...SHARED, 'Perkiraaan Nilai Agunan': VALUE_BY_TYPE[item.jenis] || SHARED['Perkiraaan Nilai Agunan'] }
+
+    for (const [label, value] of Object.entries({ ...shared, ...branch.text })) fillByPlaceholder(label, value)
 
     await wait(300)
     await resolveRemainingSelects()
@@ -1700,6 +1762,122 @@ async function v2FillCollaterals(items, openWait = 900) {
  *
  * @param specs [{ opener, count }] — `opener` is the button's exact label.
  */
+/**
+ * Link every agunan row to a credit facility (user, 2026-08-17: "it also needs
+ * to check the 'Pilih Fasilitas Kredit' one as currently all of it not
+ * assigned, it should be assigned to our created Facility").
+ *
+ * 🔴 Registering a collateral does NOT attach it to anything. The agunan TABLE
+ * carries a per-row "Pilih Fasilitas Kredit" select that nothing in the run
+ * touched, so every fixture ended with collaterals floating free of the
+ * facility they are supposed to secure — the record looked populated and was
+ * incoherent.
+ *
+ * Takes the FIRST offered option per row rather than matching a name: the
+ * options are the facilities THIS application created, and a fixture with one
+ * facility has exactly one to choose. ⚠️ With several facilities this spreads
+ * nothing — every agunan lands on the first. Fine for a fixture, and stated
+ * here rather than discovered later.
+ *
+ * 🔑 Re-querying by the PLACEHOLDER is what makes this idempotent: a row that
+ * has been assigned no longer reads "Pilih Fasilitas Kredit", so a second run
+ * finds only what is still unassigned and cannot double-click a select shut.
+ */
+async function v2AssignCollateralFacilities(delayMs = 700) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+
+  /**
+   * 🔴 THE CONTROL IS A `SearchableMultiSelect`, NOT A SELECT, and that decides
+   * what "already assigned" looks like. It keeps the PLACEHOLDER on its trigger
+   * for ever and renders chosen values as CHIPS in their own row above the
+   * input (`controls.tsx:620`). So "the trigger still says Pilih Fasilitas
+   * Kredit" is TRUE of an assigned row and is the wrong success test — using it
+   * made the driver report an assignment it had genuinely made and then count
+   * the same row as still pending, which would loop until the guard tripped.
+   *
+   * The honest test is whether the CELL carries a chip, i.e. any text besides
+   * the placeholder.
+   */
+  /**
+   * ⚠️ BOUNDED BY LENGTH, because "the nearest ancestor with other text" climbs
+   * straight past the cell into the ROW — whose text always contains the agunan
+   * name and its rupiah value, so every row read as assigned and the pass did
+   * nothing. A facility cell holds a placeholder plus at most a chip or two;
+   * anything longer is the row.
+   */
+  const CELL_TEXT_LIMIT = 80
+
+  const cellOf = trigger => {
+    let node = trigger.parentElement
+    let best = trigger.parentElement
+
+    for (let i = 0; i < 4 && node; i++) {
+      if ((node.textContent || '').trim().length <= CELL_TEXT_LIMIT) best = node
+      node = node.parentElement
+    }
+
+    return best
+  }
+
+  const isAssigned = trigger => {
+    const rest = (cellOf(trigger).textContent || '').split('Pilih Fasilitas Kredit').join('').trim()
+
+    return rest.length > 0
+  }
+
+  const pending = () =>
+    [...document.querySelectorAll('button')]
+      .filter(b => /Pilih Fasilitas Kredit/.test(b.textContent || ''))
+      .filter(b => !isAssigned(b))
+
+  const results = []
+  let guard = 0
+
+  while (pending().length && guard++ < 20) {
+    const trigger = pending()[0]
+
+    /**
+     * The option panel renders INLINE among controls that are also <button>s,
+     * so the only reliable read is a before/after diff — the same rule the
+     * collateral driver's `choose` uses.
+     *
+     * ⚠️ RETRIED ONCE, because a trigger click TOGGLES. If a panel was already
+     * open when this ran, the first click CLOSES it and the diff is empty —
+     * indistinguishable from "this select has no options". Measured 2026-08-17
+     * when a probe left one open: the driver reported "no facility offered" on
+     * a select that had one. The second click opens it for real.
+     */
+    const openAndRead = async () => {
+      const before = new Set([...document.querySelectorAll('button')])
+
+      trigger.click()
+      await wait(delayMs)
+
+      return [...document.querySelectorAll('button')].filter(b => !before.has(b) && (b.textContent || '').trim())
+    }
+
+    let options = await openAndRead()
+
+    if (!options.length) options = await openAndRead()
+
+    if (!options.length) {
+      results.push({ ok: false, reason: 'no facility offered — was a facility created on step 1?' })
+      trigger.click()
+      await wait(300)
+      break
+    }
+
+    const chosen = (options[0].textContent || '').trim()
+
+    options[0].click()
+    await wait(delayMs)
+
+    results.push({ ok: true, facility: chosen })
+  }
+
+  return { assigned: results.filter(r => r.ok).length, remaining: pending().length, results }
+}
+
 async function v2AddRows(specs, openWait = 900) {
   const wait = ms => new Promise(r => setTimeout(r, ms))
 
@@ -2171,6 +2349,26 @@ function v2AdvanceStep() {
  * never consumed. The contract below matches v1's exactly so `walkRecordModals`
  * needs no branch.
  */
+/**
+ * The "Tambah …" controls the GENERIC modal walk may drive.
+ *
+ * 🔴 "Tambah Agunan" and "Tambah Fasilitas" are EXCLUDED because each has its
+ * own capability — `v2FillCollaterals` and `v2AddFacilities`. Without the
+ * exclusion agunan was walked TWICE: the generic phase opened it, filled it
+ * with whatever the sweep chose and SAVED it, and then the collateral pass
+ * added the configured list on top. Measured 2026-08-17 from a user run — a
+ * config of 6 produced 7 rows, and the extra one was a "Pesawat Udara", a
+ * collateral TYPE nobody had asked for, because the generic fill simply took an
+ * option from the Jenis Agunan select.
+ *
+ * 🔑 The same reasoning already excludes agunan from the generic row-adder
+ * (`simulation.js` TABLES: "Agunan is deliberately ABSENT — it needs a type per
+ * row"). This applies it to the modal walk as well.
+ *
+ * ⚠️ The identical filter MUST be repeated in `v2OpenModal` — its own comment
+ * requires same scope, same filter, same order, so filtering one alone would
+ * make every index address a different button.
+ */
 function v2ListModals() {
   /* Scope to the open dialog if there is one — a modal can host its own
      "Tambah" (the agunan modal hosts none today, but step 2's records do) —
@@ -2182,7 +2380,7 @@ function v2ListModals() {
 
   return [...scope.querySelectorAll('button')]
     .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
-    .filter(x => /^Tambah/i.test(x.label))
+    .filter(x => /^Tambah/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(x.label))
     .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled, opensModal: null }))
 }
 
@@ -2202,7 +2400,12 @@ async function v2OpenModal(nth) {
   const openNow = openDialogs()
   const scope = openNow[openNow.length - 1] || document.querySelector('[data-m="stepcard"]') || document
 
-  const buttons = [...scope.querySelectorAll('button')].filter(b => /^Tambah/i.test((b.textContent || '').trim()))
+  const buttons = [...scope.querySelectorAll('button')].filter(b => {
+    const label = (b.textContent || '').trim()
+
+    return /^Tambah/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(label)
+  })
+
   const btn = buttons[nth]
 
   if (!btn) return { opened: false, isModal: false, title: null, reason: 'no_button' }
