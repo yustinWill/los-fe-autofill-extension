@@ -571,10 +571,20 @@ if (!S) {
      */
     const popupSrc = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
     const driversSrc = fs.readFileSync(path.join(dir, 'drivers.js'), 'utf8')
-    const extras = popupSrc.slice(popupSrc.indexOf('async function runPlannedExtras'))
+    /**
+     * ⚠️ COMMENTS STRIPPED BEFORE COUNTING, and this is load-bearing. The first
+     * version counted raw source, so deleting the reporting CODE while leaving
+     * its explanatory comment — which naturally names the variable — kept the
+     * count at 2 and the assertion passed on a pass that reported nothing.
+     * Same family as `includes('hasPermission')` being satisfied by an unused
+     * import. Prose must never be able to satisfy a claim about behaviour.
+     */
+    const stripComments = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const extras = stripComments(popupSrc.slice(popupSrc.indexOf('async function runPlannedExtras')))
 
     const PASSES = [
       { name: 'documents', fn: 'fillPlannedDocuments', v: 'documents' },
+      { name: 'qualitative', fn: 'fillPlannedQualitative', v: 'qualitative' },
       { name: 'mutations', fn: 'fillPlannedMutations', v: 'mutations' },
       { name: 'collaterals', fn: 'fillPlannedCollaterals', v: 'agunan' }
     ]

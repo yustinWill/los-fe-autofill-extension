@@ -1976,12 +1976,63 @@ async function fillPlannedDocuments() {
   }
 }
 
+/**
+ * Step 5's Data Kualitatif — all 16 analyst narratives.
+ *
+ * ⚠️ Cannot use `goToOpener`: that helper walks the rail looking for a button
+ * whose TEXT matches, and this table has no "Tambah" at all — every row opens
+ * by an icon-only pencil. So the step is found by looking for the BLOCK.
+ */
+async function fillPlannedQualitative() {
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.qualitative !== 'function') return null
+
+  const tab = await getActiveTab()
+
+  setStatus('Data kualitatif (16 analisa)…')
+
+  const onScreen = async () => {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: () => Boolean(document.querySelector('[data-block="v2QualitativeBlock"] button[aria-label^="Ubah analisa"]'))
+    })
+
+    return result
+  }
+
+  if (!(await onScreen())) {
+    for (let step = 0; step < 9; step++) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN', func: driver.goTo, args: [step]
+      })
+      await new Promise(r => setTimeout(r, 700))
+      if (await onScreen()) break
+    }
+  }
+
+  if (!(await onScreen())) return [{ ok: false, reason: 'Data Kualitatif block not reachable on any step' }]
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.qualitative,
+      args: [{ limit: 16 }, 900]
+    })
+
+    return result || null
+  } catch (e) {
+    return [{ ok: false, reason: e && e.message ? e.message : String(e) }]
+  }
+}
+
 async function runPlannedExtras() {
   const facilities = await fillPlannedFacilities()
   const rows = await fillPlannedRows()
   const agunan = await fillPlannedCollaterals()
   const mutations = await fillPlannedMutations()
   const documents = await fillPlannedDocuments()
+  const qualitative = await fillPlannedQualitative()
 
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
@@ -2025,6 +2076,14 @@ async function runPlannedExtras() {
       if (unsaved.length) problems.push(`${unsaved.length} dokumen belum tersimpan`)
       if (documents.slik && documents.slik.ok === false) problems.push('lampiran SLIK gagal')
     }
+  }
+
+  /* Same rule again for the qualitative pass — an unreported shortfall here
+     leaves the analyst's own narratives blank under a green "Done". */
+  if (Array.isArray(qualitative)) {
+    const failed = qualitative.filter(r => !r.ok)
+
+    if (failed.length) problems.push(`${failed.length}/${qualitative.length} data kualitatif`)
   }
 
   /**

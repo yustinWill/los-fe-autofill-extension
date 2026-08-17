@@ -72,6 +72,13 @@ const DRIVERS = {
        rather than a modal. Scoped by the `data-block` attribute los-fe emits,
        with a heading fallback for builds predating it. */
     documents: v2FillDocuments,
+
+    /* Step 5's Data Kualitatif — 16 analyst narratives. Its own capability for
+       two reasons the generic path cannot cover: the rows exist already and
+       have no "Tambah" anywhere (each opens by an `aria-label="Ubah analisa
+       {name}"` pencil), and the modal is a TIPTAP EDITOR with zero text inputs,
+       so an input-based fill writes nothing. */
+    qualitative: v2FillQualitative,
     read:    v2ReadValues,
     current: v2CurrentStep,
     goTo:    v2GoToStep,
