@@ -550,6 +550,59 @@ if (!S) {
       : fail('the auto-run calls runAllWizardSteps directly — it would skip every extras pass')
   }
 
+  console.log('\nextras are produced AND consumed')
+
+  {
+    /**
+     * 🔴 THE RECURRING SHAPE, guarded: a value produced and never read. This
+     * repo has shipped it three times — a pill that set nothing, a plan
+     * reaching one of two fill paths, and "Fill modals" being a silent no-op on
+     * every v2 page. Each time the run reported SUCCESS.
+     *
+     * An extras pass has three links and all three must exist: the driver
+     * registers the capability, `runPlannedExtras` CALLS the pass, and its
+     * result reaches the `problems` list. Break any one and the user gets a
+     * green "Done" over work that did not happen.
+     *
+     * Sabotage that makes exactly these fail, each verified:
+     *   delete `documents: v2FillDocuments` from drivers.js  → registration
+     *   drop the `await fillPlannedDocuments()` line         → invocation
+     *   delete the `if (documents)` block                    → reporting
+     */
+    const popupSrc = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+    const driversSrc = fs.readFileSync(path.join(dir, 'drivers.js'), 'utf8')
+    const extras = popupSrc.slice(popupSrc.indexOf('async function runPlannedExtras'))
+
+    const PASSES = [
+      { name: 'documents', fn: 'fillPlannedDocuments', v: 'documents' },
+      { name: 'mutations', fn: 'fillPlannedMutations', v: 'mutations' },
+      { name: 'collaterals', fn: 'fillPlannedCollaterals', v: 'agunan' }
+    ]
+
+    PASSES.forEach(p => {
+      const registered = new RegExp(`${p.name}:\\s*v2`).test(driversSrc)
+      const invoked = new RegExp(`await ${p.fn}\\(`).test(extras)
+
+      /**
+       * Consumed = the bound value is READ somewhere, not merely assigned.
+       *
+       * 🔴 The first version of this asserted `${v}[\s\S]*problems.push` and
+       * PASSED its own sabotage — the binding line itself supplies the name and
+       * some LATER pass supplies the push, so the pattern matched a variable
+       * nothing read. Fifth unfalsifiable assertion found in this repo, and the
+       * first one I wrote myself. Counting occurrences is the honest test: a
+       * name that appears exactly ONCE inside `runPlannedExtras` appears only
+       * in its own `const`, which is precisely the produced-never-consumed bug.
+       */
+      const mentions = (extras.match(new RegExp(`\\b${p.v}\\b`, 'g')) || []).length
+      const consumed = mentions > 1 && /problems\.push/.test(extras)
+
+      registered && invoked && consumed
+        ? pass(`${p.name}: registered, invoked and reported`)
+        : fail(`${p.name}: registered=${registered} invoked=${invoked} reported=${consumed} — a silent no-op`)
+    })
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

@@ -63,6 +63,15 @@ const DRIVERS = {
        `detect`/`fill` see ZERO of its 12 inputs and the generic path cannot
        touch it. Sequence ported from the proven `addFacility` helper. */
     facilities: v2AddFacilities,
+
+    /* Step 8's documents. Its own capability because the generic row-adder
+       cannot reach ANY of it: the mandatory rows already EXIST (the BE seeds
+       them from the product) and open by a PENCIL — `aria-label="Ubah"`, no
+       button text to match — both blocks' add buttons carry the IDENTICAL
+       label "Upload Dokumen", and the SLIK attachment is a page-level dropzone
+       rather than a modal. Scoped by the `data-block` attribute los-fe emits,
+       with a heading fallback for builds predating it. */
+    documents: v2FillDocuments,
     read:    v2ReadValues,
     current: v2CurrentStep,
     goTo:    v2GoToStep,

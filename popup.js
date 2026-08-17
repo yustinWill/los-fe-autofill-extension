@@ -1940,11 +1940,48 @@ async function fillPlannedMutations() {
   }
 }
 
+/**
+ * Step 8's documents — every mandatory row on Dokumen Pengajuan Kredit, one
+ * optional Dokumen Calon Debitur, and the SLIK attachment (user, 2026-08-17).
+ *
+ * 🔑 Navigates first, like every other extras pass: all three live on step 8
+ * and `runPlannedExtras` runs after the wizard has walked past it.
+ *
+ * ⚠️ Navigates on "Upload Dokumen", which is the label BOTH document blocks
+ * use. That ambiguity is fine for finding the STEP and fatal for choosing a
+ * block, which is why the driver scopes by `data-block` rather than by label.
+ */
+async function fillPlannedDocuments() {
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.documents !== 'function') return null
+
+  const tab = await getActiveTab()
+
+  setStatus('Dokumen pendukung (wajib + SLIK)…')
+
+  if ((await goToOpener(driver, tab.id, 'Upload Dokumen')) === null) {
+    return { ok: false, step: 'open', reason: 'no "Upload Dokumen" on any step' }
+  }
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.documents,
+      args: [{ required: true, optional: 1, slik: true }, 900]
+    })
+
+    return result || null
+  } catch (e) {
+    return { ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }
+  }
+}
+
 async function runPlannedExtras() {
   const facilities = await fillPlannedFacilities()
   const rows = await fillPlannedRows()
   const agunan = await fillPlannedCollaterals()
   const mutations = await fillPlannedMutations()
+  const documents = await fillPlannedDocuments()
 
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
@@ -1971,6 +2008,23 @@ async function runPlannedExtras() {
     problems.push(`${mutationRun.saved}/${mutationRun.wanted} mutasi rekening`)
   } else if (mutationRun && mutationRun.ok === false) {
     problems.push(`mutasi: ${mutationRun.reason || 'gagal'}`)
+  }
+
+  /* Same rule for the document pass. Its report is a SHAPE, not a count —
+     `{required: [...], optional: [...], slik: {...}}` — and every entry whose
+     outcome is not the string 'saved' is a row the user must finish by hand,
+     so an unreported shortfall here means a submit blocked on a mandatory
+     document with a green "Done" above it. */
+  if (documents) {
+    if (documents.ok === false) {
+      problems.push(`dokumen: ${documents.reason || 'gagal'}`)
+    } else {
+      const unsaved = [...(documents.required || []), ...(documents.optional || [])]
+        .filter(d => d.outcome !== 'saved')
+
+      if (unsaved.length) problems.push(`${unsaved.length} dokumen belum tersimpan`)
+      if (documents.slik && documents.slik.ok === false) problems.push('lampiran SLIK gagal')
+    }
   }
 
   /**
