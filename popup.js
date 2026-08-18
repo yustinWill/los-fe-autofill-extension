@@ -292,38 +292,57 @@ const persistRunLog = () => {
 function readGateState() {
   const GATE = /Referensi Pengajuan Kredit|Memiliki Avalis|Menggunakan Referensi/i
   const out = []
+  const seen = new Set()
 
-  document.querySelectorAll('label, [class*="label"]').forEach(labelEl => {
-    const text = (labelEl.textContent || '').trim()
+  /* 🔴 A LEAF SWEEP, not `label, [class*="label"]`. The first version used that
+     selector and returned [] on every run — the v2 gate label is a BARE <span>
+     with no class at all, so it matched nothing and the snapshot silently
+     answered nothing on the one question it exists for. Measured live
+     2026-08-18 before this version shipped. */
+  document.querySelectorAll('*').forEach(el => {
+    if (el.children.length !== 0) return
 
-    if (!GATE.test(text) || text.length > 80) return
+    const text = (el.textContent || '').trim()
+
+    if (!GATE.test(text) || text.length > 80 || seen.has(text)) return
 
     // The pill group is a sibling of the label inside the field wrapper; climb
     // until an ancestor holds buttons, bounded so a miss cannot reach <body>.
-    let host = labelEl.parentElement
+    let host = el.parentElement
     let hops = 0
 
-    while (host && hops < 4 && host.querySelectorAll('button').length === 0) {
+    while (host && hops < 5 && host.querySelectorAll('button').length === 0) {
       host = host.parentElement
       hops++
     }
 
     const buttons = host ? [...host.querySelectorAll('button')] : []
 
-    out.push({
-      label: text,
-      options: buttons.map(b => ({
-        text: (b.innerText || '').trim(),
-        ariaPressed: b.getAttribute('aria-pressed'),
-        ariaChecked: b.getAttribute('aria-checked'),
-        dataState: b.getAttribute('data-state'),
-        disabled: b.disabled,
-        // No reliable shared "selected" attribute across the pill variants, so
-        // record the painted background too and let the reader decide.
-        bg: getComputedStyle(b).backgroundColor,
-        color: getComputedStyle(b).color
-      }))
-    })
+    /* A gate is a Ya/Tidak pair. More than four buttons means the climb
+       overshot into a section, which is how the "Data Referensi Pengajuan
+       Kredit" HEADING first came back carrying six unrelated controls. */
+    if (!buttons.length || buttons.length > 4) return
+
+    seen.add(text)
+
+    const options = buttons.map(b => ({
+      text: (b.innerText || '').trim(),
+      ariaPressed: b.getAttribute('aria-pressed'),
+      ariaChecked: b.getAttribute('aria-checked'),
+      dataState: b.getAttribute('data-state'),
+      disabled: b.disabled,
+      bg: getComputedStyle(b).backgroundColor,
+      color: getComputedStyle(b).color
+    }))
+
+    /* ⚠️ These pills carry NO aria state — measured, all null. So selection is
+       only visible in the paint: the chosen option gets an opaque background,
+       the other is transparent. Derived here for readability, with every raw
+       value kept beside it, because a log is re-read later by someone testing
+       a hypothesis this function did not anticipate. */
+    const chosen = options.find(o => o.bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(o.bg))
+
+    out.push({ label: text, selected: chosen ? chosen.text : null, options })
   })
 
   return out
