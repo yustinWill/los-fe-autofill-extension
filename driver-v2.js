@@ -897,7 +897,7 @@ function wfReadBlock(name) {
 // Returns 'ok' | 'not_found' | 'skipped_disabled' | 'skipped_filled' | 'skipped_optional'.
 async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional) {
   /**
-   * 🔬 GATE TRIPWIRE — added 2026-08-17 after three rounds of wrong guesses.
+   * 🔴 THE GATE IS REFUSED HERE, NOT ONLY FILTERED IN THE POPUP.
    *
    * The user reports "Menggunakan Referensi Pengajuan Kredit" arriving ON after
    * a run, on v1.0.55, where the popup's `skipField` should have dropped it.
@@ -906,16 +906,24 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
    * `reveal`, both confirm helpers are scoped to [role=dialog], and filling the
    * reference NUMBER does not flip the toggle (all measured).
    *
-   * So the write comes from a path none of that covers. This logs the CALLER,
-   * not the fact — a stack is the one thing that names an unknown path, and it
-   * sits in the driver so it catches every caller including ones I have not
-   * found. Cheap: one console.warn, only for gate-shaped names, never in the
-   * hot path for ordinary fields.
+   * So the write came from a path none of that covers, and hunting it produced
+   * three wrong guesses. The fix is to stop relying on finding the caller:
+   * popup.js's `skipField` is a POLICY that any one call site can forget, while
+   * a refusal here is an INVARIANT, because every write of a named field goes
+   * through this function. Whatever the missing path is, it now cannot answer a
+   * business question on the user's behalf.
+   *
+   * ⚠️ The stack is still logged, deliberately. If the toggle is EVER seen on
+   * after a run with no "gate refused" line in the page console, that proves
+   * the write did not come through the driver at all — which is the one
+   * remaining possibility and worth being able to distinguish.
    */
   if (/USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(name || '')) {
     try {
-      console.warn('[autofill] GATE FIELD WRITE ATTEMPT:', name, '=', value, '\n', new Error('caller').stack)
+      console.warn('[autofill] gate refused:', name, '=', value, '\n', new Error('caller').stack)
     } catch (e) { /* console unavailable */ }
+
+    return 'skipped_user_gate'
   }
   /* The controlled-by-props blocks are addressed by synthetic name and have no
      Controller to look up, so they short-circuit everything below. `null` means
