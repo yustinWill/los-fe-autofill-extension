@@ -652,6 +652,23 @@ if (!S) {
       ? pass('the per-field result map reaches the log')
       : fail('renderResults must log the raw results map — counts cannot show skipped_user_gate')
 
+    /**
+     * Values must be recorded on BOTH fill branches. "A filter applied on one
+     * branch of a two-branch fill is not applied" is already a recorded trap
+     * here — the multi-step and single-step paths have diverged before, and a
+     * value log that only covers "All steps" is silently empty for the other.
+     *
+     * Sabotage, verified: delete either recordFieldDetail call site → fails.
+     */
+    const detailCalls = (logSrc.match(/recordFieldDetail\(/g) || []).length
+
+    /* Two per branch — try AND catch — so 4. The DEFINITION does not match this
+       pattern (`recordFieldDetail = (`, with spaces), which is why the first
+       threshold of 5 was wrong and the harness caught it rather than the code. */
+    detailCalls >= 4
+      ? pass('written values are recorded on both fill branches')
+      : fail(`recordFieldDetail appears ${detailCalls}x — both fill branches must record, in try AND catch`)
+
     const persisted = /persistRunLog\(\)/.test(qf)
 
     persisted

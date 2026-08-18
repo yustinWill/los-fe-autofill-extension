@@ -259,6 +259,36 @@ const setStatus = (text, state) => {
  */
 let runLog = []
 
+/**
+ * What each field was actually WRITTEN WITH — not just how it went.
+ *
+ * 🔴 The status map alone cannot explain the failure it was built for. A run
+ * whose plan asked for "Kredit Badan Usaha - Produktif" ended on
+ * "Kredit Perorangan - Konsumtif" with the field reported `ok`, and both that
+ * field and Jenis Pengajuan landed on the FIRST option of their control — which
+ * is exactly what `smartDefault` returns when `simOverride` yields nothing.
+ * Whether the plan's value reached the fill is therefore the question, and only
+ * the value can answer it.
+ *
+ * `deliberate` is the discriminator: true means the value came from the plan or
+ * a manual override (and so bypassed `skipFilled`), false means it was invented
+ * by `smartDefault`. A deliberate value that did not land is an app or driver
+ * bug; a non-deliberate one on a planned field means the plan never arrived.
+ */
+let fieldDetail = {}
+
+const recordFieldDetail = (field, value, deliberate, status) => {
+  try {
+    fieldDetail[field.name] = {
+      label: field.label,
+      type: field.type,
+      wrote: typeof value === 'string' ? value.slice(0, 120) : value,
+      deliberate,
+      status
+    }
+  } catch (_) { /* never let logging break a run */ }
+}
+
 const logEvent = (kind, data) => {
   try {
     runLog.push({ t: Date.now(), kind, data })
@@ -1112,8 +1142,10 @@ executeBtn.addEventListener('click', async () => {
             args: [f.name, value, delayMs, ignoreDisabled, skipFilled && !deliberate, skipOptional, isOptional]
           })
           results[f.name] = result || 'error'
+          recordFieldDetail(f, value, deliberate, result || 'error')
         } catch (e) {
           results[f.name] = 'error'
+          recordFieldDetail(f, value, deliberate, 'error')
         }
 
         filled++
@@ -1153,8 +1185,10 @@ executeBtn.addEventListener('click', async () => {
           args: [name, value, delayMs, ignoreDisabled, skipFilled && !deliberate, skipOptional, isOptional]
         })
         results[name] = result || 'error'
+        recordFieldDetail(fieldMeta || { name }, value, deliberate, result || 'error')
       } catch (e) {
         results[name] = 'error'
+        recordFieldDetail(fieldMeta || { name }, value, deliberate, 'error')
       }
 
       if (i < fieldOrder.length - 1) await sleep(delayMs)
@@ -1310,6 +1344,11 @@ function renderResults(results) {
      the before/after snapshot, and the only way to tell a refusal from a field
      the run never reached. */
   logEvent('fields', results)
+
+  /* Values, keyed the same way, so a status and what produced it sit together.
+     Logged as its own event rather than merged into `results`, which
+     renderResults counts by string identity. */
+  logEvent('fieldValues', fieldDetail)
 
   resultStrip.innerHTML = ''
   resultStrip.classList.remove('hidden')
@@ -1668,6 +1707,7 @@ const quickFillBtn = document.getElementById('quickFillBtn')
 async function runQuickFill() {
   /* A fresh log per run. Reset BEFORE the first setStatus, which logs. */
   runLog = []
+  fieldDetail = {}
 
   setStatus('Starting…')
 
