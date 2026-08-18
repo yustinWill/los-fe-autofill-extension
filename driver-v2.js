@@ -2185,14 +2185,40 @@ async function v2AssignCollateralFacilities(delayMs = 700) {
    * nothing. A facility cell holds a placeholder plus at most a chip or two;
    * anything longer is the row.
    */
-  const CELL_TEXT_LIMIT = 80
+  /**
+   * 🔴 STRUCTURAL BOUNDARY, NOT A CHARACTER COUNT — rewritten 2026-08-17 after
+   * the count silently failed on UNDERLYING rows.
+   *
+   * This used to keep the largest ancestor whose text was under 80 characters.
+   * That bound was tuned on AGUNAN rows, which carry a long name and a rupiah
+   * value and so comfortably exceed it. An underlying row does not: measured,
+   * its whole row reads "Uji Nama Payor 1 UJI-1002 Pilih Fasilitas Kredit
+   * Rp 100.000.000" — 60 characters. So the climb swallowed the ENTIRE ROW,
+   * stripping the placeholder left the payor name and the amount behind, and
+   * every unassigned underlying row reported itself as already assigned. The
+   * pass then returned `assigned: 0, remaining: 0` on a table where nothing was
+   * linked, which reads as "nothing to do" rather than as a miss.
+   *
+   * The row is identifiable by STRUCTURE instead: it carries the row action
+   * buttons, whose aria-labels are EXACTLY "Ubah" and "Hapus". A chip's remove
+   * control is "Hapus <value>" — prefixed, never bare — so an exact match
+   * separates the row from the control cleanly, whatever the text length.
+   * Measured on the live row: levels 0-2 hold the control (one button, text is
+   * just the placeholder), level 3 is the row (four buttons, both actions).
+   */
+  const isRowAction = el => {
+    const a = el.getAttribute('aria-label')
+
+    return a === 'Ubah' || a === 'Hapus'
+  }
 
   const cellOf = trigger => {
     let node = trigger.parentElement
     let best = trigger.parentElement
 
-    for (let i = 0; i < 4 && node; i++) {
-      if ((node.textContent || '').trim().length <= CELL_TEXT_LIMIT) best = node
+    for (let i = 0; i < 5 && node; i++) {
+      if ([...node.querySelectorAll('button')].some(isRowAction)) break
+      best = node
       node = node.parentElement
     }
 
