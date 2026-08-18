@@ -40,6 +40,17 @@ header {
 .logo { font-size: 18px; }
 header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
 
+/* Pushed to the far edge and deliberately quiet: it is a fact you go looking
+   for after a reload, not something competing with the title. */
+.version-tag {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  letter-spacing: 0.2px;
+}
+
 /* ── Run status bar ───────────────────────────────────────────────────────── */
 .status-bar {
   display: flex;

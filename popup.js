@@ -2305,6 +2305,29 @@ async function runPlannedExtras() {
 })()
 
 
+// ── Version, from the manifest ────────────────────────────────────────────────
+/**
+ * Shown so a reload can be CONFIRMED rather than assumed.
+ *
+ * 🔑 This is not cosmetic. Every "is v1.0.5x the right one?" question this
+ * project has hit came from the version being invisible where the user was
+ * working — and `git log` is not a substitute: `4074334`'s subject says v1.0.56
+ * over a manifest reading 1.0.57, because it was written from the pre-bump
+ * value. The manifest is the only honest source, so it is read directly.
+ */
+;(() => {
+  const tag = document.getElementById('versionTag')
+
+  if (!tag) return
+
+  try {
+    tag.textContent = 'v' + chrome.runtime.getManifest().version
+  } catch (_) {
+    /* Outside an extension context (the check harness), leave it blank rather
+       than printing a guess. */
+  }
+})()
+
 // ── Copy the last run's log ───────────────────────────────────────────────────
 /**
  * The popup is destroyed on close, so the in-memory log dies with it. The

@@ -657,6 +657,22 @@ if (!S) {
     persisted
       ? pass('the log is persisted, so it survives the popup closing')
       : fail('runQuickFill must call persistRunLog() — an unrecorded run is unrecoverable')
+
+    /**
+     * The version must come from the MANIFEST, never a literal. A hand-edited
+     * version string eventually disagrees with the build it labels, which is
+     * the exact problem putting it on screen was meant to solve.
+     *
+     * Sabotage, verified: replace the getManifest() call with a string literal
+     * → both halves fail (no manifest read, and a version-shaped literal).
+     */
+    const htmlSrc = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8')
+    const readsManifest = /getManifest\(\)\.version/.test(logSrc)
+    const hardcoded = /v?\d+\.\d+\.\d+/.test(stripLogComments(htmlSrc))
+
+    readsManifest && !hardcoded
+      ? pass('the popup version is read from the manifest, not hardcoded')
+      : fail(`version display: readsManifest=${readsManifest} hardcodedInHtml=${hardcoded}`)
   }
 
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
