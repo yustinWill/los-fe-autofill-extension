@@ -613,6 +613,52 @@ if (!S) {
     })
   }
 
+  console.log('\nrun log')
+
+  {
+    /**
+     * The log exists to answer ONE question the status bar cannot: was a user
+     * gate already on before the run, or did the run switch it on? That needs
+     * the BEFORE snapshot taken before the first write, and the per-field map
+     * recorded so a `skipped_user_gate` is visible.
+     *
+     * ⚠️ Every test below is NAMED in a const. A statement starting with a
+     * regex literal is DIVISION in this semicolon-free codebase and kills the
+     * whole file at load — already recorded in the handover, and paid for a
+     * second time writing exactly this block.
+     *
+     * Sabotage that makes exactly these fail, each verified:
+     *   move `snapshotGates('before')` below runAllWizardSteps  → ordering
+     *   delete `logEvent('fields', results)` from renderResults → field map
+     *   delete the persistRunLog() call in the finally block    → persistence
+     */
+    const stripLogComments = str => str.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const logSrc = stripLogComments(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const qf = logSrc.slice(logSrc.indexOf('async function runQuickFill'))
+
+    const beforeAt = qf.indexOf("snapshotGates('before')")
+    const walkAt = qf.indexOf('runAllWizardSteps(')
+
+    const orderedOk = beforeAt !== -1 && walkAt !== -1 && beforeAt < walkAt
+
+    orderedOk
+      ? pass('the gate snapshot is taken BEFORE the first field is written')
+      : fail("snapshotGates('before') must run before runAllWizardSteps, or it proves nothing")
+
+    const rr = logSrc.slice(logSrc.indexOf('function renderResults'), logSrc.indexOf('function renderResults') + 400)
+    const fieldsLogged = /logEvent\(\s*'fields'/.test(rr)
+
+    fieldsLogged
+      ? pass('the per-field result map reaches the log')
+      : fail('renderResults must log the raw results map — counts cannot show skipped_user_gate')
+
+    const persisted = /persistRunLog\(\)/.test(qf)
+
+    persisted
+      ? pass('the log is persisted, so it survives the popup closing')
+      : fail('runQuickFill must call persistRunLog() — an unrecorded run is unrecoverable')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

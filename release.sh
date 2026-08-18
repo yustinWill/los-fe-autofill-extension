@@ -28,5 +28,11 @@ fs.writeFileSync(f, JSON.stringify(m, null, 2) + '\n');
 console.log('extension version -> ' + m.version);
 "
 
+# The version to quote in the commit subject is the one AFTER the bump. Printing
+# it here because reading it off the pre-bump manifest is how `4074334` came to
+# say "v1.0.56" over a manifest reading 1.0.57 — which then made `git log`
+# understate the shipped version and produced a wrong unreleased-commit count.
+echo
+echo "Commit subject: chore(release): v$(node -p "require('./manifest.json').version") — <what changed>"
 echo
 echo "Next: chrome://extensions -> Reload (⟳) on 'LOS Form Autofill'"

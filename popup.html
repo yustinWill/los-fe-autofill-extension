@@ -19,6 +19,9 @@
   <div id="statusBar" class="status-bar is-idle">
     <span class="status-dot"></span>
     <span id="statusText">Ready</span>
+    <!-- Hidden until a run has actually produced a log, so it never offers to
+         copy an empty one. The status line is a summary; this is the evidence. -->
+    <button id="copyLogBtn" class="status-copy hidden" title="Salin log run terakhir">Salin log</button>
   </div>
 
   <!-- Simulation options. Populated by simulation-ui.js and shown ONLY on the

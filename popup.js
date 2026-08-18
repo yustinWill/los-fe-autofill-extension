@@ -238,6 +238,113 @@ const setStatus = (text, state) => {
   statusBar.classList.toggle('is-done',  state === 'done')
   statusBar.classList.toggle('is-error', state === 'error')
   statusText.textContent = text || 'Ready'
+  logEvent('status', { text, state })
+}
+
+// ── Run log ───────────────────────────────────────────────────────────────────
+/**
+ * A structured account of one run, because the status bar is a SUMMARY and a
+ * summary cannot be debugged.
+ *
+ * 🔴 The specific failure that forced this: the user reported the reference
+ * gate switched on after a run. The driver refuses gate-shaped names outright
+ * (`driver-v2.js` → `skipped_user_gate`), so "the toggle is on" is consistent
+ * with TWO opposite stories — the driver leaked, or the toggle was already on
+ * and `skipFilled` correctly left it. A screenshot cannot separate them and a
+ * one-line status never could. `gates-before` / `gates-after` can, in one run.
+ *
+ * ⚠️ Kept in memory AND mirrored to `chrome.storage.local`, because the popup
+ * is destroyed on close and an unrecorded run is unrecoverable — the same
+ * reason the popup now stays open on failure.
+ */
+let runLog = []
+
+const logEvent = (kind, data) => {
+  try {
+    runLog.push({ t: Date.now(), kind, data })
+  } catch (_) {
+    /* never let logging break a run */
+  }
+}
+
+const persistRunLog = () => {
+  try {
+    chrome.storage.local.set({ last_run_log: JSON.stringify(runLog) })
+  } catch (_) { /* quota or context gone — the in-memory copy still serves the button */ }
+
+  const btn = document.getElementById('copyLogBtn')
+
+  if (btn) btn.classList.remove('hidden')
+}
+
+/**
+ * Read every user-gate control's CURRENT on-screen state.
+ *
+ * ⚠️ Self-contained on purpose: `chrome.scripting.executeScript` serialises this
+ * function ALONE via `Function.toString()`, so anything it calls from module
+ * scope is `undefined` in the page. That trap has cost this repo a whole
+ * afternoon of green harnesses over code that would have thrown on every fill.
+ *
+ * Reports RAW signal rather than a verdict — aria state, text, and the selected
+ * option per control — because the point of a log is to be re-read later by
+ * someone testing a hypothesis this function did not anticipate.
+ */
+function readGateState() {
+  const GATE = /Referensi Pengajuan Kredit|Memiliki Avalis|Menggunakan Referensi/i
+  const out = []
+
+  document.querySelectorAll('label, [class*="label"]').forEach(labelEl => {
+    const text = (labelEl.textContent || '').trim()
+
+    if (!GATE.test(text) || text.length > 80) return
+
+    // The pill group is a sibling of the label inside the field wrapper; climb
+    // until an ancestor holds buttons, bounded so a miss cannot reach <body>.
+    let host = labelEl.parentElement
+    let hops = 0
+
+    while (host && hops < 4 && host.querySelectorAll('button').length === 0) {
+      host = host.parentElement
+      hops++
+    }
+
+    const buttons = host ? [...host.querySelectorAll('button')] : []
+
+    out.push({
+      label: text,
+      options: buttons.map(b => ({
+        text: (b.innerText || '').trim(),
+        ariaPressed: b.getAttribute('aria-pressed'),
+        ariaChecked: b.getAttribute('aria-checked'),
+        dataState: b.getAttribute('data-state'),
+        disabled: b.disabled,
+        // No reliable shared "selected" attribute across the pill variants, so
+        // record the painted background too and let the reader decide.
+        bg: getComputedStyle(b).backgroundColor,
+        color: getComputedStyle(b).color
+      }))
+    })
+  })
+
+  return out
+}
+
+async function snapshotGates(phase) {
+  try {
+    const tab = await getActiveTab()
+
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: readGateState
+    })
+
+    logEvent('gates-' + phase, result)
+
+    return result
+  } catch (err) {
+    logEvent('gates-' + phase, { error: String((err && err.message) || err) })
+
+    return null
+  }
 }
 const skipFilledCb     = document.getElementById('skipFilledCb')
 const skipOptionalCb   = document.getElementById('skipOptionalCb')
@@ -1179,6 +1286,12 @@ function escHtml(str) {
 
 // ─── Results ──────────────────────────────────────────────────────────────────
 function renderResults(results) {
+  /* 🔑 The whole per-field map, not the counts. `skipped_user_gate` appearing
+     here is the driver's own record that it REFUSED a gate — the other half of
+     the before/after snapshot, and the only way to tell a refusal from a field
+     the run never reached. */
+  logEvent('fields', results)
+
   resultStrip.innerHTML = ''
   resultStrip.classList.remove('hidden')
 
@@ -1534,6 +1647,9 @@ const quickFillBtn = document.getElementById('quickFillBtn')
  * @returns true when the run completed, false when it threw.
  */
 async function runQuickFill() {
+  /* A fresh log per run. Reset BEFORE the first setStatus, which logs. */
+  runLog = []
+
   setStatus('Starting…')
 
   /* Mounted only on the credit-application create route, so everywhere else
@@ -1541,6 +1657,21 @@ async function runQuickFill() {
   const planned = isSimulationMounted()
 
   if (planned) activePlan = SIM.plan()
+
+  logEvent('run-start', {
+    planned,
+    plan: planned ? activePlan : null,
+    scope: currentScope(),
+    prefs: {
+      skipFilled: skipFilledCb ? skipFilledCb.checked : null,
+      skipOptional: skipOptionalCb ? skipOptionalCb.checked : null,
+      delay: typeof delayValue === 'function' ? delayValue() : undefined
+    }
+  })
+
+  /* 🔴 THE DISCRIMINATOR. Taken before a single field is written, so a gate
+     found ON afterwards can be attributed rather than argued about. */
+  await snapshotGates('before')
 
   try {
     await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
@@ -1560,9 +1691,16 @@ async function runQuickFill() {
 
     return true
   } catch (err) {
+    logEvent('run-error', { message: String((err && err.message) || err), stack: err && err.stack })
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
 
     return false
+  } finally {
+    /* In `finally` so a crashed run is still analysable — a run that throws is
+       exactly the one whose log is worth having. */
+    await snapshotGates('after')
+    logEvent('run-end', {})
+    persistRunLog()
   }
 }
 
@@ -2043,6 +2181,11 @@ async function runPlannedExtras() {
   const documents = await fillPlannedDocuments()
   const qualitative = await fillPlannedQualitative()
 
+  /* Every pass's RAW return, before it is compressed into `problems`. The
+     status line says "3 tabel kurang baris"; this says which three, how many
+     rows each wanted, and what each reported going wrong. */
+  logEvent('extras', { facilities, rows, agunan, mutations, documents, qualitative })
+
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
      shortfall against `wanted` is a real failure — the driver could not add a
@@ -2159,4 +2302,49 @@ async function runPlannedExtras() {
      destroyed by the very act of finishing — the same "capture state before
      anything closes" rule the driver's failure reports were rebuilt around. */
   if (ok) window.close()
+})()
+
+
+// ── Copy the last run's log ───────────────────────────────────────────────────
+/**
+ * The popup is destroyed on close, so the in-memory log dies with it. The
+ * button therefore prefers `chrome.storage.local`, which survives — reopening
+ * the popup after a run still yields the evidence.
+ */
+;(() => {
+  const btn = document.getElementById('copyLogBtn')
+
+  if (!btn) return
+
+  // Show it if a PREVIOUS run left a log behind, not only after one runs now.
+  chrome.storage.local.get('last_run_log', got => {
+    if (got && got.last_run_log) btn.classList.remove('hidden')
+  })
+
+  btn.addEventListener('click', async () => {
+    const stored = await new Promise(resolve =>
+      chrome.storage.local.get('last_run_log', got => resolve(got && got.last_run_log))
+    )
+
+    const text = stored || JSON.stringify(runLog)
+
+    try {
+      await navigator.clipboard.writeText(text)
+      btn.textContent = 'Tersalin ✓'
+    } catch (_) {
+      /* Clipboard can be refused when the popup is not focused. A textarea +
+         execCommand still works there, and silently failing to copy the one
+         artefact the user came for is the worst outcome. */
+      const ta = document.createElement('textarea')
+
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      ta.remove()
+      btn.textContent = 'Tersalin ✓'
+    }
+
+    setTimeout(() => { btn.textContent = 'Salin log' }, 1800)
+  })
 })()
