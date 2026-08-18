@@ -1339,6 +1339,27 @@ function wfReadBlock(name) {
 // element reference captured during detect is stale by now.
 // Returns 'ok' | 'not_found' | 'skipped_disabled' | 'skipped_filled' | 'skipped_optional'.
 async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, skipOptional, isOptional) {
+  /**
+   * 🔬 GATE TRIPWIRE — added 2026-08-17 after three rounds of wrong guesses.
+   *
+   * The user reports "Menggunakan Referensi Pengajuan Kredit" arriving ON after
+   * a run, on v1.0.55, where the popup's `skipField` should have dropped it.
+   * Reading found nothing: all three fill sites filter, the double-check pass
+   * reuses the same filtered path, v2FillTables is a no-op, v2 registers no
+   * `reveal`, both confirm helpers are scoped to [role=dialog], and filling the
+   * reference NUMBER does not flip the toggle (all measured).
+   *
+   * So the write comes from a path none of that covers. This logs the CALLER,
+   * not the fact — a stack is the one thing that names an unknown path, and it
+   * sits in the driver so it catches every caller including ones I have not
+   * found. Cheap: one console.warn, only for gate-shaped names, never in the
+   * hot path for ordinary fields.
+   */
+  if (/USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(name || '')) {
+    try {
+      console.warn('[autofill] GATE FIELD WRITE ATTEMPT:', name, '=', value, '\n', new Error('caller').stack)
+    } catch (e) { /* console unavailable */ }
+  }
   /* The controlled-by-props blocks are addressed by synthetic name and have no
      Controller to look up, so they short-circuit everything below. `null` means
      "not one of mine" — anything else is a real status. `typeof` guard: see the
