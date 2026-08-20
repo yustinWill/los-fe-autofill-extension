@@ -709,6 +709,11 @@ async function v2Detect() {
 
     if (inputs.length) {
       const inp = inputs[0]
+      /* A dropzone's own <input type=file> carries the RHF name too, and the
+         generic text path then throws: assigning .value on a file input is a
+         DOMException. Name it so the fill can skip it honestly — attaching
+         real bytes stays the documents pass's job. */
+      if (inp.type === 'file') return 'file'
       if (inp.type === 'checkbox' || inp.type === 'radio') return inp.type
       // The multi-select's own input is a SEARCH box, not a value field. Its
       // placeholder is built as `Cari {label}…` by DynamicField, which is the
@@ -1504,6 +1509,11 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const buttons = els.filter(e => e.tagName === 'BUTTON')
     if (inputs.length) {
       const inp = inputs[0]
+      /* A dropzone's own <input type=file> carries the RHF name too, and the
+         generic text path then throws: assigning .value on a file input is a
+         DOMException. Name it so the fill can skip it honestly — attaching
+         real bytes stays the documents pass's job. */
+      if (inp.type === 'file') return 'file'
       if (inp.type === 'checkbox' || inp.type === 'radio') return inp.type
       if (/^cari\b/i.test(inp.placeholder || '')) return 'multiselect'
       if (inp.type === 'password') return 'password'
@@ -1782,6 +1792,38 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     return 'ok'
   }
 
+  if (type === 'file') {
+    /**
+     * A page-level dropzone (step 3's Lampiran Data Keuangan) — attach a tiny
+     * generated PDF the way v2AddRows does, rather than skipping: the step
+     * counter counts the descriptor, so a skipped required dropzone reads
+     * 5/6 forever (user, 2026-08-20). Kairos FileUpload is a plain
+     * <input type=file>, so the DataTransfer assign works verbatim; the wait
+     * is the measured DMS temp-upload round trip.
+     *
+     * ⚠️ skipFilled already covers the re-run case above this branch: the RHF
+     * value is an array, and a non-empty one returns skipped_filled before we
+     * get here.
+     */
+    const fileInputs = group.els.filter(e => e.tagName === 'INPUT' && e.type === 'file')
+    const el = fileInputs[fileInputs.length - 1]
+
+    if (!el) return 'not_found'
+
+    const dt = new DataTransfer()
+
+    dt.items.add(new File(
+      [new Blob(['%PDF-1.4\n% autofill ' + name + '\nendobj\n%%EOF'], { type: 'application/pdf' })],
+      'autofill-' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '.pdf',
+      { type: 'application/pdf' }
+    ))
+    el.files = dt.files
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    await sleep(3200)
+
+    return 'ok'
+  }
+
   if (type === 'checkbox') {
     const el = group.els.find(e => e.tagName === 'INPUT')
     if (!el) return 'not_found'
@@ -1920,8 +1962,19 @@ async function v2FillCollaterals(items, openWait = 900) {
    * Filling both with the same value is right here: these are fixture records,
    * and an owner at the collateral's address is a legitimate shape.
    */
+  /* 🔴 DIALOG-STRICT, the whole class: a write or click resolved against
+     `document` when the modal has already closed lands on the PAGE — measured
+     2026-08-20, the facility pass's document-fallback "Ya" clicked the
+     USE_REFERENCE toggle's own Ya segment on step 1 (B55). The driver's gate
+     refusal could not see it because a raw .click() never passes through
+     v2FillField. If the dialog is gone there is nothing left to fill, save,
+     cancel or confirm — skip, never widen. (v2AddRows keeps its document scope
+     deliberately: its repeaters are IN-FORM, and its clicks are before-set
+     diffed so a pre-existing page button can never be a candidate.) */
   const fillByPlaceholder = (needle, value) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return false
     const fields = [...scope.querySelectorAll('input, textarea')]
       .filter(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
 
@@ -1934,7 +1987,9 @@ async function v2FillCollaterals(items, openWait = 900) {
      no role="option", not portalled. ⚠️ The trigger TOGGLES: clicking one that
      is already open closes it, which reads as "no options exist". */
   const choose = async (placeholderOrLabel, optionText, exact = false) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return { ok: false, reason: 'modal closed' }
     const trigger = [...scope.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim().toLowerCase().includes(String(placeholderOrLabel).toLowerCase()))
 
@@ -1946,13 +2001,15 @@ async function v2FillCollaterals(items, openWait = 900) {
        PILL — re-clicking a pill instead of choosing a province, and leaving
        every geo select unset. Measured 2026-08-15: the Deposito branch failed
        to save with no visible error for exactly this reason. */
-    const before = new Set([...(dialog() || document).querySelectorAll('button')])
+    const before = new Set([...scope.querySelectorAll('button')])
 
     trigger.click()
     await wait(openWait)
 
-    const options = [...(dialog() || document).querySelectorAll('button')]
-      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+    const optionsBox = dialog()
+    const options = optionsBox
+      ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+      : []
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -2003,7 +2060,9 @@ async function v2FillCollaterals(items, openWait = 900) {
    * button — never one without the other.
    */
   const pill = (label, text) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return { ok: false, reason: 'modal closed' }
     const holder = [...scope.querySelectorAll('*')]
       .filter(e => {
         const t = e.textContent || ''
@@ -2369,12 +2428,15 @@ async function v2FillCollaterals(items, openWait = 900) {
      * title: a v2 dialog has no heading element (its title is a plain div), a
      * trap this file already carries for `v2OpenModal`.
      */
-    const hasTypeTrigger = () =>
-      [...(dialog() || document).querySelectorAll('button')]
-        .some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+    const hasTypeTrigger = () => {
+      const box = dialog()
+
+      return Boolean(box) && [...box.querySelectorAll('button')].some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+    }
 
     if (!hasTypeTrigger()) {
-      const register = [...(dialog() || document).querySelectorAll('button')]
+      const registerBox = dialog()
+      const register = registerBox && [...registerBox.querySelectorAll('button')]
         .find(b => /^Daftarkan Agunan$/.test((b.textContent || '').trim()))
 
       if (register) {
@@ -2426,7 +2488,8 @@ async function v2FillCollaterals(items, openWait = 900) {
     /* ⚠️ The SAVE button carries the SAME label as the opener — "Tambah
        Agunan" — and is told apart only by being inside the dialog. Searching
        the document would re-click the opener. */
-    const save = [...(dialog() || document).querySelectorAll('button')]
+    const saveBox = dialog()
+    const save = saveBox && [...saveBox.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim() === 'Tambah Agunan')
 
     save?.click()
@@ -2471,7 +2534,8 @@ async function v2FillCollaterals(items, openWait = 900) {
 
       results.push({ name: item.name, ok: false, step: 'submit', errors: dialogErrors(), rhfErrors })
 
-      const cancel = [...(dialog() || document).querySelectorAll('button')]
+      const cancelBox = dialog()
+      const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
         .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
       cancel?.click()
@@ -2540,15 +2604,20 @@ async function v2AddMutations(plan, openWait = 900) {
     el.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
-  const byPlaceholder = needle =>
-    [...(dialog() || document).querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase()))
+  /* 🔴 dialog-strict — see the B55 note in v2FillCollaterals. */
+  const byPlaceholder = needle => {
+    const box = dialog()
+
+    return box ? [...box.querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase())) : undefined
+  }
 
   /* Options render INLINE among buttons, so a before/after diff is the only
      reliable read — and a trigger click TOGGLES, so an already open panel gives
      an empty diff. Retried once for exactly that. */
   const chooseBank = async (label, bankIndex) => {
     const open = async () => {
-      const trigger = [...(dialog() || document).querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
+      const box = dialog()
+      const trigger = box && [...box.querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
       if (!trigger) return []
       const before = new Set([...document.querySelectorAll('button')])
       trigger.click()
@@ -2716,7 +2785,8 @@ async function v2AddMutations(plan, openWait = 900) {
       if (!closed) {
         const cancel = [...dialog().querySelectorAll('button')].find(b => /^Batal$/.test((b.textContent || '').trim()))
         if (cancel) { cancel.click(); await wait(600) }
-        const yes = [...(dialog() || document).querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
+        const yesBox = dialog()
+        const yes = yesBox && [...yesBox.querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
         if (yes) { yes.click(); await wait(600) }
       }
     }
@@ -2993,7 +3063,13 @@ async function v2AddRows(specs, openWait = 900) {
     trigger.click()
     await wait(openWait)
 
-    const option = [...(dialog() || document).querySelectorAll('button')]
+    /* 🔴 dialog-strict. The before-set was captured from the DIALOG, so
+       diffing it against `document` after the dialog closes lets EVERY page
+       button through the filter — and the first one not named
+       Batal/Tutup/Simpan/Tambah gets clicked. Same B55 class as the
+       document-fallback "Ya"s. */
+    const optionBox = dialog()
+    const option = optionBox && [...optionBox.querySelectorAll('button')]
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
       .find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -3033,7 +3109,8 @@ async function v2AddRows(specs, openWait = 900) {
       /* Selects first: several modals gate later fields on an earlier choice,
          and a text pass before them writes into inputs about to be replaced. */
       for (let i = 0; i < 10; i++) {
-        const pending = [...(dialog() || document).querySelectorAll('button')]
+        const pendingBox = dialog()
+        const pending = pendingBox && [...pendingBox.querySelectorAll('button')]
           .map(b => (b.textContent || '').trim())
           .find(t => /^Pilih\s/.test(t) && !/^Pilih File/i.test(t))
 
@@ -3685,8 +3762,11 @@ async function v2AddFacilities(plan, openWait = 900) {
     return ''
   }
 
+  /* 🔴 dialog-strict — see the B55 note in v2FillCollaterals. */
   const fill = (needle, value) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return false
     const want = String(needle).toLowerCase()
     const candidates = [...scope.querySelectorAll('input, textarea')].filter(i => !i.disabled && !i.readOnly)
 
@@ -3717,8 +3797,10 @@ async function v2AddFacilities(plan, openWait = 900) {
     trigger.click()
     await wait(openWait)
 
-    const options = [...(dialog() || document).querySelectorAll('button')]
-      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+    const optionsBox = dialog()
+    const options = optionsBox
+      ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+      : []
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -3859,7 +3941,7 @@ async function v2AddFacilities(plan, openWait = 900) {
      * yields no option is the dead one.
      */
     const methodDead = !method.ok
-      && [...(dialog() || document).querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
+      && Boolean(dialog()) && [...dialog().querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
 
     if (methodDead) {
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
@@ -3870,7 +3952,8 @@ async function v2AddFacilities(plan, openWait = 900) {
       /* Dismissing a dirty modal raises its own confirm. ⚠️ Answered inline —
          `answerConfirm` belongs to `v2FillCollaterals` and is NOT in scope
          here; each driver function is serialised alone. */
-      const ya = [...(dialog() || document).querySelectorAll('button')]
+      const yaBox = dialog()
+      const ya = yaBox && [...yaBox.querySelectorAll('button')]
         .find(b => /^Ya$/i.test((b.textContent || '').trim()))
 
       if (ya) { ya.click(); await wait(800) }
@@ -3912,7 +3995,8 @@ async function v2AddFacilities(plan, openWait = 900) {
      * the Ya is never clicked, and the modal simply stays open forever. Look
      * for the button, not for a second dialog.
      */
-    const ya = [...(dialog() || document).querySelectorAll('button')]
+    const yaBox2 = dialog()
+    const ya = yaBox2 && [...yaBox2.querySelectorAll('button')]
       .find(b => /^Ya$/i.test((b.textContent || '').trim()))
 
     if (ya) { ya.click(); await wait(900) }
@@ -4439,6 +4523,365 @@ async function v2FillQualitative(plan, openWait = 900) {
 
   return results
 }
+/**
+ * Simulation options — the Quick Fill pre-flight for the credit-application form.
+ *
+ * Quick Fill used to be one button with no dial on it: it filled whatever the
+ * page had, with values baked into the driver. That is fine for a smoke test and
+ * useless for building a FIXTURE, where what matters is the shape of the record —
+ * how many facilities, which collateral branches, and a name you can find again
+ * in a list of 377.
+ *
+ * So on the credit-application create route the popup grows a panel: pick the
+ * scenario, the row counts and the collateral list, and the run is built from
+ * that. Everywhere else the panel stays hidden and Quick Fill behaves exactly as
+ * before.
+ *
+ * 🔴 This module owns the NAMING CONVENTION (user, 2026-08-15). Nothing else may
+ * compose those strings — a second implementation is how a convention rots.
+ */
+window.SIM = (() => {
+  /**
+   * The collateral branches, taken from `los-create-autofill/scripts/step4.js`
+   * rather than invented, so the extension exercises the same field sets the
+   * scripted runs already proved.
+   *
+   * ⚠️ `jenis` is the DROPDOWN OPTION LABEL, not the template. The dropdown is
+   * master data — 48 rows from `/api/collaterals/type-template-mappings` — and
+   * several labels share one template: Rumah, Gudang, Hotel and Apartemen are
+   * all PROPERTY; Tabungan, Deposito and Giro are all BANK_ACCOUNT. Picking a
+   * different label of the same template exercises the same fields, so these
+   * are representative examples, not a closed list.
+   *
+   * `general` renders NO detail block at all — the shared fields are the whole
+   * form. It is worth keeping precisely because "nothing appeared" is the
+   * branch most easily mistaken for a failure.
+   */
+  const COLLATERAL_TYPES = [
+    { key: 'property', label: 'Properti', jenis: 'Rumah' },
+    { key: 'vehicle', label: 'Kendaraan', jenis: 'Kendaraan' },
+    { key: 'saving', label: 'Tabungan', jenis: 'Tabungan' },
+    { key: 'deposito', label: 'Deposito', jenis: 'Deposito' },
+    { key: 'preciousMetal', label: 'Logam mulia', jenis: 'Emas dan mata uang emas' },
+    { key: 'general', label: 'Mesin', jenis: 'Mesin' }
+  ]
+
+  /** The repeatable tables, in the order the wizard meets them. `max` is a
+   *  guard rail, not a form rule — a 40-row shareholder table is a typo, and a
+   *  run that fills one wastes minutes before anyone notices. */
+  /**
+   * The repeatable tables. `opener` is the button's EXACT label, taken from the
+   * app's own `id` translations rather than guessed — the driver matches on it
+   * exactly, and "Tambah Fasilitas" and "Tambah Fasilitas Kredit" are different
+   * buttons on different screens.
+   *
+   * `max` is a guard rail, not a form rule: a 40-row shareholder table is a
+   * typo, and a run that fills one wastes minutes before anyone notices.
+   *
+   * ⚠️ Agunan is deliberately ABSENT — it needs a type per row, so the panel
+   * models it as a list and the driver has a separate capability for it.
+   */
+  const TABLES = [
+    /* 🔴 The button reads "Tambah Fasilitas". "Tambah Fasilitas Kredit" is the
+       MODAL'S TITLE, and this entry carried it for weeks — so the generic
+       row-adder matched nothing and the facility was never added, which is the
+       third of three independent reasons Fasilitas Kredit would not fill
+       (measured 2026-08-15). The warning directly above this list is about
+       exactly this pair of strings.
+       ⚠️ It also has its OWN driver capability now — see `isOwnCapability`
+       below — because the modal is not uniform: it needs a ~3s wait after the
+       product picker for that product's find-one. */
+    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
+    { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
+    { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
+    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8 },
+    { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
+    { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
+    { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
+    { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
+    { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
+    /* 🔴 `isOwnCapability` since 2026-08-17: documents are handled by
+       `v2FillDocuments`, not the generic row-adder, and this entry's opener was
+       wrong anyway — BOTH document blocks' add buttons read "Upload Dokumen",
+       never "Tambah Dokumen Pengajuan Kredit". Left in the model so the panel
+       can still show the row, excluded from the generic pass so it cannot fire
+       a second, broken attempt at the same table. */
+    { key: 'document', label: 'Dokumen pengajuan', opener: 'Upload Dokumen', def: 1, max: 12, more: true, isOwnCapability: true },
+
+    /* 🔴 SAME BUG AS `facility` ABOVE, SECOND INSTANCE — measured live
+       2026-08-17. This carried "Tambah Data Kunjungan", which is the DEBTOR
+       module's label (`page/debtor.json:96`). The credit-application form's
+       button reads "Tambah Kunjungan Calon Debitur"
+       (`page/creditApplication.json:1152` → `addDebtorVisitButton`), and
+       `v2AddRows` matches the opener with `===`, so the visit rows were never
+       added and nothing reported a reason.
+
+       ✅ Proven both ways on a blank create form: the configured string appears
+       NOWHERE in the DOM, and running v2AddRows with the correct one returned
+       `{wanted: 2, added: 2, error: null}` with the section header going to
+       "DATA KUNJUNGAN CALON DEBITUR (2)". Step 9 needed no new code at all —
+       only the right string.
+
+       🔑 Safe to hardcode the credit-application wording because the panel is
+       mounted ONLY on that route (`mountSimulation` returns false unless
+       `SIM.isCreditApplication(tab.url)`), so this list never runs against the
+       debtor form. */
+    /* 🔴 `seeded: 0` — the second half of why step 9 stayed empty, and the half
+       the label fix could not reach. `fillPlannedRows` subtracts ONE from every
+       count for "the row the wizard already seeded", then drops any spec that
+       reaches zero. Data Kunjungan starts at (0), so a default of 1 became 0
+       and the spec was discarded BEFORE the opener was ever looked up — the
+       corrected label was unreachable code. Measured 2026-08-17 on the user's
+       own run: "DATA KUNJUNGAN CALON DEBITUR (0)" after a full Quick Fill.
+
+       `def: 2` because the user asked for two sample visits. */
+    { key: 'visit', label: 'Kunjungan', opener: 'Tambah Kunjungan Calon Debitur', def: 2, max: 5, seeded: 0, more: true }
+  ]
+
+  const SCENARIO = {
+    jenis: [
+      { v: 'N', label: 'Normal' },
+      { v: 'R', label: 'Restruk' },
+      { v: 'E', label: 'Perpanj' }
+    ],
+    debitur: [
+      { v: 'BU', label: 'Badan usaha' },
+      { v: 'I', label: 'Perorangan' }
+    ],
+    sifat: [
+      { v: 'P', label: 'Produktif' },
+      { v: 'K', label: 'Konsumtif' }
+    ]
+  }
+
+  /**
+   * Combinations the product does not accommodate today.
+   *
+   * A pill that would land on one is DISABLED rather than removed: the option
+   * still exists in the domain, and hiding it would read as the panel having
+   * fewer dimensions than it has.
+   *
+   * 🔑 Expressed as STATE, not as a per-pill flag, because the constraint is on
+   * the pair — "Konsumtif" is legal under Badan usaha and illegal under
+   * Perorangan, so no property of the Konsumtif pill alone can express it.
+   */
+  const BLOCKED = [
+    /* Kredit Badan Usaha - Konsumtif. NOT a policy call — the app does not
+       implement it: `los-fe/src/utils/enumHelpers.ts:687` has
+       COMPANY_CONSUMPTIVE commented out with "NOTE: not implemented yet", so
+       the Jenis Kredit select offers three options, never four. Measured on the
+       running form 2026-08-20 (user confirmed the same day).
+
+       🔴 Leaving it selectable was actively harmful, not merely useless: the
+       driver's old `|| opts[0]` fallback matched nothing and silently picked
+       the FIRST option — "Kredit Perorangan - Konsumtif" — so a run configured
+       for a company built an individual application and reported ok. Both ends
+       are fixed; this one stops the request being made at all. */
+    { debitur: 'BU', sifat: 'K' }
+  ]
+
+  const isBlocked = s => BLOCKED.some(combo => Object.keys(combo).every(k => s[k] === combo[k]))
+
+  /**
+   * Would choosing `v` for `group` land on a blocked combination?
+   *
+   * 🔴 The `!isBlocked(state)` guard is load-bearing, and leaving it out LOCKS
+   * THE PANEL. From a state that is already blocked, no single pill escapes the
+   * block — `wouldBlock` answers true for all nine, every pill greys out, and
+   * the only way back is clearing extension storage. Caught by `check.js`,
+   * which sets I + K directly to exercise the naming convention.
+   *
+   * So: while the state is legal, refuse the moves that break it; while it is
+   * already broken, every move is an escape route and none is refused. That is
+   * an INVARIANT ("a blocked state is never reachable, and never final") rather
+   * than a rule each caller has to remember.
+   */
+  const wouldBlock = (group, v) => !isBlocked(state) && isBlocked({ ...state, [group]: v })
+
+  /**
+   * Nudge an already-blocked state back to a legal one by moving `sifat`.
+   *
+   * ⚠️ Only reachable from a state PERSISTED BEFORE this rule existed — the
+   * pills cannot produce one, because a pill that would is disabled. Without
+   * this, anyone who last ran Perorangan + Konsumtif reopens the popup on a
+   * combination every pill refuses to leave.
+   */
+  const unblock = () => {
+    if (!isBlocked(state)) return
+
+    const legal = SCENARIO.sifat.find(o => !isBlocked({ ...state, sifat: o.v }))
+
+    if (legal) state.sifat = legal.v
+  }
+
+  const pad = n => String(n).padStart(2, '0')
+
+  /** `YYYY-MM-DD HH:mm`, local time. Local on purpose: the name is read by a
+   *  person looking for the row they just made, and UTC would show them an hour
+   *  they did not act in. (The DATA is UTC — that contract is unaffected.) */
+  const stamp = (d = new Date()) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+  /** `MM-DD HH:mm` — the collateral name is already scoped by the debtor, so the
+   *  year is noise in a column that truncates. */
+  const shortStamp = (d = new Date()) =>
+    `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+  const state = {
+    jenis: 'N',
+    debitur: 'BU',
+    sifat: 'P',
+    userName: '',
+    debtorName: '',
+    projectOverride: null,
+    rows: Object.fromEntries(TABLES.map(t => [t.key, t.def])),
+    collaterals: [{ type: 'property', name: null }],
+
+    /** Whether the config body is folded away. Persisted, because a fixture's
+     *  shape is usually decided once and then re-run many times — after which
+     *  the panel is mostly something between you and the run button. */
+    collapsed: false
+  }
+
+  /**
+   * `Testing {user} {N|R|E} {BU|I}-{P|K} {YYYY-MM-DD} {HH:mm}` (user, 2026-08-15).
+   *
+   * Derived, never typed — the whole point of the pills is that the convention
+   * cannot drift through a typo. `projectOverride` exists for the one-off case
+   * and is deliberately the ONLY way to deviate.
+   */
+  const projectName = (at = new Date()) =>
+    state.projectOverride ||
+    `Testing ${state.userName || 'Anon'} ${state.jenis} ${state.debitur}-${state.sifat} ${stamp(at)}`
+
+  /**
+   * `Agunan {debtor} {type} - {MM-DD HH:mm}`.
+   *
+   * ⚠️ The debtor name is EDITABLE and may be blank at popup time — the debtor
+   * is chosen during the fill, not before it — so this falls back to a visible
+   * `{debitur}` placeholder rather than silently producing "Agunan  Properti".
+   * A name with a hole in it is obvious; a name with a double space is not.
+   */
+  const collateralName = (item, at = new Date()) => {
+    if (item.name) return item.name
+    const type = COLLATERAL_TYPES.find(t => t.key === item.type)
+
+    return `Agunan ${state.debtorName || '{debitur}'} ${type ? type.label : item.type} - ${shortStamp(at)}`
+  }
+
+  /** Everything the run needs, resolved at one instant so every generated name
+   *  in a single run carries the SAME timestamp. Resolving per-name would stamp
+   *  a five-minute run with five different minutes. */
+  const plan = () => {
+    const at = new Date()
+
+    return {
+      at: at.toISOString(),
+      scenario: { jenis: state.jenis, debitur: state.debitur, sifat: state.sifat },
+      creditType: creditTypeLabel(),
+      applicationType: applicationTypeLabel(),
+      debtorType: state.debitur === 'BU' ? 'Badan Usaha' : 'Perorangan',
+      debtorName: state.debtorName || '',
+      projectName: projectName(at),
+      rows: { ...state.rows },
+
+      /* Shaped for the driver: it needs the opener label, not our key. Zero-count
+         tables are dropped here rather than in the driver, so "do nothing" is
+         expressed once. */
+      tables: TABLES
+        .filter(t => (state.rows[t.key] ?? 0) > 0)
+        /* `seeded` rides along because only the TABLE knows whether the form
+           mounts a first row for it — see the note on `visit`. Defaulting here
+           rather than at the consumer keeps the assumption in the model. */
+        .map(t => ({
+          key: t.key,
+          opener: t.opener,
+          count: state.rows[t.key],
+          seeded: t.seeded ?? 1,
+          isOwnCapability: Boolean(t.isOwnCapability)
+        })),
+      collaterals: state.collaterals.map(item => ({
+        type: item.type,
+        jenis: (COLLATERAL_TYPES.find(t => t.key === item.type) || {}).jenis,
+        name: collateralName(item, at)
+      }))
+    }
+  }
+
+  /** The form's own wording, which the driver has to match exactly. */
+  const creditTypeLabel = () =>
+    `${state.debitur === 'BU' ? 'Kredit Badan Usaha' : 'Kredit Perorangan'} - ${state.sifat === 'P' ? 'Produktif' : 'Konsumtif'}`
+
+  const applicationTypeLabel = () =>
+    ({ N: 'Baru', R: 'Restrukturisasi', E: 'Perpanjangan' })[state.jenis]
+
+  // ── Persistence ─────────────────────────────────────────────────────────────
+  /* Kept so the panel reopens on the settings the last run used: these are
+     fixture recipes, and re-picking six controls to repeat a run is the friction
+     this panel exists to remove. The timestamp is never stored — it is always
+     "now". */
+  const STORAGE_KEY = 'simOptions'
+
+  const save = () => {
+    try {
+      chrome.storage.local.set({ [STORAGE_KEY]: state })
+    } catch (_) {
+      /* storage unavailable — the panel still works, it just forgets */
+    }
+  }
+
+  const load = () =>
+    new Promise(resolve => {
+      try {
+        chrome.storage.local.get([STORAGE_KEY], got => {
+          const saved = got && got[STORAGE_KEY]
+
+          if (saved) {
+            Object.assign(state, saved, { rows: { ...state.rows, ...(saved.rows || {}) } })
+
+            /* A stored type that no longer exists would render a blank select
+               and fill nothing, so drop it rather than carry it forward. */
+            state.collaterals = (state.collaterals || []).filter(item =>
+              COLLATERAL_TYPES.some(t => t.key === item.type)
+            )
+
+            unblock()
+          }
+
+          resolve(state)
+        })
+      } catch (_) {
+        resolve(state)
+      }
+    })
+
+  /**
+   * Is this the credit-application CREATE form?
+   *
+   * ⚠️ Deliberately CREATE only. The options describe a record to build; on a
+   * detail route there is nothing to build and the panel would offer choices
+   * that cannot apply.
+   */
+  const isCreditApplication = url => /\/v2\/credit-application\/create/.test(String(url || ''))
+
+  return {
+    COLLATERAL_TYPES,
+    TABLES,
+    SCENARIO,
+    state,
+    wouldBlock,
+    projectName,
+    collateralName,
+    creditTypeLabel,
+    applicationTypeLabel,
+    plan,
+    save,
+    load,
+    isCreditApplication,
+    stamp,
+    shortStamp
+  }
+})()
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 window.__autofill = {
@@ -4447,6 +4890,31 @@ window.__autofill = {
   read: v2ReadValues,
   smartDefault,
   step: { current: v2CurrentStep, goTo: v2GoToStep, advance: v2AdvanceStep },
+
+  /**
+   * The extras capabilities — the same functions drivers.js registers for the
+   * popup's passes. They were in the bundle all along (the whole driver is
+   * included) but not exposed, so a pane simulation of "all fields" had to
+   * hand-roll modal driving — the exact second-implementation drift this
+   * bundle exists to prevent (audit, 2026-08-20).
+   */
+  collaterals: v2FillCollaterals,
+  mutations: v2AddMutations,
+  documents: v2FillDocuments,
+  qualitative: v2FillQualitative,
+  facilities: v2AddFacilities,
+  addRows: v2AddRows,
+  assignFacilities: v2AssignCollateralFacilities,
+  modals: { list: v2ListModals, open: v2OpenModal, save: v2SaveModal, close: v2CloseModal },
+  confirm: { pending: v2PendingConfirm, answer: v2AnswerConfirm },
+
+  /**
+   * TICK_CHECKBOXES is a bundle-scope `let` the popup normally overwrites from
+   * its own checkbox; a page has no popup, so this is that switch. ⚠️ It only
+   * governs ORDINARY toggles — the user gates (USE_REFERENCE / HAS_AVALIST)
+   * are refused inside v2FillField whatever this says.
+   */
+  setTickCheckboxes: v => { TICK_CHECKBOXES = Boolean(v) },
 
   /**
    * The controlled-by-props blocks (Konfigurasi → Workflow Engine).

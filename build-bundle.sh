@@ -57,6 +57,13 @@ HEADER
   # the whole v2 driver, minus its 'use strict' preamble
   tail -n +3 driver-v2.js
 
+  # The scenario model, so a pane simulation uses SIM.plan() — the SAME plan
+  # builder the popup uses — instead of re-deriving plan shapes per session.
+  # Its chrome.storage calls are already try/catch-guarded ("storage
+  # unavailable — the panel still works, it just forgets"), so it loads
+  # cleanly in a page with no chrome object.
+  cat simulation.js
+
   cat <<'FOOTER'
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -66,6 +73,31 @@ window.__autofill = {
   read: v2ReadValues,
   smartDefault,
   step: { current: v2CurrentStep, goTo: v2GoToStep, advance: v2AdvanceStep },
+
+  /**
+   * The extras capabilities — the same functions drivers.js registers for the
+   * popup's passes. They were in the bundle all along (the whole driver is
+   * included) but not exposed, so a pane simulation of "all fields" had to
+   * hand-roll modal driving — the exact second-implementation drift this
+   * bundle exists to prevent (audit, 2026-08-20).
+   */
+  collaterals: v2FillCollaterals,
+  mutations: v2AddMutations,
+  documents: v2FillDocuments,
+  qualitative: v2FillQualitative,
+  facilities: v2AddFacilities,
+  addRows: v2AddRows,
+  assignFacilities: v2AssignCollateralFacilities,
+  modals: { list: v2ListModals, open: v2OpenModal, save: v2SaveModal, close: v2CloseModal },
+  confirm: { pending: v2PendingConfirm, answer: v2AnswerConfirm },
+
+  /**
+   * TICK_CHECKBOXES is a bundle-scope `let` the popup normally overwrites from
+   * its own checkbox; a page has no popup, so this is that switch. ⚠️ It only
+   * governs ORDINARY toggles — the user gates (USE_REFERENCE / HAS_AVALIST)
+   * are refused inside v2FillField whatever this says.
+   */
+  setTickCheckboxes: v => { TICK_CHECKBOXES = Boolean(v) },
 
   /**
    * The controlled-by-props blocks (Konfigurasi → Workflow Engine).

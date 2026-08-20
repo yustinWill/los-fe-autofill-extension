@@ -241,6 +241,11 @@ async function v2Detect() {
 
     if (inputs.length) {
       const inp = inputs[0]
+      /* A dropzone's own <input type=file> carries the RHF name too, and the
+         generic text path then throws: assigning .value on a file input is a
+         DOMException. Name it so the fill can skip it honestly — attaching
+         real bytes stays the documents pass's job. */
+      if (inp.type === 'file') return 'file'
       if (inp.type === 'checkbox' || inp.type === 'radio') return inp.type
       // The multi-select's own input is a SEARCH box, not a value field. Its
       // placeholder is built as `Cari {label}…` by DynamicField, which is the
@@ -1036,6 +1041,11 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const buttons = els.filter(e => e.tagName === 'BUTTON')
     if (inputs.length) {
       const inp = inputs[0]
+      /* A dropzone's own <input type=file> carries the RHF name too, and the
+         generic text path then throws: assigning .value on a file input is a
+         DOMException. Name it so the fill can skip it honestly — attaching
+         real bytes stays the documents pass's job. */
+      if (inp.type === 'file') return 'file'
       if (inp.type === 'checkbox' || inp.type === 'radio') return inp.type
       if (/^cari\b/i.test(inp.placeholder || '')) return 'multiselect'
       if (inp.type === 'password') return 'password'
@@ -1314,6 +1324,38 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     return 'ok'
   }
 
+  if (type === 'file') {
+    /**
+     * A page-level dropzone (step 3's Lampiran Data Keuangan) — attach a tiny
+     * generated PDF the way v2AddRows does, rather than skipping: the step
+     * counter counts the descriptor, so a skipped required dropzone reads
+     * 5/6 forever (user, 2026-08-20). Kairos FileUpload is a plain
+     * <input type=file>, so the DataTransfer assign works verbatim; the wait
+     * is the measured DMS temp-upload round trip.
+     *
+     * ⚠️ skipFilled already covers the re-run case above this branch: the RHF
+     * value is an array, and a non-empty one returns skipped_filled before we
+     * get here.
+     */
+    const fileInputs = group.els.filter(e => e.tagName === 'INPUT' && e.type === 'file')
+    const el = fileInputs[fileInputs.length - 1]
+
+    if (!el) return 'not_found'
+
+    const dt = new DataTransfer()
+
+    dt.items.add(new File(
+      [new Blob(['%PDF-1.4\n% autofill ' + name + '\nendobj\n%%EOF'], { type: 'application/pdf' })],
+      'autofill-' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '.pdf',
+      { type: 'application/pdf' }
+    ))
+    el.files = dt.files
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    await sleep(3200)
+
+    return 'ok'
+  }
+
   if (type === 'checkbox') {
     const el = group.els.find(e => e.tagName === 'INPUT')
     if (!el) return 'not_found'
@@ -1452,8 +1494,19 @@ async function v2FillCollaterals(items, openWait = 900) {
    * Filling both with the same value is right here: these are fixture records,
    * and an owner at the collateral's address is a legitimate shape.
    */
+  /* 🔴 DIALOG-STRICT, the whole class: a write or click resolved against
+     `document` when the modal has already closed lands on the PAGE — measured
+     2026-08-20, the facility pass's document-fallback "Ya" clicked the
+     USE_REFERENCE toggle's own Ya segment on step 1 (B55). The driver's gate
+     refusal could not see it because a raw .click() never passes through
+     v2FillField. If the dialog is gone there is nothing left to fill, save,
+     cancel or confirm — skip, never widen. (v2AddRows keeps its document scope
+     deliberately: its repeaters are IN-FORM, and its clicks are before-set
+     diffed so a pre-existing page button can never be a candidate.) */
   const fillByPlaceholder = (needle, value) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return false
     const fields = [...scope.querySelectorAll('input, textarea')]
       .filter(i => (i.placeholder || '').toLowerCase().includes(String(needle).toLowerCase()) && !i.disabled)
 
@@ -1466,7 +1519,9 @@ async function v2FillCollaterals(items, openWait = 900) {
      no role="option", not portalled. ⚠️ The trigger TOGGLES: clicking one that
      is already open closes it, which reads as "no options exist". */
   const choose = async (placeholderOrLabel, optionText, exact = false) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return { ok: false, reason: 'modal closed' }
     const trigger = [...scope.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim().toLowerCase().includes(String(placeholderOrLabel).toLowerCase()))
 
@@ -1478,13 +1533,15 @@ async function v2FillCollaterals(items, openWait = 900) {
        PILL — re-clicking a pill instead of choosing a province, and leaving
        every geo select unset. Measured 2026-08-15: the Deposito branch failed
        to save with no visible error for exactly this reason. */
-    const before = new Set([...(dialog() || document).querySelectorAll('button')])
+    const before = new Set([...scope.querySelectorAll('button')])
 
     trigger.click()
     await wait(openWait)
 
-    const options = [...(dialog() || document).querySelectorAll('button')]
-      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+    const optionsBox = dialog()
+    const options = optionsBox
+      ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+      : []
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -1535,7 +1592,9 @@ async function v2FillCollaterals(items, openWait = 900) {
    * button — never one without the other.
    */
   const pill = (label, text) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return { ok: false, reason: 'modal closed' }
     const holder = [...scope.querySelectorAll('*')]
       .filter(e => {
         const t = e.textContent || ''
@@ -1901,12 +1960,15 @@ async function v2FillCollaterals(items, openWait = 900) {
      * title: a v2 dialog has no heading element (its title is a plain div), a
      * trap this file already carries for `v2OpenModal`.
      */
-    const hasTypeTrigger = () =>
-      [...(dialog() || document).querySelectorAll('button')]
-        .some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+    const hasTypeTrigger = () => {
+      const box = dialog()
+
+      return Boolean(box) && [...box.querySelectorAll('button')].some(b => /Pilih Jenis Agunan/.test(b.textContent || ''))
+    }
 
     if (!hasTypeTrigger()) {
-      const register = [...(dialog() || document).querySelectorAll('button')]
+      const registerBox = dialog()
+      const register = registerBox && [...registerBox.querySelectorAll('button')]
         .find(b => /^Daftarkan Agunan$/.test((b.textContent || '').trim()))
 
       if (register) {
@@ -1958,7 +2020,8 @@ async function v2FillCollaterals(items, openWait = 900) {
     /* ⚠️ The SAVE button carries the SAME label as the opener — "Tambah
        Agunan" — and is told apart only by being inside the dialog. Searching
        the document would re-click the opener. */
-    const save = [...(dialog() || document).querySelectorAll('button')]
+    const saveBox = dialog()
+    const save = saveBox && [...saveBox.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim() === 'Tambah Agunan')
 
     save?.click()
@@ -2003,7 +2066,8 @@ async function v2FillCollaterals(items, openWait = 900) {
 
       results.push({ name: item.name, ok: false, step: 'submit', errors: dialogErrors(), rhfErrors })
 
-      const cancel = [...(dialog() || document).querySelectorAll('button')]
+      const cancelBox = dialog()
+      const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
         .find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
       cancel?.click()
@@ -2072,15 +2136,20 @@ async function v2AddMutations(plan, openWait = 900) {
     el.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
-  const byPlaceholder = needle =>
-    [...(dialog() || document).querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase()))
+  /* 🔴 dialog-strict — see the B55 note in v2FillCollaterals. */
+  const byPlaceholder = needle => {
+    const box = dialog()
+
+    return box ? [...box.querySelectorAll('input')].find(i => (i.placeholder || '').toLowerCase().includes(needle.toLowerCase())) : undefined
+  }
 
   /* Options render INLINE among buttons, so a before/after diff is the only
      reliable read — and a trigger click TOGGLES, so an already open panel gives
      an empty diff. Retried once for exactly that. */
   const chooseBank = async (label, bankIndex) => {
     const open = async () => {
-      const trigger = [...(dialog() || document).querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
+      const box = dialog()
+      const trigger = box && [...box.querySelectorAll('button')].find(b => /Pilih bank/i.test(b.textContent || ''))
       if (!trigger) return []
       const before = new Set([...document.querySelectorAll('button')])
       trigger.click()
@@ -2248,7 +2317,8 @@ async function v2AddMutations(plan, openWait = 900) {
       if (!closed) {
         const cancel = [...dialog().querySelectorAll('button')].find(b => /^Batal$/.test((b.textContent || '').trim()))
         if (cancel) { cancel.click(); await wait(600) }
-        const yes = [...(dialog() || document).querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
+        const yesBox = dialog()
+        const yes = yesBox && [...yesBox.querySelectorAll('button')].find(b => /^Ya$/.test((b.textContent || '').trim()))
         if (yes) { yes.click(); await wait(600) }
       }
     }
@@ -2525,7 +2595,13 @@ async function v2AddRows(specs, openWait = 900) {
     trigger.click()
     await wait(openWait)
 
-    const option = [...(dialog() || document).querySelectorAll('button')]
+    /* 🔴 dialog-strict. The before-set was captured from the DIALOG, so
+       diffing it against `document` after the dialog closes lets EVERY page
+       button through the filter — and the first one not named
+       Batal/Tutup/Simpan/Tambah gets clicked. Same B55 class as the
+       document-fallback "Ya"s. */
+    const optionBox = dialog()
+    const option = optionBox && [...optionBox.querySelectorAll('button')]
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
       .find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -2565,7 +2641,8 @@ async function v2AddRows(specs, openWait = 900) {
       /* Selects first: several modals gate later fields on an earlier choice,
          and a text pass before them writes into inputs about to be replaced. */
       for (let i = 0; i < 10; i++) {
-        const pending = [...(dialog() || document).querySelectorAll('button')]
+        const pendingBox = dialog()
+        const pending = pendingBox && [...pendingBox.querySelectorAll('button')]
           .map(b => (b.textContent || '').trim())
           .find(t => /^Pilih\s/.test(t) && !/^Pilih File/i.test(t))
 
@@ -3217,8 +3294,11 @@ async function v2AddFacilities(plan, openWait = 900) {
     return ''
   }
 
+  /* 🔴 dialog-strict — see the B55 note in v2FillCollaterals. */
   const fill = (needle, value) => {
-    const scope = dialog() || document
+    const scope = dialog()
+
+    if (!scope) return false
     const want = String(needle).toLowerCase()
     const candidates = [...scope.querySelectorAll('input, textarea')].filter(i => !i.disabled && !i.readOnly)
 
@@ -3249,8 +3329,10 @@ async function v2AddFacilities(plan, openWait = 900) {
     trigger.click()
     await wait(openWait)
 
-    const options = [...(dialog() || document).querySelectorAll('button')]
-      .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+    const optionsBox = dialog()
+    const options = optionsBox
+      ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+      : []
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
 
@@ -3391,7 +3473,7 @@ async function v2AddFacilities(plan, openWait = 900) {
      * yields no option is the dead one.
      */
     const methodDead = !method.ok
-      && [...(dialog() || document).querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
+      && Boolean(dialog()) && [...dialog().querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
 
     if (methodDead) {
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
@@ -3402,7 +3484,8 @@ async function v2AddFacilities(plan, openWait = 900) {
       /* Dismissing a dirty modal raises its own confirm. ⚠️ Answered inline —
          `answerConfirm` belongs to `v2FillCollaterals` and is NOT in scope
          here; each driver function is serialised alone. */
-      const ya = [...(dialog() || document).querySelectorAll('button')]
+      const yaBox = dialog()
+      const ya = yaBox && [...yaBox.querySelectorAll('button')]
         .find(b => /^Ya$/i.test((b.textContent || '').trim()))
 
       if (ya) { ya.click(); await wait(800) }
@@ -3444,7 +3527,8 @@ async function v2AddFacilities(plan, openWait = 900) {
      * the Ya is never clicked, and the modal simply stays open forever. Look
      * for the button, not for a second dialog.
      */
-    const ya = [...(dialog() || document).querySelectorAll('button')]
+    const yaBox2 = dialog()
+    const ya = yaBox2 && [...yaBox2.querySelectorAll('button')]
       .find(b => /^Ya$/i.test((b.textContent || '').trim()))
 
     if (ya) { ya.click(); await wait(900) }

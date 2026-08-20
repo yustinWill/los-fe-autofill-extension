@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LOS Form Autofill",
-  "version": "1.0.66",
+  "version": "1.0.69",
   "description": "Autofill CustomFormWizard fields (MUI + React Hook Form)",
   "permissions": [
     "activeTab",

@@ -797,6 +797,46 @@ if (!S) {
 
   {
     /**
+     * 🔴 NO CLICK OR WRITE MAY RESOLVE AGAINST `document` AS A DIALOG
+     * FALLBACK. `(dialog() || document)` reads as defensive and is the exact
+     * opposite: it becomes reachable only when the modal has already closed,
+     * which is precisely when acting on the page is wrong. Measured
+     * 2026-08-20: the facility pass's document-fallback "Ya" clicked the
+     * USE_REFERENCE toggle's own Ya segment on step 1 (B55) — a raw .click()
+     * that never passed v2FillField, so the gate refusal could not log it.
+     *
+     * Zero instances is the contract. v2AddRows' in-form case never needs the
+     * fallback (its select loop only runs once a dialog exists), and every
+     * read-probe now answers false/[] when the dialog is gone.
+     *
+     * Sabotage, verified: reintroduce one `(dialog() || document)` → fails.
+     */
+    const raw = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const bare = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const fallbacks = (bare.match(/dialog\(\)\s*\|\|\s*document/g) || []).length
+
+    fallbacks === 0
+      ? pass('no dialog→document fallback anywhere in driver-v2.js')
+      : fail(`${fallbacks}x (dialog() || document) — a closed modal makes that scope the PAGE, and a "Ya" there is the reference gate (B55)`)
+
+    /* The file-input classification, asserted in BOTH classify copies — they
+       are serialised separately, so fixing one alone ships half a fix.
+       Sabotage, verified: remove either copy's file branch → fails. */
+    const fileBranches = (bare.match(/if \(inp\.type === 'file'\) return 'file'/g) || []).length
+    /* The branch must ATTACH (DataTransfer), never setNative — assigning
+       .value on a file input is a DOMException, and skipping leaves a required
+       dropzone counting 5/6 forever. */
+    const fileIdx = bare.indexOf("if (type === 'file')")
+    const fileBody = fileIdx < 0 ? '' : bare.slice(fileIdx, fileIdx + 1200)
+    const fileAttaches = /new DataTransfer\(\)/.test(fileBody) && /el\.files = dt\.files/.test(fileBody)
+
+    fileBranches === 2 && fileAttaches
+      ? pass('file inputs classify as file in both copies, and the fill ATTACHES via DataTransfer')
+      : fail(`file-input handling: classify branches=${fileBranches} (need 2), attaches=${fileAttaches}`)
+  }
+
+  {
+    /**
      * 🔴 A BRANCH-DECIDING FIELD MUST NOT SUBSTITUTE.
      *
      * `fillPanel`'s `|| opts[0]` is correct for an ordinary select and wrong
