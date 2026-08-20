@@ -852,14 +852,32 @@ if (!S) {
         : fail('ACTION_BUTTON regex drifted — it must catch Unduh/Download/Hapus/Upload/Tambah and spare Ya/Tidak/pills/select triggers')
     }
 
-    const classifyFilters = (bare.match(/els\.filter\(e => e\.tagName === 'BUTTON' && !ACTION_BUTTON\.test/g) || []).length
-    const openerFilter = (bare.match(/!isChipRemove\(e\) && !ACTION_BUTTON\.test/g) || []).length
-    const triggerFilter = (bare.match(/group\.els\.find\(e => e\.tagName === 'BUTTON' && !ACTION_BUTTON\.test/g) || []).length
-    const pillsFilter = (bare.match(/e\.textContent\.trim\(\) && !ACTION_BUTTON\.test/g) || []).length
+    /**
+     * 🔴 v1.0.74 widened the veto into `actionish`: an ICON-ONLY button has
+     * empty textContent, so the text-keyed regex passed the file cards' Unduh
+     * IconButton — and clicking it NAVIGATES (cross-origin GCS URL ignores
+     * the download attribute), raising "Leave site?" over the half-filled
+     * form. actionish refuses empty text AND vets aria-label/title.
+     *
+     * Sabotage, verified each ALONE: drop the `!t ||` empty-text refusal →
+     * the helper assert fails; drop the aria-label veto → same; swap any of
+     * the five sites back to a raw filter → its count fails.
+     */
+    const actionishDecls = (bare.match(/const actionish = b => \{/g) || []).length
+    const emptyTextRefusals = (bare.match(/return !t \|\| ACTION_BUTTON\.test\(t\)/g) || []).length
+    const labelVetoes = (bare.match(/\|\| ACTION_BUTTON\.test\(\(\(b\.getAttribute && \(b\.getAttribute\('aria-label'\) \|\| b\.getAttribute\('title'\)\)\) \|\| ''\)\.trim\(\)\)/g) || []).length
 
-    classifyFilters === 2 && openerFilter === 1 && triggerFilter === 1 && pillsFilter === 1
-      ? pass('ACTION_BUTTON consulted at all 5 target-choice sites (classify x2, opener, trigger, pills)')
-      : fail(`ACTION_BUTTON sites — classify: ${classifyFilters}/2, opener: ${openerFilter}/1, trigger: ${triggerFilter}/1, pills: ${pillsFilter}/1`)
+    actionishDecls === 2 && emptyTextRefusals === 2 && labelVetoes === 2
+      ? pass('actionish declared in BOTH serialised functions: refuses empty text and vets aria-label/title')
+      : fail(`actionish — decls: ${actionishDecls}/2, empty-text refusals: ${emptyTextRefusals}/2, label vetoes: ${labelVetoes}/2`)
+
+    const classifyFilters = (bare.match(/els\.filter\(e => e\.tagName === 'BUTTON' && !actionish\(e\)\)/g) || []).length
+    const openerFilter = (bare.match(/!isChipRemove\(e\) && !actionish\(e\)/g) || []).length
+    const triggerFilter = (bare.match(/group\.els\.find\(e => e\.tagName === 'BUTTON' && !actionish\(e\)\)/g) || []).length
+
+    classifyFilters === 3 && openerFilter === 1 && triggerFilter === 1
+      ? pass('actionish consulted at all 5 target-choice sites (classify x2, opener, trigger, pills)')
+      : fail(`actionish sites — classify+pills: ${classifyFilters}/3, opener: ${openerFilter}/1, trigger: ${triggerFilter}/1`)
 
     /**
      * 🔴 THE YEAR TRIGGER'S CLEARED STATE IS THE PLACEHOLDER, NOT '—'.

@@ -132,6 +132,21 @@ async function v2Detect() {
    */
   const ACTION_BUTTON = /^(Batal|Tutup|Simpan|Tambah|Upload|Unduh|Download|Hapus|Pilih File|Cari)/i
 
+  /* An icon-only button (the Unduh/Hapus IconButtons on a file card) has
+     EMPTY textContent, so a text-keyed veto passes it — and clicking the
+     Unduh icon NAVIGATES: the resolved GCS URL is cross-origin, the download
+     attribute is ignored there, and Chrome raises "Leave site?" over the
+     half-filled form (measured 2026-08-20, v1.0.73). A chooser always
+     carries visible text — a value, a placeholder, a segment label — so no
+     text = not a chooser, and the aria-label/title get the same veto the
+     text does. */
+  const actionish = b => {
+    const t = (b.textContent || '').trim()
+
+    return !t || ACTION_BUTTON.test(t)
+      || ACTION_BUTTON.test(((b.getAttribute && (b.getAttribute('aria-label') || b.getAttribute('title'))) || '').trim())
+  }
+
   // An open modal owns the page; otherwise scan the step card so the rail,
   // header and footer buttons stay out of the sweep.
   const root = document.querySelector('[role="dialog"]')
@@ -253,7 +268,7 @@ async function v2Detect() {
     const inputs = els.filter(e => e.tagName === 'INPUT')
     /* Filter by ROLE before guessing shape — see ACTION_BUTTON above. A
        group left with no inputs and no chooser buttons is nothing fillable. */
-    const buttons = els.filter(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
+    const buttons = els.filter(e => e.tagName === 'BUTTON' && !actionish(e))
 
     if (inputs.length) {
       const inp = inputs[0]
@@ -414,7 +429,7 @@ async function v2Detect() {
          correctly a select, its chips come FIRST in document order, so `find`
          would hand `peekOptions` a remove button to click. */
       const opener = type === 'select'
-        ? g.els.find(e => e.tagName === 'BUTTON' && !isChipRemove(e) && !ACTION_BUTTON.test((e.textContent || '').trim()))
+        ? g.els.find(e => e.tagName === 'BUTTON' && !isChipRemove(e) && !actionish(e))
         : g.els.find(e => e.tagName === 'INPUT')
       field.options = await peekOptions(opener)
     } else if (type === 'pills' || type === 'toggle') {
@@ -953,6 +968,21 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
      trigger DOWNLOADED the row's files on every fill (2026-08-20). */
   const ACTION_BUTTON = /^(Batal|Tutup|Simpan|Tambah|Upload|Unduh|Download|Hapus|Pilih File|Cari)/i
 
+  /* An icon-only button (the Unduh/Hapus IconButtons on a file card) has
+     EMPTY textContent, so a text-keyed veto passes it — and clicking the
+     Unduh icon NAVIGATES: the resolved GCS URL is cross-origin, the download
+     attribute is ignored there, and Chrome raises "Leave site?" over the
+     half-filled form (measured 2026-08-20, v1.0.73). A chooser always
+     carries visible text — a value, a placeholder, a segment label — so no
+     text = not a chooser, and the aria-label/title get the same veto the
+     text does. */
+  const actionish = b => {
+    const t = (b.textContent || '').trim()
+
+    return !t || ACTION_BUTTON.test(t)
+      || ACTION_BUTTON.test(((b.getAttribute && (b.getAttribute('aria-label') || b.getAttribute('title'))) || '').trim())
+  }
+
   if (/USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(name || '')) {
     try {
       console.warn('[autofill] gate refused:', name, '=', value, '\n', new Error('caller').stack)
@@ -1062,7 +1092,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const inputs = els.filter(e => e.tagName === 'INPUT')
     /* Filter by ROLE before guessing shape — see ACTION_BUTTON above. A
        group left with no inputs and no chooser buttons is nothing fillable. */
-    const buttons = els.filter(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
+    const buttons = els.filter(e => e.tagName === 'BUTTON' && !actionish(e))
     if (inputs.length) {
       const inp = inputs[0]
       /* A dropzone's own <input type=file> carries the RHF name too, and the
@@ -1268,7 +1298,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   if (type === 'select') {
-    const trigger = group.els.find(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
+    const trigger = group.els.find(e => e.tagName === 'BUTTON' && !actionish(e))
 
     /**
      * 🔴 A NO-OP WRITE IS NOT FREE ON THIS APP.
@@ -1309,7 +1339,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   if (type === 'toggle' || type === 'pills' || type === 'radio') {
-    const buttons = group.els.filter(e => e.tagName === 'BUTTON' && e.textContent.trim() && !ACTION_BUTTON.test(e.textContent.trim()))
+    const buttons = group.els.filter(e => e.tagName === 'BUTTON' && !actionish(e))
     if (!buttons.length) return 'not_found'
     let target = null
     if (typeof value === 'boolean') {
