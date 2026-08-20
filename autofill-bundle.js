@@ -34,6 +34,31 @@ const FALLBACK_DATE = (() => {
 })()
 
 // ─── Smart default generator ──────────────────────────────────────────────────
+
+/**
+ * Answer `true` for checkboxes and Ya/Tidak toggles instead of `false`.
+ *
+ * 🔴 The honest default for a blank create form is OFF — nothing has been opted
+ * into. But this app uses those same controls as GATES, and a field that only
+ * exists once its checkbox is ticked is invisible to a scan that faithfully
+ * leaves it alone: step 4's Agunan and Underlying tables, their Tambah buttons,
+ * and every field inside them do not exist in the DOM until the box says Ya.
+ *
+ * So a run that fills correctly REPORTS LESS than a run that ticks first, and
+ * the difference reads as "those fields aren't there" rather than "they are
+ * behind a gate". Turning this on trades fidelity for reach, deliberately.
+ *
+ * Declared inside the extracted smart-default block so `autofill-bundle.js`
+ * carries it too; the popup overwrites it from its own checkbox.
+ *
+ * 🔴 KEEP THIS BELOW THE `Smart default generator` MARKER. `build-bundle.sh`
+ * extracts from that line down, so a declaration ABOVE it is left out of the
+ * bundle while its USE is carried in — `__autofill.run()` then dies with
+ * `TICK_CHECKBOXES is not defined` on the first toggle or checkbox it meets.
+ * It sat two lines too high until 2026-08-20, while this comment and the one
+ * on `syncTickCheckboxes` both already claimed it was inside.
+ */
+let TICK_CHECKBOXES = false
 // Keys = normalized label text (lowercase, trailing * stripped).
 // Date values use DD-MM-YYYY (passed to react-datepicker via fillText which parses → Date object,
 // or passed to Cleave masked date fields as raw digits after stripping dashes).

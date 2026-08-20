@@ -478,6 +478,9 @@ function parseJSON() {
 }
 const prettyJSON = obj => JSON.stringify(obj, null, 2)
 
+
+// ─── Smart default generator ──────────────────────────────────────────────────
+
 /**
  * Answer `true` for checkboxes and Ya/Tidak toggles instead of `false`.
  *
@@ -493,10 +496,15 @@ const prettyJSON = obj => JSON.stringify(obj, null, 2)
  *
  * Declared inside the extracted smart-default block so `autofill-bundle.js`
  * carries it too; the popup overwrites it from its own checkbox.
+ *
+ * 🔴 KEEP THIS BELOW THE `Smart default generator` MARKER. `build-bundle.sh`
+ * extracts from that line down, so a declaration ABOVE it is left out of the
+ * bundle while its USE is carried in — `__autofill.run()` then dies with
+ * `TICK_CHECKBOXES is not defined` on the first toggle or checkbox it meets.
+ * It sat two lines too high until 2026-08-20, while this comment and the one
+ * on `syncTickCheckboxes` both already claimed it was inside.
  */
 let TICK_CHECKBOXES = false
-
-// ─── Smart default generator ──────────────────────────────────────────────────
 // Keys = normalized label text (lowercase, trailing * stripped).
 // Date values use DD-MM-YYYY (passed to react-datepicker via fillText which parses → Date object,
 // or passed to Cleave masked date fields as raw digits after stripping dashes).
