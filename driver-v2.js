@@ -1196,7 +1196,28 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   if (type === 'select') {
-    return (await fillPanel(group.els.find(e => e.tagName === 'BUTTON'), value)) ? 'ok' : 'not_found'
+    const trigger = group.els.find(e => e.tagName === 'BUTTON')
+
+    /**
+     * 🔴 A NO-OP WRITE IS NOT FREE ON THIS APP.
+     *
+     * Re-picking the value a select ALREADY shows raises "Konfirmasi Ganti
+     * Jenis Kredit — Mengganti Jenis Kredit akan mengosongkan seluruh data yang
+     * sudah diisi", offering to empty the whole application. Quick Fill reaches
+     * here with `skipFilled` deliberately bypassed for planned fields, so the
+     * emptiness guard above does not catch it and every run re-picked the same
+     * value and provoked that dialog.
+     *
+     * Compared against the TRIGGER'S TEXT, not the stored value: the store
+     * holds an enum (`COMPANY_PRODUCTIVE`) while the plan and the option list
+     * both speak the label ("Kredit Badan Usaha - Produktif"), so a
+     * stored-value comparison never matches and would skip nothing.
+     */
+    const want = String(value == null ? '' : value).trim()
+
+    if (trigger && want && trigger.textContent.trim() === want) return 'skipped_filled'
+
+    return (await fillPanel(trigger, value)) ? 'ok' : 'not_found'
   }
 
   if (type === 'multiselect') {
@@ -1222,6 +1243,16 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     } else {
       const str = String(value == null ? '' : value)
       target = (str && buttons.find(b => b.textContent.trim() === str)) || buttons[0]
+
+      /* ⚠️ NO no-op guard here, deliberately — unlike `select` above.
+         Re-clicking the pill that is already active is HARMLESS on this form:
+         measured 2026-08-20, it returns without raising the "Ganti Jenis"
+         confirmation that the select provokes. And it could not be guarded the
+         same way anyway: the store holds an ENUM (`NEW`) while the buttons and
+         the plan both speak the label ("Baru"), and pills carry no
+         aria-pressed or data-state to read the active one from — only a
+         computed background, which is styling, not a contract. A guard keyed
+         on that would be a comparison that silently never matches. */
     }
     target.click()
     await sleep(100)

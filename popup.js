@@ -1156,6 +1156,40 @@ executeBtn.addEventListener('click', async () => {
           recordFieldDetail(f, value, deliberate, 'error')
         }
 
+        /**
+         * 🔴 ANSWER A CONFIRMATION THE WRITE MAY HAVE RAISED — the step path
+         * never did, only the modal walk (below) ever called these.
+         *
+         * Writing a field that already holds a different value raises
+         * "Konfirmasi Ganti Jenis Kredit", which offers to empty the whole
+         * application. Left unanswered it sits over the form and every
+         * SUBSEQUENT field reports `not_found` — so one planned field could
+         * silently cost the rest of the run, and the value never changed
+         * either, making the panel's setting look ignored.
+         *
+         * REFUSED, not accepted: Quick Fill means "fill what is empty", and
+         * clearing an application the user had already filled is not a repair
+         * this button is entitled to make. The refusal is logged so a setting
+         * that did not apply is visible rather than silent.
+         */
+        if (driver.pendingConfirm && driver.answerConfirm) {
+          try {
+            const [{ result: raised }] = await chrome.scripting.executeScript({
+              target: { tabId: tab.id }, world: 'MAIN', func: driver.pendingConfirm
+            })
+
+            if (raised) {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id }, world: 'MAIN', func: driver.answerConfirm, args: [false]
+              })
+              results[f.name] = 'declined_confirm'
+              logEvent('confirm-declined', { field: f.name, label: f.label, wanted: value, text: raised.text.slice(0, 120) })
+            }
+          } catch (err) {
+            logEvent('confirm-check-failed', { field: f.name, error: err.message })
+          }
+        }
+
         filled++
         if (i < stepFields.length - 1) await sleep(delayMs)
       }
