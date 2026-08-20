@@ -2214,6 +2214,40 @@ async function fillPlannedMutations() {
 }
 
 /**
+ * Laporan Keuangan — its own pass since 2026-08-20: the generic row-adder saved
+ * one all-zero report and blocked on the rest ("Neraca Tidak Seimbang"). The
+ * driver owns the YEAR LADDER; this pass only hands it the configured count.
+ */
+async function fillPlannedFinancialReports() {
+  const driver = await resolveDriver()
+
+  if (!driver || typeof driver.financialReports !== 'function') return null
+
+  const wanted = (activePlan.tables || []).find(t => t.key === 'financialReport')
+
+  if (!wanted || !wanted.count) return null
+
+  const tab = await getActiveTab()
+
+  setStatus(`Laporan keuangan (${wanted.count})…`)
+
+  if ((await goToOpener(driver, tab.id, 'Tambah Laporan Keuangan')) === null) {
+    return { ok: false, step: 'open', reason: 'no "Tambah Laporan Keuangan" on any step' }
+  }
+
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN', func: driver.financialReports,
+      args: [{ count: wanted.count }, 900]
+    })
+
+    return result || null
+  } catch (e) {
+    return { ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }
+  }
+}
+
+/**
  * Step 8's documents — every mandatory row on Dokumen Pengajuan Kredit, one
  * optional Dokumen Calon Debitur, and the SLIK attachment (user, 2026-08-17).
  *
@@ -2306,13 +2340,14 @@ async function runPlannedExtras() {
   const agunan = Array.isArray(agunanRun) ? agunanRun : agunanRun.collaterals
   const facilityLinks = Array.isArray(agunanRun) ? null : agunanRun.assigned
   const mutations = await fillPlannedMutations()
+  const financialReports = await fillPlannedFinancialReports()
   const documents = await fillPlannedDocuments()
   const qualitative = await fillPlannedQualitative()
 
   /* Every pass's RAW return, before it is compressed into `problems`. The
      status line says "3 tabel kurang baris"; this says which three, how many
      rows each wanted, and what each reported going wrong. */
-  logEvent('extras', { facilities, rows, agunan, facilityLinks, mutations, documents, qualitative })
+  logEvent('extras', { facilities, rows, agunan, facilityLinks, mutations, financialReports, documents, qualitative })
 
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
@@ -2352,6 +2387,15 @@ async function runPlannedExtras() {
     problems.push(`${mutationRun.saved}/${mutationRun.wanted} mutasi rekening`)
   } else if (mutationRun && mutationRun.ok === false) {
     problems.push(`mutasi: ${mutationRun.reason || 'gagal'}`)
+  }
+
+  /* Same rule for the financial-report pass — produced AND consumed. */
+  if (financialReports) {
+    if (financialReports.ok === false) {
+      problems.push(`laporan keuangan: ${financialReports.reason || 'gagal'}`)
+    } else if (typeof financialReports.wanted === 'number' && financialReports.saved < financialReports.wanted) {
+      problems.push(`${financialReports.saved}/${financialReports.wanted} laporan keuangan`)
+    }
   }
 
   /* Same rule for the document pass. Its report is a SHAPE, not a count —

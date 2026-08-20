@@ -83,6 +83,7 @@ window.__autofill = {
    */
   collaterals: v2FillCollaterals,
   mutations: v2AddMutations,
+  financialReports: v2AddFinancialReports,
   documents: v2FillDocuments,
   qualitative: v2FillQualitative,
   facilities: v2AddFacilities,

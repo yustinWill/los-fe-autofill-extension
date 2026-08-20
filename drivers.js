@@ -49,6 +49,11 @@ const DRIVERS = {
        `detect`/`fill` see zero of them. One save per account PER MONTH. */
     mutations: v2AddMutations,
 
+    /* Laporan Keuangan — own capability 2026-08-20: the Neraca grid must
+       BALANCE and the period is a year select behind a pill, neither of which
+       the generic row-adder can satisfy (it saved one all-zero report). */
+    financialReports: v2AddFinancialReports,
+
     /* Links each saved agunan to a credit facility. Separate from
        `collaterals` because it runs on the TABLE after every row exists — a
        row cannot be linked before it is saved, and the control is a

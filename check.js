@@ -584,6 +584,7 @@ if (!S) {
 
     const PASSES = [
       { name: 'documents', fn: 'fillPlannedDocuments', v: 'documents' },
+      { name: 'financialReports', fn: 'fillPlannedFinancialReports', v: 'financialReports' },
       { name: 'qualitative', fn: 'fillPlannedQualitative', v: 'qualitative' },
       { name: 'mutations', fn: 'fillPlannedMutations', v: 'mutations' },
       { name: 'collaterals', fn: 'fillPlannedCollaterals', v: 'agunan' }

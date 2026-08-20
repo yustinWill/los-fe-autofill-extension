@@ -3415,6 +3415,241 @@ function v2AdvanceStep() {
   return 'no_next'
 }
 
+/**
+ * Fill the Laporan Keuangan modal — its OWN capability, like agunan, mutations
+ * and facilities, because the generic row-adder cannot satisfy it: the Neraca
+ * grid must BALANCE ("Neraca Tidak Seimbang — Rp 300" blocks the save), the
+ * period is a year select behind a pill, and every nominal is a Cleave mask.
+ * Measured 2026-08-20 from the user's run: the generic pass saved one all-zero
+ * report and blocked on the rest.
+ *
+ * The YEAR LADDER (user, 2026-08-20). For a configured count n:
+ *   neraca   = ceil(n/2) reports: YTD at the current year, then Full 1 Tahun
+ *              at Y-1, Y-2, …
+ *   labaRugi = floor(n/2) reports: same year sequence.
+ * So 1 → 1 Neraca YTD · 2 → + 1 Laba Rugi YTD · 3 → 2 Neraca (YTD, Y-1) +
+ * 1 Laba Rugi YTD · 4 → 2 + 2 — and onward.
+ */
+async function v2AddFinancialReports(plan, openWait = 900) {
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  const spec = Object.assign({ count: 1, amount: 1000000000 }, plan || {})
+
+  const dialog = () => {
+    const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
+
+    return open[open.length - 1] || null
+  }
+
+  const setNative = (el, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  /* Fill the input on the grid row whose LABEL matches exactly — the rows are
+     label + Cleave input pairs, and the same label can appear on both the
+     AKTIVA and PASIVA side, so fill by index among matches. */
+  const fillRow = async (label, value) => {
+    const box = dialog()
+
+    if (!box) return false
+
+    const leaf = [...box.querySelectorAll('*')]
+      .find(e => !e.children.length && (e.textContent || '').trim() === label)
+
+    if (!leaf) return false
+
+    let node = leaf.parentElement
+
+    for (let d = 0; d < 6 && node; d++) {
+      const input = [...node.querySelectorAll('input')].find(i => !i.disabled && !i.readOnly)
+
+      if (input) {
+        setNative(input, String(value))
+        /* Cleave reformats ASYNCHRONOUSLY — a synchronous read-back passes and
+           the value still collapses a tick later. */
+        await wait(350)
+
+        return true
+      }
+
+      node = node.parentElement
+    }
+
+    return false
+  }
+
+  const clickButton = async (label, scope) => {
+    const box = scope || dialog()
+
+    if (!box) return false
+
+    const b = [...box.querySelectorAll('button')].find(x => (x.textContent || '').trim() === label)
+
+    if (!b || b.disabled) return false
+    b.click()
+    await wait(300)
+
+    return true
+  }
+
+  /* Year select: a trigger showing "—" (or a year). Options render inline; take
+     the before/after diff INSIDE the dialog and match the exact year. */
+  const pickYear = async year => {
+    const box = dialog()
+
+    if (!box) return false
+
+    const trigger = [...box.querySelectorAll('button')]
+      .find(b => { const t = (b.textContent || '').trim(); return t === '—' || /^\d{4}$/.test(t) })
+
+    if (!trigger) return false
+    if (trigger.textContent.trim() === String(year)) return true
+
+    const before = new Set([...box.querySelectorAll('button')])
+
+    trigger.click()
+    await wait(openWait)
+
+    const box2 = dialog()
+    const option = box2 && [...box2.querySelectorAll('button')]
+      .filter(b => !before.has(b))
+      .find(b => (b.textContent || '').trim() === String(year))
+
+    if (!option) {
+      /* close the panel rather than leaving it over the grid */
+      if (box2) box2.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+
+      return false
+    }
+
+    option.click()
+    await wait(300)
+
+    return true
+  }
+
+  const currentYear = new Date().getFullYear()
+  const n = Math.max(0, Number(spec.count) || 0)
+  const seq = []
+
+  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0 })
+  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0 })
+
+  const results = []
+
+  for (const report of seq) {
+    const opener = [...document.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
+
+    if (!opener) { results.push({ ...report, ok: false, reason: 'no opener on this step' }); break }
+    opener.click()
+    await wait(1100)
+
+    const box = dialog()
+
+    if (!box) { results.push({ ...report, ok: false, reason: 'modal did not open' }); continue }
+
+    /* Jenis — a select whose panel renders inline in the dialog. This choice
+       decides which GRID renders below, so it must land before any nominal. */
+    const jenisTrigger = [...box.querySelectorAll('button')]
+      .find(b => /^(Pilih|Neraca|Laporan)/.test((b.textContent || '').trim()) && !/Periode|Tahun|Referensi/.test(b.textContent || ''))
+
+    if (jenisTrigger && jenisTrigger.textContent.trim() !== report.jenis) {
+      const before = new Set([...box.querySelectorAll('button')])
+
+      jenisTrigger.click()
+      await wait(openWait)
+
+      const opt = [...(dialog() || box).querySelectorAll('button')]
+        .filter(b => !before.has(b))
+        .find(b => (b.textContent || '').trim() === report.jenis)
+
+      if (opt) { opt.click(); await wait(600) }
+    }
+
+    /* Periode: YTD for the current year, Full 1 Tahun for prior years. */
+    await clickButton(report.ytd ? 'Year to Date (YTD)' : 'Full 1 Tahun')
+    await wait(300)
+    const yearSet = await pickYear(report.year)
+
+    /* Nominals. Neraca must BALANCE: one aktiva row and one pasiva row with the
+       SAME figure keeps Total Aktiva == Total Pasiva whatever the fx rows
+       compute. Laba Rugi has no balance rule. */
+    const wrote = []
+
+    if (/Neraca/.test(report.jenis)) {
+      wrote.push(await fillRow('Kas dan Setara Kas', spec.amount))
+      wrote.push(await fillRow('Hutang Bank Jangka Pendek', spec.amount))
+    } else {
+      wrote.push(await fillRow('Penjualan', spec.amount))
+      wrote.push(await fillRow('Harga Pokok Penjualan', Math.round(spec.amount * 0.6)))
+    }
+
+    /* Lampiran — the dropzone is a plain file input. */
+    const fileInput = [...box.querySelectorAll('input[type=file]')].pop()
+
+    if (fileInput) {
+      const dt = new DataTransfer()
+
+      dt.items.add(new File(
+        [new Blob(['%PDF-1.4\n% laporan keuangan autofill\nendobj\n%%EOF'], { type: 'application/pdf' })],
+        'autofill-fr-' + report.year + '.pdf', { type: 'application/pdf' }
+      ))
+      fileInput.files = dt.files
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait(3200)
+    }
+
+    await clickButton('Simpan')
+    await wait(800)
+
+    /* The save may raise its own confirm — dialog-scoped, per the B55 rule. */
+    const confirmBox = dialog()
+    const ya = confirmBox && confirmBox !== box
+      && [...confirmBox.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (ya) { ya.click(); await wait(800) }
+
+    let closed = false
+
+    for (let i = 0; i < 30; i++) {
+      if (!dialog()) { closed = true; break }
+      await wait(150)
+    }
+
+    if (!closed) {
+      /* Capture the refusal before dismissing — a driver that must cancel to
+         reach the next report destroys its own evidence. */
+      const box2 = dialog()
+      const reds = box2
+        ? [...box2.querySelectorAll('*')].filter(e => {
+          const c = getComputedStyle(e).color
+
+          return /rgb\((223|200|210), (42|30|31)/.test(c) && (e.textContent || '').trim().length < 120 && !e.children.length
+        }).map(e => e.textContent.trim())
+        : []
+
+      results.push({ ...report, ok: false, yearSet, reason: 'save blocked', errors: reds })
+
+      const cancelBox = dialog()
+      const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
+        .find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+
+      if (cancel) { cancel.click(); await wait(600) }
+      const c2 = dialog()
+      const ya2 = c2 && [...c2.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+      if (ya2) { ya2.click(); await wait(600) }
+    } else {
+      results.push({ ...report, ok: true, yearSet, wrote: wrote.filter(Boolean).length })
+    }
+
+    await wait(400)
+  }
+
+  return { saved: results.filter(r => r.ok).length, wanted: seq.length, results }
+}
+
 // ─── Record modals ────────────────────────────────────────────────────────────
 /**
  * 🔴 THESE DID NOT EXIST, AND THAT MADE "Fill modals" A NO-OP ON EVERY v2 PAGE.
@@ -3463,7 +3698,7 @@ function v2ListModals() {
     /* \s+\S: a record opener names its record ("Tambah Pengurus"). A BARE
        "Tambah" is the doc block's add-file tile — walking it opened nothing
        useful and burned two modal slots (user run log, 2026-08-20). */
-    .filter(x => /^Tambah\s+\S/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(x.label))
+    .filter(x => /^Tambah\s+\S/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas|Tambah Laporan Keuangan)$/.test(x.label))
     .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled, opensModal: null }))
 }
 
@@ -3486,7 +3721,7 @@ async function v2OpenModal(nth) {
   const buttons = [...scope.querySelectorAll('button')].filter(b => {
     const label = (b.textContent || '').trim()
 
-    return /^Tambah\s+\S/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(label)
+    return /^Tambah\s+\S/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas|Tambah Laporan Keuangan)$/.test(label)
   })
 
   const btn = buttons[nth]
@@ -4607,7 +4842,10 @@ window.SIM = (() => {
     { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
     { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
     { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
-    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8 },
+    /* 🔴 `isOwnCapability` since 2026-08-20: the Neraca grid must balance, so
+       the generic row-adder cannot save it — `v2AddFinancialReports` owns the
+       whole ladder (see the driver's header for the count → years mapping). */
+    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8, isOwnCapability: true },
     { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
     { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
@@ -4913,6 +5151,7 @@ window.__autofill = {
    */
   collaterals: v2FillCollaterals,
   mutations: v2AddMutations,
+  financialReports: v2AddFinancialReports,
   documents: v2FillDocuments,
   qualitative: v2FillQualitative,
   facilities: v2AddFacilities,

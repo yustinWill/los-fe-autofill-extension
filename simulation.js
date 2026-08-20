@@ -69,7 +69,10 @@ window.SIM = (() => {
     { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
     { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
     { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
-    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8 },
+    /* 🔴 `isOwnCapability` since 2026-08-20: the Neraca grid must balance, so
+       the generic row-adder cannot save it — `v2AddFinancialReports` owns the
+       whole ladder (see the driver's header for the count → years mapping). */
+    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8, isOwnCapability: true },
     { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
     { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
