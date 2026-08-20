@@ -3648,6 +3648,16 @@ async function v2AddFacilities(plan, openWait = 900) {
 
     const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
 
+    /* 🔴 Test products (E2E…) carry NO per-product master data — measured
+       2026-08-20: E2E8653809 has 0 ACTIVE workflows and 0 ACTIVE qualitative
+       forms where 1000-2 has 11 and 48 — so a facility landed there dies two
+       steps later as "workflow options not found" AND an empty Data
+       Kualitatif, both reading as app bugs. Real products first; an E2E
+       product only when nothing else satisfies the modal. Stable sort, so
+       relative order within each half is preserved; a no-op for scheme and
+       method lists, which never carry the prefix. */
+    usable.sort((a, b) => Number(/^E2E/i.test((a.textContent || '').trim())) - Number(/^E2E/i.test((b.textContent || '').trim())))
+
     /* `nth` addresses the list positionally — used to walk PRODUCTS when the
        first one turns out to be unsaveable. Out of range closes the panel and
        reports, so the caller can stop rather than loop. */

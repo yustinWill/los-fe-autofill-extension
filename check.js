@@ -917,6 +917,19 @@ if (!S) {
       ? pass('the facilityLinks roll-up normalises the object shape before filtering')
       : fail('the roll-up filters facilityLinks directly — the { assigned, remaining, results } shape crashes the run at its final step')
 
+    /**
+     * 🔴 AN E2E TEST PRODUCT IS A DEAD END — 0 ACTIVE workflows and 0 ACTIVE
+     * qualitative forms (measured 2026-08-20: E2E8653809 vs 1000-2's 11 and
+     * 48). The facility pass's product pick must prefer real products, or
+     * every run lands on the barren one and dies two steps later as data
+     * gaps that read like app bugs.
+     *
+     * Sabotage, verified: remove the sort → fails.
+     */
+    bare.includes("usable.sort((a, b) => Number(/^E2E/i.test((a.textContent || '').trim())) - Number(/^E2E/i.test((b.textContent || '').trim())))")
+      ? pass('the facility product pick sorts E2E test products last')
+      : fail("the product pick takes usable[0] with no E2E deprioritisation — runs land on the barren test product")
+
     /* The file-input classification, asserted in BOTH classify copies — they
        are serialised separately, so fixing one alone ships half a fix.
        Sabotage, verified: remove either copy's file branch → fails. */
