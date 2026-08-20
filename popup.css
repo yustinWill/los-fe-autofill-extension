@@ -12,6 +12,12 @@
  * document element; capping only the body leaves the document free to grow. */
 html {
   max-height: 600px;
+  /* Width too, for the same reason as the height cap above: the popup window
+     takes its size from the DOCUMENT element, so one long unwrapped status
+     line ("Done, 1 tabel kurang baris · …") grew `html` past the body's 380px
+     and the popup opened ~770px wide with a dead white right half (user,
+     2026-08-20). Capping only the body leaves the document free to grow. */
+  width: 380px;
   overflow: hidden;
 }
 

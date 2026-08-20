@@ -2051,14 +2051,25 @@ async function fillPlannedCollaterals() {
 
     /* Every agunan is saved by now, so the table's per-row facility select
        exists and can be linked. Feature-tested: a driver without the capability
-       simply skips it rather than throwing. */
+       simply skips it rather than throwing.
+
+       🔴 The result is CAPTURED and returned, not discarded. This call was
+       `await`ed with nothing reading its result, so when the DataTable
+       migration broke its row detection the pass failed for days with every
+       status line green — the exact "pass whose result reaches no status
+       line" failure runPlannedExtras warns about (user run, 2026-08-20:
+       every Pilih Fasilitas select empty, log silent). */
+    let assigned = null
+
     if (typeof driver.assignFacilities === 'function') {
-      await chrome.scripting.executeScript({
+      const [{ result: linkResult }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id }, world: 'MAIN', func: driver.assignFacilities, args: [700]
       })
+
+      assigned = linkResult || []
     }
 
-    return result || []
+    return { collaterals: result || [], assigned }
   } catch (e) {
     return [{ ok: false, step: 'inject', reason: e && e.message ? e.message : String(e) }]
   }
@@ -2291,7 +2302,9 @@ async function fillPlannedQualitative() {
 async function runPlannedExtras() {
   const facilities = await fillPlannedFacilities()
   const rows = await fillPlannedRows()
-  const agunan = await fillPlannedCollaterals()
+  const agunanRun = await fillPlannedCollaterals()
+  const agunan = Array.isArray(agunanRun) ? agunanRun : agunanRun.collaterals
+  const facilityLinks = Array.isArray(agunanRun) ? null : agunanRun.assigned
   const mutations = await fillPlannedMutations()
   const documents = await fillPlannedDocuments()
   const qualitative = await fillPlannedQualitative()
@@ -2299,7 +2312,7 @@ async function runPlannedExtras() {
   /* Every pass's RAW return, before it is compressed into `problems`. The
      status line says "3 tabel kurang baris"; this says which three, how many
      rows each wanted, and what each reported going wrong. */
-  logEvent('extras', { facilities, rows, agunan, mutations, documents, qualitative })
+  logEvent('extras', { facilities, rows, agunan, facilityLinks, mutations, documents, qualitative })
 
   /* `wanted` is the driver's own spec count, already reduced by the
      wizard-seeded row; `target` is what the user actually asked for. A
@@ -2315,6 +2328,19 @@ async function runPlannedExtras() {
   /* Reported FIRST because it is the one that blocks submission outright. */
   if (noFacility.length) problems.push(`${noFacility.length}/${facilities.length} fasilitas (${noFacility[0].step || '?'})`)
   if (failed.length) problems.push(`${failed.length}/${agunan.length} agunan`)
+
+  /* The facility LINKS on the agunan/underlying rows — the pass that failed
+     silently for days because nothing consumed its result. `null` means the
+     capability was absent; an empty array on a table with rows means the pass
+     found nothing pending, which after the DataTable migration was itself the
+     bug — so a run that saved agunan but linked none says so. */
+  if (facilityLinks !== null) {
+    const linked = facilityLinks.filter(r => r.ok).length
+    const linkFails = facilityLinks.filter(r => !r.ok)
+
+    if (linkFails.length) problems.push(`${linkFails.length} tautan fasilitas gagal`)
+    else if (!linked && agunan.some(r => r.ok)) problems.push('0 agunan tertaut fasilitas')
+  }
   if (shortRows.length) problems.push(`${shortRows.length} tabel kurang baris`)
 
   /* 🔴 REPORTED, not merely computed. A pass whose result reaches no status
@@ -2341,7 +2367,16 @@ async function runPlannedExtras() {
         .filter(d => d.outcome !== 'saved')
 
       if (unsaved.length) problems.push(`${unsaved.length} dokumen belum tersimpan`)
-      if (documents.slik && documents.slik.ok === false) problems.push('lampiran SLIK gagal')
+      /* Not a failure when the field pass already attached SLIK: the BU form
+         renders SLIK as per-variant FILE FIELDS (…_COMPANY / …_SHAREHOLDER)
+         which the generic fill covers, and the docs pass's dropzone hunt then
+         reports a control that simply does not exist on this branch (user run,
+         2026-08-20: both variants 'ok', status still said "lampiran SLIK
+         gagal"). */
+      const slikFieldOk = Object.entries(fieldDetail || {})
+        .some(([n, d]) => /SLIK.*FILE/i.test(n) && d && d.status === 'ok')
+
+      if (documents.slik && documents.slik.ok === false && !slikFieldOk) problems.push('lampiran SLIK gagal')
     }
   }
 

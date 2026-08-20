@@ -1543,7 +1543,7 @@ async function v2FillCollaterals(items, openWait = 900) {
       ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
       : []
 
-    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
 
     const named = optionText
       ? options.find(b => (b.textContent || '').trim() === optionText)
@@ -2394,7 +2394,15 @@ async function v2AssignCollateralFacilities(delayMs = 700) {
   const isRowAction = el => {
     const a = el.getAttribute('aria-label')
 
-    return a === 'Ubah' || a === 'Hapus'
+    /* 🔴 The DataTable migration (los-fe, 2026-08-20) folded the bare
+       Ubah/Hapus icon buttons into a "⋯ Aksi lainnya" menu and added a
+       "Rincian" expander — measured on the live step-4 row. With only the old
+       names here, `cellOf`'s climb never met a row boundary, swallowed a
+       container far bigger than the cell, and `isAssigned` answered true for
+       EVERY row — the pass exited with "nothing pending" on a table where
+       nothing was linked (user run, 2026-08-20). Chip removes stay excluded:
+       they are "Hapus <value>", prefixed, never bare. */
+    return a === 'Ubah' || a === 'Hapus' || a === 'Rincian' || a === 'Aksi lainnya' || a === 'Edit'
   }
 
   const cellOf = trigger => {
@@ -2603,7 +2611,7 @@ async function v2AddRows(specs, openWait = 900) {
     const optionBox = dialog()
     const option = optionBox && [...optionBox.querySelectorAll('button')]
       .filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
-      .find(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+      .find(b => !/^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
 
     if (!option) { trigger.click(); return false }
 
@@ -2984,7 +2992,10 @@ function v2ListModals() {
 
   return [...scope.querySelectorAll('button')]
     .map(b => ({ label: (b.textContent || '').trim(), disabled: Boolean(b.disabled) }))
-    .filter(x => /^Tambah/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(x.label))
+    /* \s+\S: a record opener names its record ("Tambah Pengurus"). A BARE
+       "Tambah" is the doc block's add-file tile — walking it opened nothing
+       useful and burned two modal slots (user run log, 2026-08-20). */
+    .filter(x => /^Tambah\s+\S/i.test(x.label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(x.label))
     .map((x, n) => ({ index: n, label: x.label, disabled: x.disabled, opensModal: null }))
 }
 
@@ -3007,7 +3018,7 @@ async function v2OpenModal(nth) {
   const buttons = [...scope.querySelectorAll('button')].filter(b => {
     const label = (b.textContent || '').trim()
 
-    return /^Tambah/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(label)
+    return /^Tambah\s+\S/i.test(label) && !/^(Tambah Agunan|Tambah Fasilitas)$/.test(label)
   })
 
   const btn = buttons[nth]
@@ -3334,7 +3345,7 @@ async function v2AddFacilities(plan, openWait = 900) {
       ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
       : []
 
-    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah)/.test((b.textContent || '').trim()))
+    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
 
     /* `nth` addresses the list positionally — used to walk PRODUCTS when the
        first one turns out to be unsaveable. Out of range closes the panel and
@@ -3736,7 +3747,7 @@ async function v2FillDocuments(plan, openWait = 900) {
 
     const option = [...(dialog() || box).querySelectorAll('button')]
       .filter(b => !before.has(b) && (b.textContent || '').trim())
-      .find(b => !/^(Batal|Tutup|Simpan|Tambah|Upload)/i.test((b.textContent || '').trim()))
+      .find(b => !/^(Batal|Tutup|Simpan|Tambah|Upload|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
 
     /* Close the panel again rather than leaving it open over the next control —
        an open panel makes every later button lookup ambiguous. */
@@ -3807,7 +3818,9 @@ async function v2FillDocuments(plan, openWait = 900) {
          pencil captured up front is detached by the time its turn comes. */
       for (let i = 0; i < 12; i++) {
         const block2 = blockEl(target0.id, target0.heading)
-        const pencils = [...block2.querySelectorAll('button[aria-label="Ubah"]')]
+        /* "Ubah" is the pre-migration name; DataTable's RowActions emit "Edit"
+           (aria-label AND title) — measured 2026-08-20. */
+        const pencils = [...block2.querySelectorAll('button[aria-label="Ubah"], button[aria-label="Edit"], button[title="Edit"]')]
         /**
          * 🔴 BOUND THE UPWARD WALK. `FlushTable` is a CSS grid of divs with no
          * row element to key on, so the row has to be reconstructed by climbing
