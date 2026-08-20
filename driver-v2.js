@@ -118,6 +118,20 @@ async function v2Detect() {
     t()
   })
 
+  /**
+   * 🔴 An ACTION button is never a chooser, wherever it sits in a group.
+   * A FILLED dropzone unmounts its visible input (FileCardList keeps only a
+   * display:none one, which the visibility sweep rightly drops), so the
+   * field's surviving elements are BUTTONS — and "Unduh Semua" carries a
+   * DownloadIcon svg, so the chevron heuristic read the group as a SELECT and
+   * `peekOptions` CLICKED it to enumerate options: every Scan downloaded the
+   * row's files ("Gagal download semua file", measured 2026-08-20, v1.0.71).
+   * The option blocklists could never catch this — they filter OPTIONS after
+   * a trigger opens; this filters the click TARGET itself. Same invariant as
+   * B55's dialog-strict rule, one layer down: refuse by ROLE, don't widen.
+   */
+  const ACTION_BUTTON = /^(Batal|Tutup|Simpan|Tambah|Upload|Unduh|Download|Hapus|Pilih File|Cari)/i
+
   // An open modal owns the page; otherwise scan the step card so the rail,
   // header and footer buttons stay out of the sweep.
   const root = document.querySelector('[role="dialog"]')
@@ -237,7 +251,9 @@ async function v2Detect() {
 
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
-    const buttons = els.filter(e => e.tagName === 'BUTTON')
+    /* Filter by ROLE before guessing shape — see ACTION_BUTTON above. A
+       group left with no inputs and no chooser buttons is nothing fillable. */
+    const buttons = els.filter(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
 
     if (inputs.length) {
       const inp = inputs[0]
@@ -398,7 +414,7 @@ async function v2Detect() {
          correctly a select, its chips come FIRST in document order, so `find`
          would hand `peekOptions` a remove button to click. */
       const opener = type === 'select'
-        ? g.els.find(e => e.tagName === 'BUTTON' && !isChipRemove(e))
+        ? g.els.find(e => e.tagName === 'BUTTON' && !isChipRemove(e) && !ACTION_BUTTON.test((e.textContent || '').trim()))
         : g.els.find(e => e.tagName === 'INPUT')
       field.options = await peekOptions(opener)
     } else if (type === 'pills' || type === 'toggle') {
@@ -931,6 +947,12 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
    */
   const BRANCH_SELECTS = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE)$/
 
+  /* 🔴 Same invariant as v2Detect's copy: an ACTION button ("Unduh Semua",
+     "Hapus", "Upload Dokumen"…) is never a select trigger or a pill. A filled
+     dropzone's group is buttons-only, and clicking its first button as a
+     trigger DOWNLOADED the row's files on every fill (2026-08-20). */
+  const ACTION_BUTTON = /^(Batal|Tutup|Simpan|Tambah|Upload|Unduh|Download|Hapus|Pilih File|Cari)/i
+
   if (/USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(name || '')) {
     try {
       console.warn('[autofill] gate refused:', name, '=', value, '\n', new Error('caller').stack)
@@ -1038,7 +1060,9 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
 
     if (els.some(e => e.tagName === 'TEXTAREA')) return 'textarea'
     const inputs = els.filter(e => e.tagName === 'INPUT')
-    const buttons = els.filter(e => e.tagName === 'BUTTON')
+    /* Filter by ROLE before guessing shape — see ACTION_BUTTON above. A
+       group left with no inputs and no chooser buttons is nothing fillable. */
+    const buttons = els.filter(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
     if (inputs.length) {
       const inp = inputs[0]
       /* A dropzone's own <input type=file> carries the RHF name too, and the
@@ -1244,7 +1268,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   if (type === 'select') {
-    const trigger = group.els.find(e => e.tagName === 'BUTTON')
+    const trigger = group.els.find(e => e.tagName === 'BUTTON' && !ACTION_BUTTON.test((e.textContent || '').trim()))
 
     /**
      * 🔴 A NO-OP WRITE IS NOT FREE ON THIS APP.
@@ -1285,7 +1309,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   }
 
   if (type === 'toggle' || type === 'pills' || type === 'radio') {
-    const buttons = group.els.filter(e => e.tagName === 'BUTTON' && e.textContent.trim())
+    const buttons = group.els.filter(e => e.tagName === 'BUTTON' && e.textContent.trim() && !ACTION_BUTTON.test(e.textContent.trim()))
     if (!buttons.length) return 'not_found'
     let target = null
     if (typeof value === 'boolean') {

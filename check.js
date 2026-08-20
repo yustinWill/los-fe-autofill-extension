@@ -820,6 +820,47 @@ if (!S) {
       ? pass('no dialog→document fallback anywhere in driver-v2.js')
       : fail(`${fallbacks}x (dialog() || document) — a closed modal makes that scope the PAGE, and a "Ya" there is the reference gate (B55)`)
 
+    /**
+     * 🔴 AN ACTION BUTTON IS NEVER A CHOOSER. A filled dropzone's visible
+     * elements are buttons only (FileCardList's input is display:none and the
+     * Kairos one unmounts), and "Unduh Semua" carries a DownloadIcon svg — so
+     * the chevron heuristic called the group a SELECT and both the Scan
+     * (peekOptions) and the Fill (trigger) CLICKED it, downloading the row's
+     * files on every run ("Gagal download semua file", 2026-08-20, v1.0.71).
+     *
+     * Two layers asserted: the ACTION_BUTTON regex BEHAVES (eval'd, not
+     * grepped — prose cannot satisfy it), and it is CONSULTED at all five
+     * target-choice sites on comment-stripped source.
+     *
+     * Sabotage, verified each ALONE: drop 'Unduh' from either regex → the
+     * behaviour assert fails; remove the filter from either classify copy,
+     * the opener, the trigger, or the pills collection → its count fails.
+     */
+    const actionDecls = [...bare.matchAll(/const ACTION_BUTTON = \/(.+?)\/i/g)].map(m => m[1])
+
+    actionDecls.length === 2 && actionDecls[0] === actionDecls[1]
+      ? pass('ACTION_BUTTON declared in BOTH serialised functions, identically')
+      : fail(`ACTION_BUTTON declarations: ${actionDecls.length}, identical: ${actionDecls[0] === actionDecls[1]} — v2Detect and v2FillField serialise separately; one copy is half a fix`)
+
+    if (actionDecls.length) {
+      const re = new RegExp(actionDecls[0], 'i')
+      const hits = ['Unduh Semua', 'Download', 'Hapus 001 - Main Branch', 'Upload Dokumen', 'Tambah Fasilitas'].every(t => re.test(t))
+      const spares = ['Ya', 'Tidak', 'Baru', 'Pilih Provinsi', 'Kredit Badan Usaha - Produktif'].every(t => !re.test(t))
+
+      hits && spares
+        ? pass('ACTION_BUTTON refuses action labels and spares real choosers')
+        : fail('ACTION_BUTTON regex drifted — it must catch Unduh/Download/Hapus/Upload/Tambah and spare Ya/Tidak/pills/select triggers')
+    }
+
+    const classifyFilters = (bare.match(/els\.filter\(e => e\.tagName === 'BUTTON' && !ACTION_BUTTON\.test/g) || []).length
+    const openerFilter = (bare.match(/!isChipRemove\(e\) && !ACTION_BUTTON\.test/g) || []).length
+    const triggerFilter = (bare.match(/group\.els\.find\(e => e\.tagName === 'BUTTON' && !ACTION_BUTTON\.test/g) || []).length
+    const pillsFilter = (bare.match(/e\.textContent\.trim\(\) && !ACTION_BUTTON\.test/g) || []).length
+
+    classifyFilters === 2 && openerFilter === 1 && triggerFilter === 1 && pillsFilter === 1
+      ? pass('ACTION_BUTTON consulted at all 5 target-choice sites (classify x2, opener, trigger, pills)')
+      : fail(`ACTION_BUTTON sites — classify: ${classifyFilters}/2, opener: ${openerFilter}/1, trigger: ${triggerFilter}/1, pills: ${pillsFilter}/1`)
+
     /* The file-input classification, asserted in BOTH classify copies — they
        are serialised separately, so fixing one alone ships half a fix.
        Sabotage, verified: remove either copy's file branch → fails. */
