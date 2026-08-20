@@ -1016,14 +1016,28 @@ executeBtn.addEventListener('click', async () => {
   const skipFilled     = skipFilledCb.checked
   const skipOptional   = skipOptionalCb.checked
 
-  // Use JSON editor if user has pasted values, else compute smart defaults
-  let data = parseJSON()
-  if (!data) {
-    data = {}
-    for (const f of lastDetectedFields) {
-      data[f.name] = smartDefault(f.name, f.label, f.type, f.options)
-    }
-  }
+  /**
+   * 🔴 B56 — THE SCENARIO PANEL WAS INERT, AND THIS BLOCK IS WHY.
+   *
+   * This used to pre-fill `data` with `smartDefault` for EVERY detected field
+   * whenever the JSON editor was empty. Both fill sites resolve a value as
+   * `data[f.name] ?? simOverride(f.label)`, so a populated `data` meant the
+   * left side always won and `simOverride` was UNREACHABLE — on both the
+   * single-step and the all-steps branch. Measured from the v1.0.61 value log:
+   * the panel asked for `Kredit Badan Usaha - Produktif` / `Restrukturisasi`
+   * and the driver wrote `Kredit Perorangan - Konsumtif` / `Baru`, which is
+   * exactly what `smartDefault` answers (the first option, every time).
+   *
+   * 🔑 The fallback was never lost by removing it — `valueFor` below already
+   * ends in `smartDefault`. The pre-fill only ever moved that same call
+   * EARLIER, to a place where it outranked the two deliberate sources.
+   *
+   * ⚠️ It also killed a second feature silently: `extra` (below) exists to fill
+   * names the user typed that the scan did not detect, and it filters `data` by
+   * `!detectedNames.includes(n)`. Pre-filled with exactly the detected names,
+   * that filter could never match, so `extra` was permanently empty.
+   */
+  const data = parseJSON() || {}
 
   const detectedNames = lastDetectedFields.map(f => f.name)
 

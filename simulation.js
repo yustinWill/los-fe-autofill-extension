@@ -129,6 +129,66 @@ window.SIM = (() => {
     ]
   }
 
+  /**
+   * Combinations the product does not accommodate today.
+   *
+   * A pill that would land on one is DISABLED rather than removed: the option
+   * still exists in the domain, and hiding it would read as the panel having
+   * fewer dimensions than it has.
+   *
+   * 🔑 Expressed as STATE, not as a per-pill flag, because the constraint is on
+   * the pair — "Konsumtif" is legal under Badan usaha and illegal under
+   * Perorangan, so no property of the Konsumtif pill alone can express it.
+   */
+  const BLOCKED = [
+    /* Kredit Badan Usaha - Konsumtif. NOT a policy call — the app does not
+       implement it: `los-fe/src/utils/enumHelpers.ts:687` has
+       COMPANY_CONSUMPTIVE commented out with "NOTE: not implemented yet", so
+       the Jenis Kredit select offers three options, never four. Measured on the
+       running form 2026-08-20 (user confirmed the same day).
+
+       🔴 Leaving it selectable was actively harmful, not merely useless: the
+       driver's old `|| opts[0]` fallback matched nothing and silently picked
+       the FIRST option — "Kredit Perorangan - Konsumtif" — so a run configured
+       for a company built an individual application and reported ok. Both ends
+       are fixed; this one stops the request being made at all. */
+    { debitur: 'BU', sifat: 'K' }
+  ]
+
+  const isBlocked = s => BLOCKED.some(combo => Object.keys(combo).every(k => s[k] === combo[k]))
+
+  /**
+   * Would choosing `v` for `group` land on a blocked combination?
+   *
+   * 🔴 The `!isBlocked(state)` guard is load-bearing, and leaving it out LOCKS
+   * THE PANEL. From a state that is already blocked, no single pill escapes the
+   * block — `wouldBlock` answers true for all nine, every pill greys out, and
+   * the only way back is clearing extension storage. Caught by `check.js`,
+   * which sets I + K directly to exercise the naming convention.
+   *
+   * So: while the state is legal, refuse the moves that break it; while it is
+   * already broken, every move is an escape route and none is refused. That is
+   * an INVARIANT ("a blocked state is never reachable, and never final") rather
+   * than a rule each caller has to remember.
+   */
+  const wouldBlock = (group, v) => !isBlocked(state) && isBlocked({ ...state, [group]: v })
+
+  /**
+   * Nudge an already-blocked state back to a legal one by moving `sifat`.
+   *
+   * ⚠️ Only reachable from a state PERSISTED BEFORE this rule existed — the
+   * pills cannot produce one, because a pill that would is disabled. Without
+   * this, anyone who last ran Perorangan + Konsumtif reopens the popup on a
+   * combination every pill refuses to leave.
+   */
+  const unblock = () => {
+    if (!isBlocked(state)) return
+
+    const legal = SCENARIO.sifat.find(o => !isBlocked({ ...state, sifat: o.v }))
+
+    if (legal) state.sifat = legal.v
+  }
+
   const pad = n => String(n).padStart(2, '0')
 
   /** `YYYY-MM-DD HH:mm`, local time. Local on purpose: the name is read by a
@@ -259,6 +319,8 @@ window.SIM = (() => {
             state.collaterals = (state.collaterals || []).filter(item =>
               COLLATERAL_TYPES.some(t => t.key === item.type)
             )
+
+            unblock()
           }
 
           resolve(state)
@@ -282,6 +344,7 @@ window.SIM = (() => {
     TABLES,
     SCENARIO,
     state,
+    wouldBlock,
     projectName,
     collateralName,
     creditTypeLabel,

@@ -692,6 +692,156 @@ if (!S) {
       : fail(`version display: readsManifest=${readsManifest} hardcodedInHtml=${hardcoded}`)
   }
 
+  // ── 9. The scenario panel actually reaches the fill ───────────────────────────
+  console.log('\nscenario panel reaches the fill')
+
+  {
+    const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src = strip(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+
+    /**
+     * 🔴 B56. Both fill branches resolve a value as
+     * `data[f.name] ?? simOverride(f.label)`. Pre-filling `data` with a smart
+     * default for every detected field therefore makes the left side always
+     * win and `simOverride` UNREACHABLE — the panel's Jenis Kredit, Jenis
+     * Pengajuan, debtor type and project name all silently discarded, while
+     * the run reports success naming values it never wrote.
+     *
+     * Asserted on the ASSIGNMENT, not on a comment: comments are stripped
+     * above, because prose must never be able to satisfy a claim about
+     * behaviour.
+     *
+     * Sabotage, verified: restore the `for (const f of lastDetectedFields)
+     * data[f.name] = smartDefault(...)` loop → this fails alone.
+     */
+    const prefills = /data\s*\[[^\]]+\]\s*=\s*smartDefault\s*\(/.test(src)
+    const sites = (src.match(/\?\?\s*simOverride\(/g) || []).length
+
+    !prefills
+      ? pass('the smart-default bag does not pre-empt simOverride')
+      : fail('popup.js pre-fills `data` with smartDefault — simOverride becomes unreachable (B56)')
+
+    sites >= 2
+      ? pass('both fill branches consult the simulation plan')
+      : fail(`?? simOverride( appears ${sites}x — the single-step and all-steps branches BOTH need it`)
+  }
+
+  if (!S) {
+    fail('SIM unavailable — skipping blocked-combination checks')
+  } else {
+    /**
+     * Badan usaha + Konsumtif cannot be built — `enumHelpers.ts:687` leaves
+     * COMPANY_CONSUMPTIVE commented out — so the pill that would select it is
+     * disabled. ⚠️ Perorangan + Konsumtif IS legal and must stay selectable;
+     * an earlier version of this rule blocked the wrong one.
+     *
+     * Sabotage, verified: empty `BLOCKED` → the two "refused" assertions fail;
+     * drop the `!isBlocked(state)` guard in `wouldBlock` → the escape-hatch
+     * assertion fails ALONE, which is the lock-up this check exists to catch.
+     */
+    const at = (debitur, sifat, jenis) => {
+      S.state.debitur = debitur
+      S.state.sifat = sifat
+      S.state.jenis = jenis || 'N'
+    }
+
+    at('BU', 'P')
+    const buThenK = S.wouldBlock('sifat', 'K')
+
+    at('I', 'K')
+    const kThenBU = S.wouldBlock('debitur', 'BU')
+
+    buThenK && kThenBU
+      ? pass('the Badan usaha + Konsumtif pill is refused from either direction')
+      : fail(`blocked combo not refused: BU→Konsumtif=${buThenK} Konsumtif→BU=${kThenBU}`)
+
+    /* 🔴 The regression this exists to catch: blocking the WRONG consumptive.
+       Perorangan + Konsumtif is a real credit type the app offers. */
+    at('I', 'P')
+    const peroranganKeepsKonsumtif = !S.wouldBlock('sifat', 'K')
+
+    at('BU', 'P')
+    const badanUsahaKeepsProduktif = !S.wouldBlock('debitur', 'I') && !S.wouldBlock('jenis', 'R')
+
+    peroranganKeepsKonsumtif && badanUsahaKeepsProduktif
+      ? pass('Perorangan + Konsumtif stays selectable — only the company pair is refused')
+      : fail(`over-blocking: peroranganKonsumtif=${peroranganKeepsKonsumtif} others=${badanUsahaKeepsProduktif}`)
+
+    /* 🔴 The lock-up. From an already-blocked state no single pill escapes, so
+       without the guard every pill in every group greys out at once and the
+       only way back is clearing extension storage. */
+    at('BU', 'K')
+    const anyDisabled = ['jenis', 'debitur', 'sifat'].some(g => S.SCENARIO[g].some(o => S.wouldBlock(g, o.v)))
+
+    !anyDisabled
+      ? pass('an already-blocked state disables nothing, so the panel can be escaped')
+      : fail('every pill is disabled from BU+K — the panel is locked; wouldBlock needs its !isBlocked(state) guard')
+
+    /* A state persisted BEFORE the rule existed is the only way to arrive
+       blocked. `load()` must normalise it rather than render it. */
+    at('BU', 'K')
+    const saved = { debitur: 'BU', sifat: 'K', jenis: 'N' }
+
+    sandbox.chrome.storage.local.get = (k, cb) => cb({ simOptions: saved })
+
+    const loaded = await S.load()
+
+    sandbox.chrome.storage.local.get = (k, cb) => (cb ? cb({}) : null)
+
+    !(loaded.debitur === 'BU' && loaded.sifat === 'K')
+      ? pass('a persisted Badan usaha + Konsumtif is normalised on load')
+      : fail('load() rendered the blocked combination it was handed — unblock() is not being called')
+
+    at('BU', 'P')
+  }
+
+  {
+    /**
+     * 🔴 A BRANCH-DECIDING FIELD MUST NOT SUBSTITUTE.
+     *
+     * `fillPanel`'s `|| opts[0]` is correct for an ordinary select and wrong
+     * where the choice picks a branch: asking for the unimplemented
+     * "Kredit Badan Usaha - Konsumtif" matched nothing and silently selected
+     * option 0 — "Kredit Perorangan - Konsumtif" — reporting ok. Verified live
+     * 2026-08-20: the refusal answers `no_matching_option` and leaves the
+     * trigger untouched, while "Kredit Badan Usaha - Produktif" still writes.
+     *
+     * 🔑 Asserted for the SELECT and the PILL branch separately — the pills
+     * path has its own `|| buttons[0]` and fixing one does not fix the other.
+     *
+     * Sabotage, verified: restore either fallback → that half fails alone;
+     * move BRANCH_SELECTS above v2FillField → the scope assertion fails.
+     */
+    const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const drv = strip(fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8'))
+    const start = drv.indexOf('async function v2FillField')
+    const body = start < 0 ? '' : drv.slice(start)
+
+    const declared = /const BRANCH_SELECTS\s*=/.test(body)
+
+    declared
+      ? pass('BRANCH_SELECTS is declared INSIDE v2FillField, so serialising it alone carries it')
+      : fail('BRANCH_SELECTS must live inside v2FillField — executeScript sends one function at a time')
+
+    const selectGuarded = /if \(exact && str && !match\)/.test(body)
+    const pillGuarded = /if \(!match && str && BRANCH_SELECTS\.test/.test(body)
+
+    selectGuarded
+      ? pass('the select branch refuses to substitute on a branch field')
+      : fail('fillPanel must refuse when `exact` and no option matches — silently picking opts[0] builds the wrong application')
+
+    pillGuarded
+      ? pass('the pill branch refuses to substitute on a branch field')
+      : fail('the pills branch must refuse a non-matching label — `|| buttons[0]` silently selects pill #1')
+
+    const covers = ['APPLICATION_DATA_CREDIT_TYPE', 'APPLICATION_DATA_APPLICATION_TYPE', 'GENERAL_DATA_DEBTOR_TYPE']
+      .every(f => new RegExp(f).test(body))
+
+    covers
+      ? pass('all three form-deciding fields are covered')
+      : fail('BRANCH_SELECTS must name credit type, application type and debtor type')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

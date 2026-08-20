@@ -607,6 +607,16 @@ textarea:focus { outline: none; border-color: #4f46e5; background: #fff; }
   cursor: pointer;
 }
 .sim-pill:hover { border-color: #c7d2fe; }
+/* An unsupported COMBINATION, not an unsupported option — kept visible so the
+   dimension still reads as three choices rather than silently becoming two. */
+.sim-pill:disabled {
+  background: #f9fafb;
+  border-color: #f3f4f6;
+  color: #d1d5db;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+.sim-pill:disabled:hover { border-color: #f3f4f6; }
 .sim-pill.is-on {
   background: #eef2ff;
   border-color: #a5b4fc;

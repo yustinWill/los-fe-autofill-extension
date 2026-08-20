@@ -1386,6 +1386,14 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
    * the write did not come through the driver at all — which is the one
    * remaining possibility and worth being able to distinguish.
    */
+  /**
+   * Fields whose value decides WHICH FORM the user gets, so a near-miss must
+   * fail loudly instead of picking the first option. Deliberately an explicit
+   * short list, not a `_TYPE$` pattern: most `*_TYPE` selects genuinely want
+   * "first available option" when the seeded value is not offered.
+   */
+  const BRANCH_SELECTS = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE)$/
+
   if (/USE_REFERENCE|USING_REFERENCE|HAS_AVALIST/.test(name || '')) {
     try {
       console.warn('[autofill] gate refused:', name, '=', value, '\n', new Error('caller').stack)
@@ -1532,7 +1540,10 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     await sleep(90)
   }
 
-  async function fillPanel(opener, want) {
+  /**
+   * @param exact refuse to substitute — see BRANCH_SELECTS below.
+   */
+  async function fillPanel(opener, want, exact) {
     if (!opener || opener.disabled) return false
     const box = opener.parentElement
     if (!box) return false
@@ -1547,9 +1558,36 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
 
     const opts = Array.from(panel.querySelectorAll('button')).filter(b => b.textContent.trim())
     const str = String(want == null ? '' : want)
-    const target = str
-      ? (opts.find(b => b.textContent.trim() === str) || opts[0])
-      : opts[0]
+    const match = str ? opts.find(b => b.textContent.trim() === str) : null
+
+    /**
+     * 🔴 A BRANCH-DECIDING SELECT MUST NOT SUBSTITUTE.
+     *
+     * `|| opts[0]` is right for an ordinary field — "first available option"
+     * is what makes a run survive a product that does not offer the seeded
+     * value. It is WRONG where the choice decides which form you get, and it
+     * failed silently in the worst possible direction: the app does not
+     * implement `COMPANY_CONSUMPTIVE` (`enumHelpers.ts:687`, commented out with
+     * "not implemented yet"), so asking for "Kredit Badan Usaha - Konsumtif"
+     * matched nothing and fell to `opts[0]` — which is
+     * "Kredit Perorangan - Konsumtif". A run configured for a company built an
+     * individual application and REPORTED OK.
+     *
+     * Same reasoning that makes Jenis Agunan opt out of substitution: that
+     * choice picks a BRANCH, so a substitute fills one branch's data into
+     * another. Refusing is an INVARIANT here rather than a caller policy,
+     * because every named write goes through this function.
+     */
+    if (exact && str && !match) {
+      try {
+        console.warn('[autofill] no matching option:', str, '— refusing to substitute', opts.map(o => o.textContent.trim()))
+      } catch (e) { /* console unavailable */ }
+      await closePanels()
+
+      return 'no_option'
+    }
+
+    const target = match || opts[0]
 
     if (!target) { await closePanels(); return false }
     target.click()
@@ -1685,7 +1723,11 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
 
     if (trigger && want && trigger.textContent.trim() === want) return 'skipped_filled'
 
-    return (await fillPanel(trigger, value)) ? 'ok' : 'not_found'
+    const picked = await fillPanel(trigger, value, BRANCH_SELECTS.test(name || ''))
+
+    if (picked === 'no_option') return 'no_matching_option'
+
+    return picked ? 'ok' : 'not_found'
   }
 
   if (type === 'multiselect') {
@@ -1710,7 +1752,20 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       target = value ? buttons[buttons.length - 1] : buttons[0]
     } else {
       const str = String(value == null ? '' : value)
-      target = (str && buttons.find(b => b.textContent.trim() === str)) || buttons[0]
+      const match = str && buttons.find(b => b.textContent.trim() === str)
+
+      /* Same invariant as the select branch — Jenis Pengajuan is a pill group
+         and decides just as much of the form. Without this, a plan naming a
+         label the app does not render silently selects pill #1. */
+      if (!match && str && BRANCH_SELECTS.test(name || '')) {
+        try {
+          console.warn('[autofill] no matching pill:', str, '— refusing to substitute', buttons.map(b => b.textContent.trim()))
+        } catch (e) { /* console unavailable */ }
+
+        return 'no_matching_option'
+      }
+
+      target = match || buttons[0]
 
       /* ⚠️ NO no-op guard here, deliberately — unlike `select` above.
          Re-clicking the pill that is already active is HARMLESS on this form:

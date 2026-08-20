@@ -75,18 +75,37 @@ window.SIMUI = (() => {
     el(
       'div',
       { class: 'sim-pills' },
-      options.map(option =>
-        el('button', {
+      options.map(option => {
+        /* Blocked is a property of the PAIR, not of this pill — see
+           `SIM.BLOCKED`. Konsumtif is legal under Badan usaha and illegal under
+           Perorangan, so the answer depends on the rest of the state. */
+        const blocked = SIM.wouldBlock(group, option.v)
+
+        /* 🔴 Set `disabled` ONLY when blocked. `el` forwards every unknown attr
+           through `setAttribute`, and `setAttribute('disabled', false)` writes
+           disabled="false" — which disables the button, because it is a BOOLEAN
+           attribute and presence is the whole test. Passing it unconditionally
+           would grey out every pill. */
+        const attrs = {
           class: `sim-pill${option.v === current ? ' is-on' : ''}`,
           type: 'button',
           text: option.label,
           'data-v': option.v,
           onclick: () => {
+            if (blocked) return
+
             SIM.state[group] = option.v
             commit()
           }
-        })
-      )
+        }
+
+        if (blocked) {
+          attrs.disabled = 'disabled'
+          attrs.title = 'Kombinasi ini belum didukung'
+        }
+
+        return el('button', attrs)
+      })
     )
 
   const labelled = (text, control) => el('div', { class: 'sim-row' }, [el('span', { class: 'sim-row-label', text }), control])
