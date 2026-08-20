@@ -3055,8 +3055,17 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
     if (!box) return false
 
+    /* Three states on the trigger: a chosen year ("2026"), disabled ("—"),
+       and CLEARED — where a SearchableSelect shows its PLACEHOLDER, "Pilih
+       Periode Tahun". Changing the period type CLEARS the year
+       (FinancialReportModal:199), so the Full-1-Tahun path always arrives at
+       the placeholder state — and a hunt for '—'/a year finds NOTHING there.
+       Measured 2026-08-20 (v1.0.71 live run): both YTD reports saved (year
+       auto-defaults to the current year, so this function returned true
+       without clicking) and both Full-1-Tahun reports blocked with
+       yearSet:false. */
     const trigger = [...box.querySelectorAll('button')]
-      .find(b => { const t = (b.textContent || '').trim(); return t === '—' || /^\d{4}$/.test(t) })
+      .find(b => { const t = (b.textContent || '').trim(); return t === '—' || /^\d{4}$/.test(t) || t === 'Pilih Periode Tahun' })
 
     if (!trigger) return false
     if (trigger.textContent.trim() === String(year)) return true
@@ -3123,8 +3132,11 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       if (opt) { opt.click(); await wait(600) }
     }
 
-    /* Periode: YTD for the current year, Full 1 Tahun for prior years. */
-    await clickButton(report.ytd ? 'Year to Date (YTD)' : 'Full 1 Tahun')
+    /* Periode: YTD for the current year, Full 1 Tahun for prior years.
+       Captured, not discarded — a pass whose result reaches no report line
+       has already failed silently once in this repo. */
+    const periodeSet = await clickButton(report.ytd ? 'Year to Date (YTD)' : 'Full 1 Tahun')
+
     await wait(300)
     const yearSet = await pickYear(report.year)
 
@@ -3185,7 +3197,7 @@ async function v2AddFinancialReports(plan, openWait = 900) {
         }).map(e => e.textContent.trim())
         : []
 
-      results.push({ ...report, ok: false, yearSet, reason: 'save blocked', errors: reds })
+      results.push({ ...report, ok: false, periodeSet, yearSet, reason: 'save blocked', errors: reds })
 
       const cancelBox = dialog()
       const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
@@ -3197,7 +3209,7 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
       if (ya2) { ya2.click(); await wait(600) }
     } else {
-      results.push({ ...report, ok: true, yearSet, wrote: wrote.filter(Boolean).length })
+      results.push({ ...report, ok: true, periodeSet, yearSet, wrote: wrote.filter(Boolean).length })
     }
 
     await wait(400)

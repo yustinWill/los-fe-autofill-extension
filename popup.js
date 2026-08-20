@@ -2370,8 +2370,14 @@ async function runPlannedExtras() {
      found nothing pending, which after the DataTable migration was itself the
      bug — so a run that saved agunan but linked none says so. */
   if (facilityLinks !== null) {
-    const linked = facilityLinks.filter(r => r.ok).length
-    const linkFails = facilityLinks.filter(r => !r.ok)
+    /* v2AssignCollateralFacilities answers { assigned, remaining, results } —
+       the per-link rows live in .results. A bare array is the older driver's
+       shape; accept both, so the roll-up can never crash the run it is
+       summarising (measured 2026-08-20: facilityLinks.filter threw at the END
+       of an otherwise-complete run and labelled the whole thing Failed). */
+    const linkRows = Array.isArray(facilityLinks) ? facilityLinks : (facilityLinks.results || [])
+    const linked = linkRows.filter(r => r.ok).length
+    const linkFails = linkRows.filter(r => !r.ok)
 
     if (linkFails.length) problems.push(`${linkFails.length} tautan fasilitas gagal`)
     else if (!linked && agunan.some(r => r.ok)) problems.push('0 agunan tertaut fasilitas')

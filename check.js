@@ -861,6 +861,44 @@ if (!S) {
       ? pass('ACTION_BUTTON consulted at all 5 target-choice sites (classify x2, opener, trigger, pills)')
       : fail(`ACTION_BUTTON sites — classify: ${classifyFilters}/2, opener: ${openerFilter}/1, trigger: ${triggerFilter}/1, pills: ${pillsFilter}/1`)
 
+    /**
+     * 🔴 THE YEAR TRIGGER'S CLEARED STATE IS THE PLACEHOLDER, NOT '—'.
+     * Changing the period type CLEARS the year (FinancialReportModal:199), so
+     * the Full-1-Tahun path always arrives at a trigger reading "Pilih
+     * Periode Tahun" — a hunt for '—'/a 4-digit year finds nothing and both
+     * prior-year reports save-block (measured on the v1.0.71 live run:
+     * saved 2/4, yearSet:false on both non-YTD rows). The YTD rows passed
+     * for the WRONG reason: the year auto-defaults, so pickYear never
+     * clicked at all.
+     *
+     * Sabotage, verified: drop the placeholder alternative from the trigger
+     * find → fails.
+     */
+    const pickYearIdx = bare.indexOf('const pickYear')
+    const pickYearSlice = pickYearIdx >= 0 ? bare.slice(pickYearIdx, pickYearIdx + 1200) : ''
+
+    pickYearSlice.includes("t === 'Pilih Periode Tahun'")
+      ? pass("pickYear accepts the CLEARED trigger state (placeholder), not just '—'/a year")
+      : fail("pickYear's trigger hunt misses the cleared state — the Full-1-Tahun path arrives at the placeholder and both prior-year reports save-block")
+
+    /**
+     * 🔴 THE ROLL-UP MUST NOT CRASH THE RUN IT SUMMARISES.
+     * v2AssignCollateralFacilities answers { assigned, remaining, results };
+     * the per-link rows are .results. The roll-up filtered the OBJECT
+     * (measured 2026-08-20: "facilityLinks.filter is not a function" at the
+     * END of an otherwise-complete run, labelling the whole thing Failed).
+     *
+     * Sabotage, verified: filter facilityLinks directly again → fails.
+     */
+    const popupBare = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const rollupIdx = popupBare.indexOf('if (facilityLinks !== null)')
+    const rollupSlice = rollupIdx >= 0 ? popupBare.slice(rollupIdx, rollupIdx + 600) : ''
+
+    rollupSlice.includes('Array.isArray(facilityLinks)') && !/facilityLinks\.filter/.test(rollupSlice)
+      ? pass('the facilityLinks roll-up normalises the object shape before filtering')
+      : fail('the roll-up filters facilityLinks directly — the { assigned, remaining, results } shape crashes the run at its final step')
+
     /* The file-input classification, asserted in BOTH classify copies — they
        are serialised separately, so fixing one alone ships half a fix.
        Sabotage, verified: remove either copy's file branch → fails. */
