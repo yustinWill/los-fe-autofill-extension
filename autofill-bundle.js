@@ -4973,12 +4973,21 @@ window.SIM = (() => {
        below — because the modal is not uniform: it needs a ~3s wait after the
        product picker for that product's find-one. */
     { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
-    { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10 },
-    { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10 },
+    /* 🔴 `appliesTo` since 2026-08-20 (v1.0.77): these tables exist only on
+       SOME scenarios, and a plan that asks a Perorangan form for Badan Usaha
+       tables ends an otherwise-perfect run with "no opener … on any step" —
+       the 20:02 I-K run was all green except exactly these phantom errors.
+       Filtered in plan(), so the driver never chases them. */
+    { key: 'shareholder', label: 'Pemegang saham', opener: 'Tambah Pemegang Saham', def: 2, max: 10, appliesTo: s => s.debitur === 'BU' },
+    { key: 'boardMember', label: 'Pengurus', opener: 'Tambah Pengurus', def: 2, max: 10, appliesTo: s => s.debitur === 'BU' },
     /* 🔴 `isOwnCapability` since 2026-08-20: the Neraca grid must balance, so
        the generic row-adder cannot save it — `v2AddFinancialReports` owns the
        whole ladder (see the driver's header for the count → years mapping). */
-    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8, isOwnCapability: true },
+    /* Konsumtif's financial section renders income/expense, never reports —
+       the three-way table in credit-assessment/create/form.tsx:319. BU is
+       always Produktif here (BU+K is the blocked pill), so `sifat === 'P'`
+       covers exactly the forms that mount the reports list. */
+    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
     { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
     { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
@@ -5173,7 +5182,7 @@ window.SIM = (() => {
          tables are dropped here rather than in the driver, so "do nothing" is
          expressed once. */
       tables: TABLES
-        .filter(t => (state.rows[t.key] ?? 0) > 0)
+        .filter(t => (state.rows[t.key] ?? 0) > 0 && (!t.appliesTo || t.appliesTo(state)))
         /* `seeded` rides along because only the TABLE knows whether the form
            mounts a first row for it — see the note on `visit`. Defaulting here
            rather than at the consumer keeps the assumption in the model. */

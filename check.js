@@ -749,6 +749,32 @@ if (!S) {
     at('BU', 'P')
     const buThenK = S.wouldBlock('sifat', 'K')
 
+    /**
+     * 🔴 A PLAN MAY ONLY ASK FOR TABLES THE SCENARIO'S FORM RENDERS.
+     * Pemegang Saham and Pengurus are Badan Usaha tables; Laporan Keuangan
+     * only mounts on Produktif (Konsumtif renders income/expense). Without
+     * the filter, an all-green Perorangan-Konsumtif run ends "error" on
+     * three phantom "no opener on any step" reports (the 20:02 I-K run).
+     *
+     * Sabotage, verified: drop any appliesTo, or the plan() filter → fails.
+     */
+    at('BU', 'P')
+    const buKeys = S.plan().tables.map(t => t.key)
+
+    at('I', 'K')
+    const ikKeys = S.plan().tables.map(t => t.key)
+
+    at('I', 'P')
+    const ipKeys = S.plan().tables.map(t => t.key)
+
+    const buHasAll = ['shareholder', 'boardMember', 'financialReport'].every(k => buKeys.includes(k))
+    const ikHasNone = ['shareholder', 'boardMember', 'financialReport'].every(k => !ikKeys.includes(k))
+    const ipSplit = !ipKeys.includes('shareholder') && !ipKeys.includes('boardMember') && ipKeys.includes('financialReport')
+
+    buHasAll && ikHasNone && ipSplit
+      ? pass('plan tables branch by scenario: BU-P all three, I-K none, I-P reports only')
+      : fail(`scenario tables — BU-P all: ${buHasAll}, I-K none: ${ikHasNone}, I-P reports-only: ${ipSplit}`)
+
     at('I', 'K')
     const kThenBU = S.wouldBlock('debitur', 'BU')
 
