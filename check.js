@@ -930,6 +930,37 @@ if (!S) {
       ? pass('the facility product pick sorts E2E test products last')
       : fail("the product pick takes usable[0] with no E2E deprioritisation — runs land on the barren test product")
 
+    /**
+     * 🔴 THE NAV SPY MUST BE ARMED, READ, AND ABLE TO OUTLIVE THE NAVIGATION.
+     * A navigating click leaves nothing in the run log (a raw .click() never
+     * passes v2FillField — B55, then the Unduh IconButton), so the spy is the
+     * only witness. Three properties, each load-bearing: `isTrusted` recorded
+     * (separates the driver's synthetic clicks from the user's own),
+     * `beforeunload` snapshots to sessionStorage (survives both the cancel
+     * and the navigation), and popup ARMS after run-start and READS before
+     * run-end — an armed spy nothing reads is the produced-and-never-consumed
+     * shape this repo has shipped three times.
+     *
+     * Sabotage, verified each ALONE: drop the trusted field → fails; drop the
+     * sessionStorage snapshot → fails; remove either popup call site → fails.
+     */
+    const spyIdx = bare.indexOf('function v2NavSpy')
+    const spySlice = spyIdx >= 0 ? bare.slice(spyIdx, spyIdx + 2200) : ''
+
+    spyIdx >= 0 && spySlice.includes('trusted: event.isTrusted') && /beforeunload[\s\S]*sessionStorage\.setItem/.test(spySlice)
+      ? pass('v2NavSpy records isTrusted and snapshots on beforeunload to sessionStorage')
+      : fail('v2NavSpy is missing, or lost the trusted discriminator / the unload snapshot')
+
+    const popupSrc = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const armed = (popupSrc.match(/func: v2NavSpy, args: \['arm'\]/g) || []).length
+    const readBack = (popupSrc.match(/func: v2NavSpy, args: \['read'\]/g) || []).length
+    const logged = (popupSrc.match(/logEvent\('navspy'/g) || []).length
+
+    armed === 1 && readBack === 1 && logged === 1
+      ? pass('the run arms the nav spy and reads it into the log (armed 1, read 1, logged 1)')
+      : fail(`nav spy wiring — armed: ${armed}/1, read: ${readBack}/1, logged: ${logged}/1`)
+
     /* The file-input classification, asserted in BOTH classify copies — they
        are serialised separately, so fixing one alone ships half a fix.
        Sabotage, verified: remove either copy's file branch → fails. */

@@ -1788,6 +1788,14 @@ async function runQuickFill() {
      found ON afterwards can be attributed rather than argued about. */
   await snapshotGates('before')
 
+  /* The nav spy arms before the first fill: any "Leave site?" during the run
+     lands in the log with the exact clicks that preceded it — see v2NavSpy. */
+  try {
+    const tab = await getActiveTab()
+
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: v2NavSpy, args: ['arm'] })
+  } catch (e) { /* page not scriptable — the run proceeds unspied */ }
+
   try {
     await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
 
@@ -1814,6 +1822,15 @@ async function runQuickFill() {
     /* In `finally` so a crashed run is still analysable — a run that throws is
        exactly the one whose log is worth having. */
     await snapshotGates('after')
+
+    /* Read the spy LAST: unloads > 0 means the page tried to navigate during
+       the run, and lastClicks names what was pressed just before. */
+    try {
+      const tab = await getActiveTab()
+      const [{ result: navspy }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: v2NavSpy, args: ['read'] })
+
+      logEvent('navspy', navspy)
+    } catch (e) { /* page gone — nothing to read */ }
     logEvent('run-end', {})
     persistRunLog()
   }

@@ -578,6 +578,63 @@ function smartDefault(name, label, type, options = []) {
 // Groups every visible control by the field name of its owning <Controller>,
 // then classifies each group by shape. Select options are peeked by opening the
 // panel and closing it again, same contract as v1's pageDetect.
+/**
+ * 🔴 THE NAV SPY — the standing instrument for the "navigating away" class.
+ *
+ * A click that navigates (a cross-origin link, a form submit) raises the
+ * browser's "Leave site?" dialog and leaves NOTHING in the run log — a raw
+ * .click() never passes v2FillField, which is how B55 and the Unduh
+ * IconButton each hid for days. This records every button/anchor click in a
+ * capture-phase ring buffer, and on beforeunload snapshots the last six into
+ * sessionStorage — which survives the navigation if it proceeds, and the
+ * dialog if it is cancelled. `trusted` separates the driver's synthetic
+ * clicks (false) from the user's own (true), so "the user pressed Batal on
+ * the dialog" cannot be mistaken for the trigger.
+ */
+function v2NavSpy(action) {
+  const KEY = '__navspy_unload'
+
+  if (action === 'arm') {
+    if (window.__navspy) { window.__navspy.clicks.length = 0; window.__navspy.unloads = 0; return 'rearmed' }
+
+    const spy = { clicks: [], unloads: 0 }
+
+    document.addEventListener('click', event => {
+      const el = event.target && event.target.closest ? event.target.closest('button, a, [role="button"]') : null
+
+      if (!el) return
+      spy.clicks.push({
+        at: Date.now(),
+        tag: el.tagName,
+        text: (el.textContent || '').trim().slice(0, 60),
+        aria: el.getAttribute('aria-label') || '',
+        title: el.getAttribute('title') || '',
+        href: el.tagName === 'A' ? (el.getAttribute('href') || '').slice(0, 140) : '',
+        trusted: event.isTrusted
+      })
+      if (spy.clicks.length > 40) spy.clicks.shift()
+    }, true)
+
+    window.addEventListener('beforeunload', () => {
+      spy.unloads += 1
+      try {
+        sessionStorage.setItem(KEY, JSON.stringify({ at: Date.now(), unloads: spy.unloads, lastClicks: spy.clicks.slice(-6) }))
+      } catch (e) { /* storage refused — the in-page buffer still has it */ }
+    })
+
+    window.__navspy = spy
+
+    return 'armed'
+  }
+
+  const spy = window.__navspy
+  let priorUnload = null
+
+  try { priorUnload = JSON.parse(sessionStorage.getItem(KEY) || 'null') } catch (e) { priorUnload = null }
+
+  return { clicks: spy ? spy.clicks.slice(-40) : [], unloads: spy ? spy.unloads : 0, priorUnload }
+}
+
 async function v2Detect() {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const waitFor = (fn, ms = 1400) => new Promise(res => {
