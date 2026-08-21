@@ -1157,6 +1157,51 @@ if (!S) {
       : fail('BRANCH_SELECTS must name credit type, application type and debtor type')
   }
 
+  /* ── v1.0.83: the plan must OPEN the step-4 gates it needs ────────────────
+     smartDefault answers the first pill ("Tidak"); with a gate at Tidak the
+     collateral/underlying tables and their openers do not exist, so a plan
+     carrying a property collateral ended `no "Tambah Agunan" on any step`
+     (N·BU-P Lengkap, 2026-08-21). The gates are answered from the plan in
+     simOverride — 'Ya' only when the plan wants rows, undefined otherwise so
+     a hand-opened gate is never deliberately closed. */
+  {
+    const popupSrc4 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+    const sim = popupSrc4.slice(popupSrc4.indexOf('function simOverride'))
+
+    const agunanGate = /'pengajuan kredit dengan agunan':\s*\n?\s*\(activePlan\.collaterals && activePlan\.collaterals\.length > 0\) \? 'Ya' : undefined/.test(sim)
+    const underlyingGate = /'pengajuan kredit dengan underlying':\s*\n?\s*\(\(\(activePlan\.rows && activePlan\.rows\.underlying\) \|\| 0\) > 0\) \? 'Ya' : undefined/.test(sim)
+
+    agunanGate
+      ? pass('simOverride opens the agunan gate when the plan carries collaterals')
+      : fail('simOverride must answer "pengajuan kredit dengan agunan" with Ya when activePlan.collaterals is non-empty — smartDefault closes the gate and Tambah Agunan never exists')
+
+    underlyingGate
+      ? pass('simOverride opens the underlying gate when the plan wants underlying rows')
+      : fail('simOverride must answer "pengajuan kredit dengan underlying" with Ya when activePlan.rows.underlying > 0')
+  }
+
+  /* ── v1.0.83: SLIK knows all three dropzone fields ────────────────────────
+     The documents capability hard-coded the Perorangan field name; a BU run
+     with both BU SLIK files already attached reported `no SLIK dropzone on
+     this step` and painted the run red. It must consult all three fields and
+     count an already-attached cell as satisfied. */
+  {
+    const drv = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const slik = drv.slice(drv.indexOf('The SLIK dropzones'))
+
+    const allThree = ['CREDIT_APPLICATION_SLIK_FILE_LIST', 'CREDIT_APPLICATION_SLIK_FILE_LIST_COMPANY', 'CREDIT_APPLICATION_SLIK_FILE_LIST_SHAREHOLDER']
+      .every(f => slik.includes(`'${f}'`))
+    const alreadyOk = /if \(\/file diunggah\|\\\.pdf\/i\.test\(before\)\) \{ results\.push\(\{ field: name, ok: true, already: true \}\); continue \}/.test(slik)
+
+    allThree && slik.length > 40
+      ? pass('the SLIK step consults all three dropzone fields')
+      : fail('v2FillDocuments SLIK must try CREDIT_APPLICATION_SLIK_FILE_LIST, …_COMPANY and …_SHAREHOLDER — hard-coding one name fails green BU runs')
+
+    alreadyOk
+      ? pass('an already-attached SLIK cell counts as satisfied')
+      : fail('the SLIK step must treat a cell already showing a file as ok — the field pass attaches the BU pair before this capability runs')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

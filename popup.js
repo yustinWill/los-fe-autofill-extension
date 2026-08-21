@@ -813,7 +813,20 @@ function simOverride(label) {
        able to build a Perorangan application. Wired 2026-08-15.
        ⚠️ Step 2's field, `DEBTOR_GENERAL_DATA_DEBTOR_TYPE`
        (creditApplication.json:621). */
-    'jenis calon debitur': activePlan.debtorType
+    'jenis calon debitur': activePlan.debtorType,
+
+    /* 🔴 The two step-4 GATES must agree with the plan. smartDefault answers
+       the first pill ("Tidak"), and with a gate at Tidak neither the table
+       nor its opener exists — so a plan carrying a property collateral ended
+       "no Tambah Agunan on any step" while the run itself had just written
+       Tidak (N·BU-P Lengkap, 2026-08-21; underlying failed the same way,
+       silently). `undefined` when the plan wants none, so the pill falls
+       through to the old behaviour instead of deliberately closing a gate
+       the user may have opened by hand. */
+    'pengajuan kredit dengan agunan':
+      (activePlan.collaterals && activePlan.collaterals.length > 0) ? 'Ya' : undefined,
+    'pengajuan kredit dengan underlying':
+      (((activePlan.rows && activePlan.rows.underlying) || 0) > 0) ? 'Ya' : undefined
   }[key]
 }
 

@@ -4288,18 +4288,44 @@ async function v2FillDocuments(plan, openWait = 900) {
     await wait(500)
   }
 
-  // ── 3. The SLIK dropzone — page level, not a modal ────────────────────────
+  // ── 3. The SLIK dropzones — page level, not a modal ───────────────────────
   if (spec.slik) {
-    const cell = document.querySelector('[data-field="CREDIT_APPLICATION_SLIK_FILE_LIST"]')
-    const input = cell && cell.querySelector('input[type=file]')
+    /* THREE possible fields, by debtor type: the Perorangan forms carry ONE
+       (`…SLIK_FILE_LIST`), the Badan Usaha form carries a PAIR (`…_COMPANY`,
+       `…_SHAREHOLDER`) that the page-level field pass usually attaches before
+       this capability runs. Hard-coding the Perorangan name made a green BU
+       run report "no SLIK dropzone on this step" while both BU files sat
+       attached (N·BU-P Lengkap, 2026-08-21). Already-attached counts as
+       satisfied — the goal is a file in the cell, not this code path being
+       the one that put it there. */
+    const SLIK_FIELDS = [
+      'CREDIT_APPLICATION_SLIK_FILE_LIST',
+      'CREDIT_APPLICATION_SLIK_FILE_LIST_COMPANY',
+      'CREDIT_APPLICATION_SLIK_FILE_LIST_SHAREHOLDER',
+    ]
+    const cells = SLIK_FIELDS
+      .map(name => ({ name, cell: document.querySelector('[data-field="' + name + '"]') }))
+      .filter(x => x.cell)
 
-    if (!input) {
+    if (!cells.length) {
       report.slik = { ok: false, reason: 'no SLIK dropzone on this step' }
     } else {
-      const before = (cell.innerText || '')
+      const results = []
 
-      await dropFile(input, 'slik-calon-debitur.pdf')
-      report.slik = { ok: /file diunggah|\.pdf/i.test(cell.innerText || '') && cell.innerText !== before }
+      for (const { name, cell } of cells) {
+        const before = (cell.innerText || '')
+
+        if (/file diunggah|\.pdf/i.test(before)) { results.push({ field: name, ok: true, already: true }); continue }
+
+        const input = cell.querySelector('input[type=file]')
+
+        if (!input) { results.push({ field: name, ok: false, reason: 'no file input in cell' }); continue }
+
+        await dropFile(input, 'slik-calon-debitur.pdf')
+        results.push({ field: name, ok: /file diunggah|\.pdf/i.test(cell.innerText || '') && cell.innerText !== before })
+      }
+
+      report.slik = { ok: results.every(r => r.ok), results }
     }
   }
 
