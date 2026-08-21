@@ -66,7 +66,11 @@ window.SIM = (() => {
        ⚠️ It also has its OWN driver capability now — see `isOwnCapability`
        below — because the modal is not uniform: it needs a ~3s wait after the
        product picker for that product's find-one. */
-    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
+    /* `min: 1` — the user's rule (2026-08-21): a fixture without a facility
+       has no product, and EVERYTHING per-product hangs off it (workflow
+       options, qualitative forms) besides the FACILITY_COUNT submit floor.
+       The Minimal preset and the panel input both respect it. */
+    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, min: 1, max: 5, isOwnCapability: true },
     /* 🔴 `appliesTo` since 2026-08-20 (v1.0.77): these tables exist only on
        SOME scenarios, and a plan that asks a Perorangan form for Badan Usaha
        tables ends an otherwise-perfect run with "no opener … on any step" —
@@ -87,6 +91,12 @@ window.SIM = (() => {
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
     { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
     { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
+    /* Months of account mutations (2 accounts each — the user's own spec,
+       2026-08-17). `isOwnCapability`: v2AddMutations owns the modal; the
+       generic row-adder must never touch it. 0 skips the pass entirely —
+       added for the Minimal preset, whose first live run still wrote 6
+       mutation records because this pass had no knob (2026-08-21). */
+    { key: 'mutation', label: 'Mutasi (bulan × 2 akun)', opener: 'Tambah Data Mutasi Rekening', def: 3, max: 12, more: true, isOwnCapability: true },
     /* 🔴 `isOwnCapability` since 2026-08-17: documents are handled by
        `v2FillDocuments`, not the generic row-adder, and this entry's opener was
        wrong anyway — BOTH document blocks' add buttons read "Upload Dokumen",
@@ -349,6 +359,29 @@ window.SIM = (() => {
    * detail route there is nothing to build and the panel would offer choices
    * that cannot apply.
    */
+  /**
+   * One-tick fixture sizing. 'minimal' exists to keep test writes off shared
+   * staging: ROWS are the storage — every table row is real relational weight
+   * and every attach is a never-purged GCS file (B47) — so it zeroes every
+   * table and clears the agunan list; the popup pairs it with Complete data
+   * OFF and Skip optional ON. 'lengkap' restores the defaults. Scenario,
+   * names and the debtor are left alone: size is not identity.
+   * ⚠️ Zero everywhere is a DRAFT recipe — a SUBMIT still needs the
+   * validation floors (a facility, the Wajib documents).
+   */
+  const applyPreset = kind => {
+    if (kind === 'minimal') {
+      for (const t of TABLES) state.rows[t.key] = t.min ?? 0
+      state.collaterals = []
+    } else {
+      for (const t of TABLES) state.rows[t.key] = t.def
+      state.collaterals = [{ type: 'property', name: null }]
+    }
+    save()
+
+    return kind
+  }
+
   const isCreditApplication = url => /\/v2\/credit-application\/create/.test(String(url || ''))
 
   return {
@@ -362,6 +395,7 @@ window.SIM = (() => {
     creditTypeLabel,
     applicationTypeLabel,
     plan,
+    applyPreset,
     save,
     load,
     isCreditApplication,

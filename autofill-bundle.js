@@ -59,6 +59,13 @@ const FALLBACK_DATE = (() => {
  * on `syncTickCheckboxes` both already claimed it was inside.
  */
 let TICK_CHECKBOXES = false
+
+/* 🔴 "Complete data": ON fills full realistic values (the long-standing
+   behaviour); OFF fills the SHORTEST values that still pass validation.
+   Formats ARE minimums — KTP/NPWP digit counts, phone shapes, dates — so
+   rules without a short variant are identical in both modes; free text
+   shrinks to a stub and amounts to their range minimums. */
+let COMPLETE_DATA = true
 // Keys = normalized label text (lowercase, trailing * stripped).
 // Date values use DD-MM-YYYY (passed to react-datepicker via fillText which parses → Date object,
 // or passed to Cleave masked date fields as raw digits after stripping dashes).
@@ -214,27 +221,37 @@ const LABEL_DEFAULTS = {
 
 // Pattern-based fallback — searched against "FIELD_NAME label" lowercased.
 // Values may be () => string functions for randomization.
+/* Resolve a SMART_RULES row under the Complete-data flag: element [1] is the
+   full value, optional [2] the SHORT one — still validation-true, just
+   minimal. A two-element rule has no meaningful short: its format IS the
+   minimum, so both modes agree. */
+const ruleValue = rule => {
+  const v = (!COMPLETE_DATA && rule.length > 2) ? rule[2] : rule[1]
+
+  return typeof v === 'function' ? v() : v
+}
+
 const SMART_RULES = [
-  [/\b(ibu kandung|mother name|nama ibu)\b/,             () => _PICK(_NAMES_MOM)],
-  [/\b(ayah kandung|father name|nama ayah)\b/,           () => _PICK(_NAMES_DAD)],
+  [/\b(ibu kandung|mother name|nama ibu)\b/,             () => _PICK(_NAMES_MOM), 'Ani'],
+  [/\b(ayah kandung|father name|nama ayah)\b/,           () => _PICK(_NAMES_DAD), 'Adi'],
   [/\b(nama alias|alias name|panggilan)\b/,              () => _PICK(_ALIASES)],
-  [/\b(nama pasangan|spouse name)\b/,                    () => _PICK(_NAMES_FEMALE)],
-  [/\b(nama lengkap|full name|debtor.*full)\b/,          () => _PICK(_NAMES_DEBTOR)],
-  [/\b(nama perusahaan|company name)\b/,                 () => _PICK(['PT Maju Sejahtera', 'CV Karya Mandiri', 'PT Nusantara Jaya', 'PT Sukses Makmur'])],
-  [/\b(nama dagang|trade name)\b/,                       () => _PICK(['Maju Sejahtera', 'Karya Mandiri', 'Nusantara Jaya', 'Sukses Makmur'])],
+  [/\b(nama pasangan|spouse name)\b/,                    () => _PICK(_NAMES_FEMALE), 'Ani'],
+  [/\b(nama lengkap|full name|debtor.*full)\b/,          () => _PICK(_NAMES_DEBTOR), 'Ani S'],
+  [/\b(nama perusahaan|company name)\b/,                 () => _PICK(['PT Maju Sejahtera', 'CV Karya Mandiri', 'PT Nusantara Jaya', 'PT Sukses Makmur']), 'PT ABC'],
+  [/\b(nama dagang|trade name)\b/,                       () => _PICK(['Maju Sejahtera', 'Karya Mandiri', 'Nusantara Jaya', 'Sukses Makmur']), 'ABC'],
   [/\bnomor ktp\b/,                                      () => '32' + _RD2() + _RD2() + _R6() + _RD2() + '00' + _RD2()],
   [/\bnomor npwp\b/,                                     () => _R6() + _R6() + _RD2() + _RD2() + _RD2() + _RD2()],
   [/\bnomor nib\b/,                                      () => '912020' + _R6() + _RD2()],
   [/\b(passport|paspor)\b/,                              () => 'A' + (1000000 + Math.floor(Math.random() * 8999999))],
   [/\b(kartu keluarga|family card)\b/,                   () => '32' + _RD2() + _RD2() + _R6() + _R6()],
   [/\bprivy\b/,                                                    'PRV123456'],
-  [/\bemail\b/,                                          () => { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' }],
+  [/\bemail\b/,                                          () => { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' }, 'a@ex.co'],
   [/\b(handphone|mobile phone|no hp)\b/,                 () => '0812' + _R6() + _RD2() + _RD2()],
   [/\b(telepon rumah|home phone)\b/,                     () => '021' + _R6() + _RD2()],
   [/\b(telepon perusahaan|company phone|nomor telepon)\b/, () => '021' + _R6() + _RD2()],
   [/\bfax\b/,                                                       '02112345679'],
   [/\b(website|url)\b/,                                             'https://example.com'],
-  [/\b(alamat|full address|address)\b/,                  () => _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS)],
+  [/\b(alamat|full address|address)\b/,                  () => _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS), 'Jl. A No. 1'],
   [/\b(kelurahan|sub district)\b/,                       () => _PICK(['Menteng', 'Kebayoran', 'Kuningan', 'Senayan', 'Tebet', 'Cikini'])],
   [/\b(kecamatan|district)\b/,                           () => _PICK(['Menteng', 'Kebayoran Baru', 'Setiabudi', 'Tebet', 'Mampang'])],
   [/\b(kota|city|kabupaten)\b/,                          () => _PICK(_CITIES)],
@@ -249,10 +266,10 @@ const SMART_RULES = [
   [/\b(lama bekerja|work duration)\b/,                   () => String(1 + Math.floor(Math.random() * 20))],
   [/\b(jumlah saudara|sibling count)\b/,                 () => String(Math.floor(Math.random() * 4))],
   [/\b(jumlah tanggungan|dependent count)\b/,            () => String(Math.floor(Math.random() * 4))],
-  [/\b(nominal pendapatan|income amount)\b/,             () => _RAMT(5000000, 50000000)],
-  [/\b(nominal pengeluaran|expense amount)\b/,           () => _RAMT(1500000, 20000000, 500000)],
-  [/\btotal pendapatan\b/,                               () => _RAMT(5000000, 50000000)],
-  [/\btotal pengeluaran\b/,                              () => _RAMT(1500000, 20000000, 500000)],
+  [/\b(nominal pendapatan|income amount)\b/,             () => _RAMT(5000000, 50000000), '5000000'],
+  [/\b(nominal pengeluaran|expense amount)\b/,           () => _RAMT(1500000, 20000000, 500000), '1500000'],
+  [/\btotal pendapatan\b/,                               () => _RAMT(5000000, 50000000), '5000000'],
+  [/\btotal pengeluaran\b/,                              () => _RAMT(1500000, 20000000, 500000), '1500000'],
 
   /* ── Bank-statement transaction rows ────────────────────────────────────────
    *
@@ -274,14 +291,14 @@ const SMART_RULES = [
    * mask that became a balance of Rp 11.082.026, silently derived from the date.
    */
   [/transactions\s+\d+\s+credit/,                                   ''],
-  [/transactions\s+\d+\s+debit/,                         () => _RAMT(500000, 25000000, 100000)],
+  [/transactions\s+\d+\s+debit/,                         () => _RAMT(500000, 25000000, 100000), '500000'],
   [/transactions\s+\d+\s+nasabah name/,                  () => _PICK(_NAMES_DEBTOR)],
-  [/\b(saldo|balance)\b/,                                () => _RAMT(5000000, 250000000, 100000)],
+  [/\b(saldo|balance)\b/,                                () => _RAMT(5000000, 250000000, 100000), '5000000'],
 
   /* A share percentage is a percentage, not currency: the fallback produced a
      date-derived figure that rendered as "0 %" in the shareholder table. */
   [/\b(persentase|percentage)\b/,                        () => String(5 + Math.floor(Math.random() * 90))],
-  [/\b(plafon|plafond|jumlah pinjaman|loan amount)\b/,   () => _RAMT(50000000, 500000000, 10000000)],
+  [/\b(plafon|plafond|jumlah pinjaman|loan amount)\b/,   () => _RAMT(50000000, 500000000, 10000000), '50000000'],
   [/\b(tenor|jangka waktu)\b/,                           () => _PICK(_TENORS)],
   [/\bnomor sk\b/,                                       () => 'AHU-' + _R6() + '.AH.01.01.' + (2015 + Math.floor(Math.random() * 10))],
   [/\bnomor akta\b/,                                     () => String(1 + Math.floor(Math.random() * 99)).padStart(2, '0')],
@@ -289,29 +306,29 @@ const SMART_RULES = [
   // ── Added 2026-08-11: each of these was measured landing on the generic
   //    "<label> <today>" fallback on the v1 credit application.
   [/\b(suku bunga|interest rate)\b/,                    () => String(8 + Math.floor(Math.random() * 11))],
-  [/\bangsuran\b/,                                      () => _RAMT(1000000, 15000000, 500000)],
-  [/\bsisa (pinjaman|pokok|bunga)\b/,                    () => _RAMT(5000000, 200000000, 5000000)],
+  [/\bangsuran\b/,                                      () => _RAMT(1000000, 15000000, 500000), '1000000'],
+  [/\bsisa (pinjaman|pokok|bunga)\b/,                    () => _RAMT(5000000, 200000000, 5000000), '5000000'],
   [/\b(nama penyedia pinjaman|nama bank|bank name)\b/,   () => _PICK(_BANKS)],
   [/\bnama pemilik rekening\b/,                          () => _PICK(_NAMES_DEBTOR)],
-  [/\b(nama proyek|project name)\b/,                     () => _PICK(_PROJECTS)],
-  [/\b(tujuan peminjaman|tujuan kredit|loan purpose)\b/, () => _PICK(_PURPOSES)],
+  [/\b(nama proyek|project name)\b/,                     () => _PICK(_PROJECTS), 'Tes proyek'],
+  [/\b(tujuan peminjaman|tujuan kredit|loan purpose)\b/, () => _PICK(_PURPOSES), 'Tes tujuan kredit'],
   [/\bpekerjaan\b/,                                      () => _PICK(_OCCUPATIONS)],
   [/\bhubungan\b/,                                       () => _PICK(_RELATIONS)],
   [/\bfrekuensi\b/,                                      () => String(Math.floor(Math.random() * 3))],
-  [/\b(temuan|findings)\b/,                              () => _PICK(_FINDINGS)],
-  [/\b(rekomendasi|tindak lanjut|follow up)\b/,          () => _PICK(_FOLLOWUPS)],
+  [/\b(temuan|findings)\b/,                              () => _PICK(_FINDINGS), 'Tes'],
+  [/\b(rekomendasi|tindak lanjut|follow up)\b/,          () => _PICK(_FOLLOWUPS), 'Tes'],
   [/\b(peserta|participant)\b/,                          () => _PICK(_NAMES_DEBTOR)],
   [/\bkelompok\b/,                                       () => _PICK(_GROUPS)],
   [/\b(durasi|lama bekerja|employment duration)\b/,      () => String(1 + Math.floor(Math.random() * 20))],
 
-  [/\b(catatan|keterangan|deskripsi|description|note)\b/, () => _PICK(_NOTES)],
+  [/\b(catatan|keterangan|deskripsi|description|note)\b/, () => _PICK(_NOTES), 'Tes'],
   // year-only picker fields (e.g. "Periode Tahun", "FR_REPORT_PERIOD_YEAR")
   [/\b(periode tahun|period year|tahun buku|fiscal year|report.*year|year.*report)\b/, () => String(new Date().getFullYear() - 1)],
   // numeric-hint catch: return '000' before general text fallback
   /* Last resorts, deliberately after every specific rule above: a bare "Nama"
      or "Tanggal" carries no other clue, and a person name or a real date beats
      "<label> <today>" in either case. */
-  [/\bnama\b/,                                           () => _PICK(_NAMES_DEBTOR)],
+  [/\bnama\b/,                                           () => _PICK(_NAMES_DEBTOR), 'Ani S'],
   [/\btanggal\b/,                                        () => { const y = 2020 + Math.floor(Math.random() * 6); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y }],
   [/\b(nomor|number|no\.)\b/,                                       '000'],
 ]
@@ -411,8 +428,8 @@ function smartDefault(name, label, type, options = []) {
     const normLabel = label.replace(/\s*\*\s*$/, '').trim().toLowerCase()
     if (normLabel && normLabel in LABEL_DEFAULTS) return LABEL_DEFAULTS[normLabel]
     const key = (name + ' ' + label).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-    for (const [pattern, defaultVal] of SMART_RULES) {
-      if (pattern.test(key)) return typeof defaultVal === 'function' ? defaultVal() : defaultVal
+    for (const rule of SMART_RULES) {
+      if (rule[0].test(key)) return ruleValue(rule)
     }
     return FALLBACK_DATE
   }
@@ -457,8 +474,8 @@ function smartDefault(name, label, type, options = []) {
   }
 
   // 3. Regex pattern rules — values may be functions for randomization
-  for (const [pattern, defaultVal] of SMART_RULES) {
-    if (pattern.test(searchKey)) return typeof defaultVal === 'function' ? defaultVal() : defaultVal
+  for (const rule of SMART_RULES) {
+    if (rule[0].test(searchKey)) return ruleValue(rule)
   }
 
   // 4. Fallback — numeric hint → '000', otherwise '{label} DD-MM-YYYY'
@@ -869,6 +886,16 @@ async function v2Detect() {
       node = node.parentElement
       for (const cand of node.querySelectorAll('span, label, p')) {
         if (cand.contains(primary) || inControl(cand)) continue
+        // 🔴 A span inside ANY button is a control's own face, never a label —
+        // the SearchableSelect note above, one sibling wider. "Lama Bekerja" is
+        // a number input beside a unit select in one row; the walk's depth-1
+        // pass found the SELECT's value-span "Tahun" (outside this field's els,
+        // so inControl could not save it), labelled the required input "Tahun",
+        // read no asterisk off it, and skip-optional then skipped a required
+        // field — measured 2026-08-21, the one empty box on an otherwise green
+        // step 2. Excluding button interiors reaches the real
+        // "Lama Bekerja *" at depth 2.
+        if (cand.closest('button')) continue
         const t = ownText(cand)
         if (t && t !== '*') return { text: t, required: /\*\s*$/.test(cand.textContent) }
       }
@@ -4972,7 +4999,11 @@ window.SIM = (() => {
        ⚠️ It also has its OWN driver capability now — see `isOwnCapability`
        below — because the modal is not uniform: it needs a ~3s wait after the
        product picker for that product's find-one. */
-    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, max: 5, isOwnCapability: true },
+    /* `min: 1` — the user's rule (2026-08-21): a fixture without a facility
+       has no product, and EVERYTHING per-product hangs off it (workflow
+       options, qualitative forms) besides the FACILITY_COUNT submit floor.
+       The Minimal preset and the panel input both respect it. */
+    { key: 'facility', label: 'Fasilitas', opener: 'Tambah Fasilitas', def: 1, min: 1, max: 5, isOwnCapability: true },
     /* 🔴 `appliesTo` since 2026-08-20 (v1.0.77): these tables exist only on
        SOME scenarios, and a plan that asks a Perorangan form for Badan Usaha
        tables ends an otherwise-perfect run with "no opener … on any step" —
@@ -4993,6 +5024,12 @@ window.SIM = (() => {
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
     { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
     { key: 'bankAccount', label: 'Akun bank', opener: 'Tambah Akun Bank', def: 1, max: 5, more: true },
+    /* Months of account mutations (2 accounts each — the user's own spec,
+       2026-08-17). `isOwnCapability`: v2AddMutations owns the modal; the
+       generic row-adder must never touch it. 0 skips the pass entirely —
+       added for the Minimal preset, whose first live run still wrote 6
+       mutation records because this pass had no knob (2026-08-21). */
+    { key: 'mutation', label: 'Mutasi (bulan × 2 akun)', opener: 'Tambah Data Mutasi Rekening', def: 3, max: 12, more: true, isOwnCapability: true },
     /* 🔴 `isOwnCapability` since 2026-08-17: documents are handled by
        `v2FillDocuments`, not the generic row-adder, and this entry's opener was
        wrong anyway — BOTH document blocks' add buttons read "Upload Dokumen",
@@ -5255,6 +5292,29 @@ window.SIM = (() => {
    * detail route there is nothing to build and the panel would offer choices
    * that cannot apply.
    */
+  /**
+   * One-tick fixture sizing. 'minimal' exists to keep test writes off shared
+   * staging: ROWS are the storage — every table row is real relational weight
+   * and every attach is a never-purged GCS file (B47) — so it zeroes every
+   * table and clears the agunan list; the popup pairs it with Complete data
+   * OFF and Skip optional ON. 'lengkap' restores the defaults. Scenario,
+   * names and the debtor are left alone: size is not identity.
+   * ⚠️ Zero everywhere is a DRAFT recipe — a SUBMIT still needs the
+   * validation floors (a facility, the Wajib documents).
+   */
+  const applyPreset = kind => {
+    if (kind === 'minimal') {
+      for (const t of TABLES) state.rows[t.key] = t.min ?? 0
+      state.collaterals = []
+    } else {
+      for (const t of TABLES) state.rows[t.key] = t.def
+      state.collaterals = [{ type: 'property', name: null }]
+    }
+    save()
+
+    return kind
+  }
+
   const isCreditApplication = url => /\/v2\/credit-application\/create/.test(String(url || ''))
 
   return {
@@ -5268,6 +5328,7 @@ window.SIM = (() => {
     creditTypeLabel,
     applicationTypeLabel,
     plan,
+    applyPreset,
     save,
     load,
     isCreditApplication,
@@ -5309,6 +5370,7 @@ window.__autofill = {
    * are refused inside v2FillField whatever this says.
    */
   setTickCheckboxes: v => { TICK_CHECKBOXES = Boolean(v) },
+  setCompleteData: v => { COMPLETE_DATA = Boolean(v) },
 
   /**
    * The controlled-by-props blocks (Konfigurasi → Workflow Engine).

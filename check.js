@@ -775,6 +775,113 @@ if (!S) {
       ? pass('plan tables branch by scenario: BU-P all three, I-K none, I-P reports only')
       : fail(`scenario tables — BU-P all: ${buHasAll}, I-K none: ${ikHasNone}, I-P reports-only: ${ipSplit}`)
 
+    /**
+     * 🔴 "COMPLETE DATA" OFF MUST SHRINK VALUES WITHOUT BREAKING FORMATS.
+     * The whole point of the short tier is that validation still passes:
+     * NPWP keeps its 20 digits in BOTH modes (a format IS its own minimum),
+     * while free text drops to a stub and amounts to their range minimums.
+     * Behavioural, in the sandbox — the flag is flipped and smartDefault
+     * consulted, so a broken ruleValue or a lost short cannot pass on prose.
+     *
+     * Sabotage, verified each ALONE: drop the 'Tes' short from the catatan
+     * rule → fails; revert either walk site to the old destructuring →
+     * fails; flip syncCompleteData's default → the restore assertion fails.
+     */
+    const sd = expr => vm.runInContext(expr, sandbox)
+
+    const npwpFull = String(sd('smartDefault("X", "Nomor NPWP", "text")'))
+
+    sd('COMPLETE_DATA = false')
+    const npwpShort = String(sd('smartDefault("X", "Nomor NPWP", "text")'))
+    const noteShort = String(sd('smartDefault("X", "Catatan", "textarea")'))
+    const amtShort = String(sd('smartDefault("X", "Nominal Pendapatan 1", "text")'))
+
+    sd('COMPLETE_DATA = true')
+    const noteFull = String(sd('smartDefault("X", "Catatan", "textarea")'))
+
+    const formatsHold = /^\d{20}$/.test(npwpFull) && /^\d{20}$/.test(npwpShort)
+    const shortsWork = noteShort === 'Tes' && amtShort === '5000000' && noteFull !== 'Tes'
+
+    formatsHold && shortsWork
+      ? pass('Complete data OFF shrinks text/amounts to minimums while NPWP keeps 20 digits in both modes')
+      : fail(`complete-data — npwp 20-digit both: ${formatsHold}, note short/full: '${noteShort}'/'${noteFull}', amount min: '${amtShort}'`)
+
+    const popupBare2 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const walkSites = (popupBare2.match(/return ruleValue\(rule\)/g) || []).length
+
+    walkSites === 2
+      ? pass('both SMART_RULES walk sites route through ruleValue')
+      : fail(`ruleValue consulted at ${walkSites}/2 walk sites — a site with the old destructuring ignores the Complete-data flag`)
+
+    /**
+     * 🔴 THE MINIMAL PRESET MUST ACTUALLY MINIMISE — rows are the storage
+     * (every table row is relational weight, every attach a never-purged GCS
+     * file), so 'minimal' zeroes EVERY table and clears the agunan list, and
+     * 'lengkap' restores the defaults. Behavioural in the sandbox. The UI
+     * half is textual: both popup switches flipped through change events, so
+     * the existing persistence/sync listeners stay the single mechanism.
+     *
+     * Sabotage, verified each ALONE: skip one table in the zero loop → the
+     * minimal assertion fails; drop a checkbox flip from the preset handler →
+     * the wiring assertion fails.
+     */
+    S.applyPreset('minimal')
+    const allZero = S.TABLES.every(t => S.state.rows[t.key] === (t.min ?? 0))
+      && S.state.rows.facility === 1 && S.state.collaterals.length === 0
+
+    S.applyPreset('lengkap')
+    const restored = S.TABLES.every(t => S.state.rows[t.key] === t.def) && S.state.collaterals.length === 1
+
+    allZero && restored
+      ? pass("applyPreset: 'minimal' floors every table at its min (facility 1, rest 0) + clears agunan, 'lengkap' restores the defaults")
+      : fail(`applyPreset — minimal all-zero: ${allZero}, lengkap restored: ${restored}`)
+
+    const uiSrc = fs.readFileSync(path.join(dir, 'simulation-ui.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const presetIdx = uiSrc.indexOf('const preset = kind =>')
+    const presetSlice = presetIdx >= 0 ? uiSrc.slice(presetIdx, presetIdx + 700) : ''
+
+    presetIdx >= 0
+      && presetSlice.includes('SIM.applyPreset(kind)')
+      && presetSlice.includes("complete.checked = kind !== 'minimal'")
+      && presetSlice.includes("skipOpt.checked = kind === 'minimal'")
+      && (presetSlice.match(/dispatchEvent\(new Event\('change'\)\)/g) || []).length === 2
+      ? pass('the preset buttons flip BOTH popup switches through their own change events')
+      : fail('the preset handler lost applyPreset or a checkbox flip — a preset that sizes rows but not values is half a preset')
+
+    /**
+     * 🔴 A ZERO-COUNT PLAN MUST WRITE NOTHING — the Minimal preset's first
+     * live run still wrote 6 mutation records and saved an optional document,
+     * and painted itself red on qualitative, because three own-capability
+     * passes never consulted the plan. Three gates, each load-bearing:
+     * mutations read rows.mutation (0 → skip; the count IS the months),
+     * documents ALWAYS attach the Wajib rows (a validation floor) while the count governs the optional adds and SLIK,
+     * qualitative skips at rows.facility 0 (per-product master data — no
+     * product, no block).
+     *
+     * Sabotage, verified each ALONE: remove any one gate → its match fails;
+     * drop the mutation TABLES row → the behavioural preset assert fails.
+     */
+    const mutRow = S.TABLES.find(t => t.key === 'mutation')
+
+    mutRow && mutRow.isOwnCapability && mutRow.more && S.state.rows.mutation !== undefined
+      ? pass('mutations are a TABLES row (own-capability, in the fold) so presets and the panel govern them')
+      : fail('no mutation TABLES row — the pass has no knob and Minimal writes 6 records again')
+
+    const popupSrc3 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const gates =
+      (popupSrc3.match(/activePlan\.rows\.mutation !== undefined\) \? activePlan\.rows\.mutation : 3/g) || []).length
+      + (popupSrc3.match(/if \(months === 0\) return \[\]/g) || []).length
+      + (popupSrc3.match(/activePlan\.rows\.document !== undefined\) \? activePlan\.rows\.document : 1/g) || []).length
+      + (popupSrc3.match(/args: \[\{ required: true, optional: docCount, slik: docCount > 0 \}, 900\]/g) || []).length
+      + (popupSrc3.match(/\(activePlan\.rows\.facility \?\? 0\) === 0\) return null/g) || []).length
+
+    gates === 5
+      ? pass('all three passes gate on the plan (mutation months, optional-docs count with Wajib always attached, facility-for-qualitative)')
+      : fail(`plan gates present: ${gates}/5 — a pass without its gate writes rows a zero-count plan promised not to`)
+
     at('I', 'K')
     const kThenBU = S.wouldBlock('debitur', 'BU')
 

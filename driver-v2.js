@@ -401,6 +401,16 @@ async function v2Detect() {
       node = node.parentElement
       for (const cand of node.querySelectorAll('span, label, p')) {
         if (cand.contains(primary) || inControl(cand)) continue
+        // 🔴 A span inside ANY button is a control's own face, never a label —
+        // the SearchableSelect note above, one sibling wider. "Lama Bekerja" is
+        // a number input beside a unit select in one row; the walk's depth-1
+        // pass found the SELECT's value-span "Tahun" (outside this field's els,
+        // so inControl could not save it), labelled the required input "Tahun",
+        // read no asterisk off it, and skip-optional then skipped a required
+        // field — measured 2026-08-21, the one empty box on an otherwise green
+        // step 2. Excluding button interiors reaches the real
+        // "Lama Bekerja *" at depth 2.
+        if (cand.closest('button')) continue
         const t = ownText(cand)
         if (t && t !== '*') return { text: t, required: /\*\s*$/.test(cand.textContent) }
       }

@@ -99,6 +99,7 @@ window.__autofill = {
    * are refused inside v2FillField whatever this says.
    */
   setTickCheckboxes: v => { TICK_CHECKBOXES = Boolean(v) },
+  setCompleteData: v => { COMPLETE_DATA = Boolean(v) },
 
   /**
    * The controlled-by-props blocks (Konfigurasi → Workflow Engine).

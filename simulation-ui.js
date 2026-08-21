@@ -124,11 +124,14 @@ window.SIMUI = (() => {
 
   const stepper = table => {
     const wrap = el('div', { class: 'sim-step' })
-    const out = el('input', { class: 'sim-num', type: 'number', min: '0', max: String(table.max) })
+    const out = el('input', { class: 'sim-num', type: 'number', min: String(table.min ?? 0), max: String(table.max) })
 
     out.value = String(SIM.state.rows[table.key] ?? table.def)
     out.addEventListener('change', () => {
-      const n = Math.max(0, Math.min(table.max, Number(out.value) || 0))
+      // A table can declare its own floor — facility is min 1 (the user's
+      // rule): no facility means no product, and everything per-product
+      // hangs off it.
+      const n = Math.max(table.min ?? 0, Math.min(table.max, Number(out.value) || 0))
 
       out.value = String(n)
       SIM.state.rows[table.key] = n
@@ -247,6 +250,27 @@ window.SIMUI = (() => {
     root.appendChild(preview)
 
     // ── Rows per table ────────────────────────────────────────────────────
+    /* One tick instead of three adjustments: 'Minimal' sizes the fixture for
+       the smallest staging footprint (all tables 0, no agunan, short values,
+       required fields only); 'Lengkap' restores the defaults. The paired
+       popup switches are flipped through their own change events, so the
+       existing persistence and sync listeners do the actual work. */
+    const preset = kind => () => {
+      SIM.applyPreset(kind)
+
+      const complete = document.getElementById('completeDataCb')
+      const skipOpt = document.getElementById('skipOptionalCb')
+
+      if (complete) { complete.checked = kind !== 'minimal'; complete.dispatchEvent(new Event('change')) }
+      if (skipOpt) { skipOpt.checked = kind === 'minimal'; skipOpt.dispatchEvent(new Event('change')) }
+      render()
+    }
+
+    root.appendChild(labelled('Preset', el('div', { class: 'sim-pills' }, [
+      el('button', { type: 'button', class: 'sim-pill', text: 'Minimal', title: 'Fixture terkecil: semua tabel 0, tanpa agunan, nilai singkat, hanya isian wajib — resep DRAFT', onClick: preset('minimal') }),
+      el('button', { type: 'button', class: 'sim-pill', text: 'Lengkap', title: 'Kembalikan jumlah baris default, agunan default, nilai lengkap, isi juga isian opsional', onClick: preset('lengkap') })
+    ])))
+
     root.appendChild(el('div', { class: 'sim-legend', text: 'Jumlah baris per tabel' }))
 
     const grid = el('div', { class: 'sim-grid' })

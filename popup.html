@@ -99,6 +99,12 @@
           <input id="tickCheckboxesCb" type="checkbox" checked />
           Tick checkboxes
         </label>
+        <!-- Value RICHNESS, not field coverage — "Skip optional" owns coverage.
+             Off fills the SHORTEST values that still pass validation. -->
+        <label class="toggle-label" title="On fills full realistic data. Off fills the shortest values that still pass validation — exact digit counts, formats and range minimums are kept; free text and amounts shrink to their minimums.">
+          <input id="completeDataCb" type="checkbox" checked />
+          Complete data
+        </label>
       </div>
     </div>
     <div id="progressWrap" class="hidden">
