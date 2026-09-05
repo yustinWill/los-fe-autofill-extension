@@ -1307,9 +1307,9 @@ if (!S) {
 
     const hidden = ['#stepExecute', '#stepCapture', '#fieldsPanel', '#detectBtn']
     const hiddenClasses = ['.bottom-bar', '.scan-opts']
-    const missing = hidden.filter(sel => !new RegExp(`body\\.is-running[^{]*\\${sel}\\b`).test(css))
+    const missing = hidden.filter(sel => !new RegExp(`body(?:\\.is-running|:is\\(\\.is-running, \\.is-review\\))[^{]*\\${sel}\\b`).test(css))
 
-    const missingC = hiddenClasses.filter(sel => !new RegExp(`body\\.is-running[^{]*\\${sel}\\b`).test(css))
+    const missingC = hiddenClasses.filter(sel => !new RegExp(`body(?:\\.is-running|:is\\(\\.is-running, \\.is-review\\))[^{]*\\${sel}\\b`).test(css))
 
     !missing.length && !missingC.length
       ? pass('a run hides every control except stop and the config')
@@ -1324,7 +1324,7 @@ if (!S) {
       : fail(`popup.html is missing id(s) ${ids.join(', ')} — the is-running rules would match nothing`)
 
     /* display:none, never removal: popup.js keeps reading these nodes mid-run. */
-    const usesDisplayNone = /display:\s*none\s*!important/.test(css.slice(css.indexOf('body.is-running #stepExecute')))
+    const usesDisplayNone = /display:\s*none\s*!important/.test(css.slice(css.search(/body(?:\.is-running|:is\(\.is-running, \.is-review\)) #stepExecute/)))
 
     usesDisplayNone
       ? pass('hidden sections are display:none, so popup.js can still read their nodes')
@@ -1390,7 +1390,7 @@ if (!S) {
       : fail('the run-again prompt is not shown from runQuickFill\'s finally — a failed or cancelled run would never offer it')
 
     /* Declining must not destroy the evidence. */
-    const declines = /runAgainNo'\)\.addEventListener\('click',\s*\(\)\s*=>\s*runAgainBar\.classList\.add\('hidden'\)\)/.test(src3)
+    const declines = /runAgainNo'\)\.addEventListener\('click',\s*leaveReview\)/.test(src3) && !/leaveReview = \(\) => \{[^}]*runLog = \[\]/.test(src3)
 
     declines
       ? pass('declining hides only the prompt, leaving the log and outcome intact')
@@ -1534,8 +1534,9 @@ if (!S) {
 
     /* No outer scroll: the log is the ONE scrolling region, and the stop
        control + folded header are pinned beneath it. */
-    const docked = /body\.is-running \{[^}]*overflow:\s*hidden/.test(css4)
-    const logFills = /body\.is-running #runLogView \{[^}]*flex:\s*1 1 0/.test(css4)
+    const BODY = String.raw`body(?:\.is-running|:is\(\.is-running, \.is-review\))`
+    const docked = new RegExp(BODY + String.raw` \{[^}]*overflow:\s*hidden`).test(css4)
+    const logFills = new RegExp(BODY + String.raw` #runLogView \{[^}]*flex:\s*1 1 0`).test(css4)
 
     docked && logFills
       ? pass('running layout is docked: body does not scroll, the log fills and scrolls')
@@ -1638,6 +1639,46 @@ if (!S) {
     hoisted && unlocks
       ? pass('unlockUI is module-level and runs in runQuickFill\'s finally, so a cancel cannot strand the controls')
       : fail(`after a cancel Scan/Run/delay/skip would stay disabled — hoisted:${hoisted} inFinally:${unlocks}`)
+  }
+
+  console.log('\nreview state: the docked view stays until the prompt is answered')
+
+  {
+    /* On Done the popup snapped back to the small log and an unfolded config,
+       burying the two things worth reading — the log and the prompt — under the
+       one thing that was not (user, 2026-09-06). A run now ends in REVIEW:
+       docked view, prompt pinned, and idle only when Nanti or Ya is picked. */
+    const strip7 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src7 = strip7(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const css7 = fs.readFileSync(path.join(dir, 'popup.css'), 'utf8')
+
+    const enters = /classList\.toggle\('is-review', !on\)/.test(src7)
+    enters
+      ? pass('a run that ends enters the review state instead of idle')
+      : fail('setRunning(false) does not enter is-review — Done snaps back to the small log and an unfolded config')
+
+    const lr = src7.slice(src7.indexOf('const leaveReview = '), src7.indexOf('const leaveReview = ') + 500)
+    const leaves = /classList\.remove\('is-review'\)/.test(lr) && /SIMUI\.setCollapsed\(simWasCollapsed\)/.test(lr) && /runAgainBar\.classList\.add\('hidden'\)/.test(lr)
+    leaves
+      ? pass('leaveReview restores idle, the user\'s fold and hides the prompt')
+      : fail('leaveReview is incomplete — the docked view, the folded config or the prompt would linger after the user answered')
+
+    const bothExits = /addEventListener\('click',\s*leaveReview\)/.test(src7) && /const resetToInitial = \(\) => \{\s*leaveReview\(\)/.test(src7)
+    bothExits
+      ? pass('Nanti and Ya, siapkan both leave review')
+      : fail('one of the prompt\'s answers does not leave review — the docked view would be stuck with no action on screen')
+
+    const shared = (css7.match(/body:is\(\.is-running, \.is-review\)/g) || []).length
+    const hidesStop = /body\.is-review #stepDetect \{ display: none !important; \}/.test(css7)
+    shared >= 20 && hidesStop
+      ? pass(`review shares the docked geometry (${shared} rules) and hides the stop row`)
+      : fail(`review layout is not the docked one — shared:${shared} hidesStop:${hidesStop}`)
+
+    /* The lock wording is a claim about a run IN PROGRESS. */
+    const lockRunningOnly = /body\.is-running #simPanel \.sim-head-title::after \{\s*content: ' · terkunci'/.test(css7) && !/body:is\(\.is-running, \.is-review\) #simPanel \.sim-head-title::after/.test(css7)
+    lockRunningOnly
+      ? pass('"terkunci" is shown only while running, not in review')
+      : fail('the config header would read "terkunci" after the run has ended')
   }
 
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')

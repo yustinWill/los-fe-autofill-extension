@@ -771,14 +771,14 @@ textarea:focus { outline: none; border-color: #4f46e5; background: #fff; }
    the run is the context that makes the log readable. `pointer-events: none` on
    the panel is the whole guard — one rule beats disabling ~29 controls
    individually and then having to re-enable exactly the right ones. */
-body.is-running #simPanel {
+body:is(.is-running, .is-review) #simPanel {
   pointer-events: none;
   opacity: 0.55;
   filter: grayscale(0.35);
 }
 
 /* Says WHY it is not clickable. Without it a dimmed panel reads as a bug. */
-body.is-running #simPanel::before {
+body:is(.is-running, .is-review) #simPanel::before {
   content: 'Terkunci selama proses';
   display: block;
   padding: 3px 8px;
@@ -826,22 +826,22 @@ body.is-running #simPanel::before {
    `display:none`, not removal — popup.js still reads #fieldsList, #resultStrip
    and the progress nodes while filling, and a removed node would throw. Hidden
    elements keep their properties. */
-body.is-running #stepExecute,
-body.is-running #stepCapture,
-body.is-running #fieldsPanel,
-body.is-running #detectBtn,
-body.is-running .bottom-bar,
-body.is-running .scan-opts { display: none !important; }
+body:is(.is-running, .is-review) #stepExecute,
+body:is(.is-running, .is-review) #stepCapture,
+body:is(.is-running, .is-review) #fieldsPanel,
+body:is(.is-running, .is-review) #detectBtn,
+body:is(.is-running, .is-review) .bottom-bar,
+body:is(.is-running, .is-review) .scan-opts { display: none !important; }
 
 /* The remaining row would otherwise read "1 · Detect Fields · Scan page for all
    fillable fields" beside a Batal button — a description of something that is
    not happening. Drop the ornament and let the stop control own the row. */
-body.is-running #stepDetect .step-num,
-body.is-running #stepDetect .step-meta { display: none; }
+body:is(.is-running, .is-review) #stepDetect .step-num,
+body:is(.is-running, .is-review) #stepDetect .step-meta { display: none; }
 
-body.is-running #stepDetect { border-top: none; }
-body.is-running #stepDetect .step-row { gap: 0; }
-body.is-running #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }
+body:is(.is-running, .is-review) #stepDetect { border-top: none; }
+body:is(.is-running, .is-review) #stepDetect .step-row { gap: 0; }
+body:is(.is-running, .is-review) #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }
 
 /* ── Running layout: log first and tall, then stop, then the config ───────────
    `body` is already a flex column, so ORDER reorders without touching the DOM
@@ -849,20 +849,20 @@ body.is-running #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }
    takes the height the hidden sections gave back; the stop control sits
    directly under it, and the config — which is for glancing at, not editing —
    goes last. */
-body.is-running #runLogView { order: 1; }
-body.is-running #stepDetect { order: 2; }
-body.is-running #runAgainBar { order: 3; }
-body.is-running #simPanel   { order: 4; }
+body:is(.is-running, .is-review) #runLogView { order: 1; }
+body:is(.is-running, .is-review) #stepDetect { order: 2; }
+body:is(.is-running, .is-review) #runAgainBar { order: 3; }
+body:is(.is-running, .is-review) #simPanel   { order: 4; }
 
 /* ⚠️ Anything WITHOUT an explicit order defaults to 0 and floats to the TOP.
    The footer did exactly that and landed between the status bar and the log.
    Every flex child that survives a run needs a number, not just the ones being
    moved deliberately. */
-body.is-running .app-footer { order: 5; }
+body:is(.is-running, .is-review) .app-footer { order: 5; }
 
 /* Grows into the freed space instead of the fixed 168px it uses when a run has
    finished and the whole popup is on screen. */
-body.is-running #runLogView {
+body:is(.is-running, .is-review) #runLogView {
   flex: 1 1 auto;
   max-height: none;
   /* Sized so the log takes nearly the whole 600px popup and the stop control
@@ -878,7 +878,7 @@ body.is-running #runLogView {
    caret along with the inputs would make a collapsible panel that cannot be
    collapsed — the control is already there (SIM.state.collapsed), it just needs
    to remain reachable. Editing the values stays blocked. */
-body.is-running #simPanel .sim-head { pointer-events: auto; cursor: pointer; }
+body:is(.is-running, .is-review) #simPanel .sim-head { pointer-events: auto; cursor: pointer; }
 
 /* ── "Run again?" ─────────────────────────────────────────────────────────────
    Shown when a run ENDS — done, failed or cancelled alike. A second run on a
@@ -908,18 +908,18 @@ body.is-running #simPanel .sim-head { pointer-events: auto; cursor: pointer; }
    config's FOLDED HEADER are pinned beneath it — always visible, the header
    naming the fixture and reading as the tap target it is. Unfolding gives the
    config a capped share with its own scroll, and the log shrinks to make room. */
-body.is-running { height: 600px; max-height: 600px; overflow: hidden; }
+body:is(.is-running, .is-review) { height: 600px; max-height: 600px; overflow: hidden; }
 
-body.is-running #runLogView {
+body:is(.is-running, .is-review) #runLogView {
   flex: 1 1 0;
   min-height: 0;
   max-height: none;
   overflow-y: auto;
 }
 
-body.is-running #stepDetect { flex: none; }
+body:is(.is-running, .is-review) #stepDetect { flex: none; }
 
-body.is-running #simPanel {
+body:is(.is-running, .is-review) #simPanel {
   flex: none;
   max-height: 44%;
   overflow-y: auto;
@@ -929,18 +929,18 @@ body.is-running #simPanel {
   opacity: 1;
   filter: none;
 }
-body.is-running #simPanel .sim-body { opacity: 0.6; filter: grayscale(0.3); padding: 10px 12px; }
+body:is(.is-running, .is-review) #simPanel .sim-body { opacity: 0.6; filter: grayscale(0.3); padding: 10px 12px; }
 
 /* The lock badge moves INTO the header line — a separate block cost a row. */
-body.is-running #simPanel::before { display: none; }
-body.is-running #simPanel .sim-head {
+body:is(.is-running, .is-review) #simPanel::before { display: none; }
+body:is(.is-running, .is-review) #simPanel .sim-head {
   margin: 0;
   padding: 9px 12px;
   background: #eef2ff;
   border-top: 1px solid #c7d2fe;
   border-bottom: 1px solid #c7d2fe;
 }
-body.is-running #simPanel .sim-head:hover { background: #e0e7ff; }
+body:is(.is-running, .is-review) #simPanel .sim-head:hover { background: #e0e7ff; }
 body.is-running #simPanel .sim-head-title::after {
   content: ' · terkunci';
   text-transform: none;
@@ -949,7 +949,7 @@ body.is-running #simPanel .sim-head-title::after {
   color: #9ca3af;
 }
 
-body.is-running .app-footer { display: none; }
+body:is(.is-running, .is-review) .app-footer { display: none; }
 
 /* A visible track, so the log reads as scrollable rather than as a box that
    happens to be full. */
@@ -957,3 +957,13 @@ body.is-running .app-footer { display: none; }
 .run-log::-webkit-scrollbar { width: 7px; }
 .run-log::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
 .run-log::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Review state: the run ended, the prompt is unanswered ────────────────────
+   Shares every docked rule above via `:is()`, so the log keeps the full height
+   and the folded config header stays pinned until the user picks Nanti or Ya.
+   Snapping back to the small log and an unfolded config the instant a run
+   finished put the two things the user wanted to read — the log and the
+   prompt — behind the one thing they did not (user, 2026-09-06). The only
+   actions here are the prompt's, so the Quick Fill row is hidden too. */
+body.is-review #stepDetect { display: none !important; }
+body.is-review #runAgainBar { flex: none; }

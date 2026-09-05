@@ -439,15 +439,23 @@ const setRunning = on => {
   runCancelled = false
   document.body.classList.toggle('is-running', on)
 
-  /* Fold the config for the run and put the user's own fold back afterwards.
-     Folded, its header still names the fixture (SIM.projectName) and is the
-     tappable "peek" control; unfolded it would take the height the log needs.
-     Restored rather than left folded, because idle is when the config gets
-     EDITED and a click to unfold on every open is friction nobody asked for. */
+  /* A run that ENDS does not return to idle — it enters REVIEW: the same docked
+     view (log full height, folded config header pinned), with the run-again
+     prompt where the stop button was. Idle comes back only when the user
+     answers the prompt (leaveReview). Snapping straight back to the small log
+     and an unfolded config put the two things worth reading behind the one
+     thing that was not (user, 2026-09-06). */
+  document.body.classList.toggle('is-review', !on)
+
+  /* Fold the config for the run. Folded, its header still names the fixture
+     (SIM.projectName) and is the tappable "peek" control; unfolded it would
+     take the height the log needs. The user's own fold state comes back in
+     leaveReview, because idle is when the config gets EDITED and a click to
+     unfold on every open is friction nobody asked for. */
   try {
-    if (window.SIMUI && typeof SIMUI.setCollapsed === 'function' && isSimulationMounted()) {
-      if (on) { simWasCollapsed = Boolean(SIM.state.collapsed); SIMUI.setCollapsed(true) }
-      else SIMUI.setCollapsed(simWasCollapsed)
+    if (on && window.SIMUI && typeof SIMUI.setCollapsed === 'function' && isSimulationMounted()) {
+      simWasCollapsed = Boolean(SIM.state.collapsed)
+      SIMUI.setCollapsed(true)
     }
   } catch (_) { /* panel not mounted on this route */ }
 
@@ -506,6 +514,19 @@ const unlockUI = () => {
 
 const runAgainBar = document.getElementById('runAgainBar')
 
+/** Leave the review state: idle layout, the user's own config fold back, the
+ *  prompt gone. The ONLY way out of the docked view once a run has ended —
+ *  Nanti and Ya, siapkan both route through here. */
+const leaveReview = () => {
+  document.body.classList.remove('is-review')
+
+  if (runAgainBar) runAgainBar.classList.add('hidden')
+
+  try {
+    if (window.SIMUI && typeof SIMUI.setCollapsed === 'function' && isSimulationMounted()) SIMUI.setCollapsed(simWasCollapsed)
+  } catch (_) { /* panel not mounted on this route */ }
+}
+
 /**
  * Back to the state a freshly-opened popup is in.
  *
@@ -519,6 +540,7 @@ const runAgainBar = document.getElementById('runAgainBar')
  * or the "fresh" log opens with a status line from the reset itself.
  */
 const resetToInitial = () => {
+  leaveReview()
   _PICK_RESET()
 
   /* Names the next step rather than a bare "Ready": the form on screen is the
@@ -548,7 +570,7 @@ if (runAgainBar) {
 
   /* Declining hides ONLY the prompt. The log and the outcome stay — they are
      the evidence, and a run worth asking about is often a run worth reading. */
-  document.getElementById('runAgainNo').addEventListener('click', () => runAgainBar.classList.add('hidden'))
+  document.getElementById('runAgainNo').addEventListener('click', leaveReview)
 }
 
 /**
