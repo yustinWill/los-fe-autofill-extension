@@ -1218,6 +1218,87 @@ if (!S) {
       : fail('the SLIK step must treat a cell already showing a file as ok — the field pass attaches the BU pair before this capability runs')
   }
 
+  console.log('\nrunning state: inert config, live log, cancel')
+
+  {
+    /**
+     * A run takes minutes. Before 2026-09-05 the popup showed ONE status line
+     * over a config that stayed fully editable, and offered no way to stop a run
+     * short of closing the popup — which DESTROYS the log, since the popup is
+     * torn down on close.
+     *
+     * These assert on stripped SOURCE, not on prose: the comments here describe
+     * cancellation at length, and a naive `includes('throwIfCancelled')` would be
+     * satisfied by the comments alone. Same family as the runPlannedExtras
+     * assertions above.
+     */
+    const strip = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src = strip(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const extras = src.slice(src.indexOf('async function runPlannedExtras'))
+
+    /* 🔴 THE load-bearing one. Every pass must be GUARDED, not just some — a
+       cancel that only takes effect before facilities still runs the other seven.
+       Verified to fail: delete one `throwIfCancelled()` and this goes red. */
+    const passes = extras.match(/await fillPlanned\w+\(/g) || []
+    const guards = extras.match(/throwIfCancelled\(\)/g) || []
+
+    passes.length >= 7 && guards.length >= passes.length
+      ? pass(`every planned pass is behind a cancel checkpoint (${guards.length} guards / ${passes.length} passes)`)
+      : fail(`runPlannedExtras has ${passes.length} passes but only ${guards.length} cancel checkpoints — an unguarded pass runs on regardless`)
+
+    /* Cancellation is cooperative, so the flag must actually be consulted. */
+    const readsFlag = /if \(runCancelled\)/.test(src)
+
+    readsFlag
+      ? pass('throwIfCancelled consults the runCancelled flag')
+      : fail('throwIfCancelled never reads runCancelled — the button would set a flag nothing checks')
+
+    /* A stop the user asked for is not a failure. Conflating them teaches the
+       user to distrust the error state, which is the real cost. */
+    const partsCancel = /err\s*&&\s*err\.cancelled/.test(src)
+
+    partsCancel
+      ? pass('a cancelled run is reported apart from a failure')
+      : fail('runQuickFill does not distinguish err.cancelled — a user stop would be reported as Failed')
+
+    /* Must be in `finally`, or a thrown run leaves the config locked and the
+       button reading "Batal" for a run that is no longer going. */
+    const qf = src.slice(src.indexOf('async function runQuickFill'))
+    const fin = qf.slice(qf.indexOf('} finally {'))
+
+    const restores = /setRunning\(false\)/.test(fin)
+
+    restores
+      ? pass('setRunning(false) runs in finally, so no crash can leave the popup locked')
+      : fail('setRunning(false) is not in runQuickFill\'s finally — a throw would strand the popup in the running state')
+
+    /* The config must go INERT, not vanish: it is the context that makes the log
+       readable. One class on <body>, not 29 disabled controls. */
+    const oneClass = /classList\.toggle\('is-running'/.test(src)
+
+    oneClass
+      ? pass('the running state is one class on <body>')
+      : fail('no is-running class toggle — the config would stay live during a run')
+
+    /* 🔴 TDZ. `renderRunLog` is called by `logEvent`, which is defined ABOVE it.
+       As a `const` arrow that makes even `typeof renderRunLog` throw
+       ReferenceError. It must be a hoisted declaration. The load pass above would
+       catch it only if logEvent fired during load, which it does not. */
+    const hoisted = /function renderRunLog\s*\(/.test(src)
+
+    hoisted
+      ? pass('renderRunLog is a hoisted declaration, reachable from logEvent above it')
+      : fail('renderRunLog must be a function declaration — as a const it is in the TDZ when logEvent calls it')
+
+    /* One source for screen and clipboard, or a pasted bug report and the
+       screenshot beside it can disagree. */
+    const oneSource = /renderRunLog\(\)/.test(src.slice(src.indexOf('const logEvent')))
+
+    oneSource
+      ? pass('the live log renders from the same runLog the copy button exports')
+      : fail('logEvent does not drive renderRunLog — the on-screen log could diverge from the exported one')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

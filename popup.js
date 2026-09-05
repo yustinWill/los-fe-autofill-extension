@@ -295,6 +295,10 @@ const recordFieldDetail = (field, value, deliberate, status) => {
 const logEvent = (kind, data) => {
   try {
     runLog.push({ t: Date.now(), kind, data })
+    /* Same array the copy button exports, so the screen and a pasted bug report
+       can never tell different stories. Guarded because logging must never be
+       what breaks a run. */
+    renderRunLog()
   } catch (_) {
     /* never let logging break a run */
   }
@@ -308,6 +312,106 @@ const persistRunLog = () => {
   const btn = document.getElementById('copyLogBtn')
 
   if (btn) btn.classList.remove('hidden')
+}
+
+// ── Running state: inert config, live log, cancel ─────────────────────────────
+/**
+ * A run takes minutes and used to report ONE line of status.
+ *
+ * Three consequences the user hit (2026-09-05): the config stayed editable
+ * mid-run so a plan could be changed out from under the run that was reading it;
+ * a slow step and a stuck step looked identical; and there was no way to stop a
+ * run that had clearly gone wrong short of closing the popup — which DESTROYS
+ * the log, because the popup is torn down on close.
+ */
+let runCancelled = false
+
+/** Thrown at a checkpoint so one `catch` unwinds the run. Carries a flag rather
+ *  than being matched on message text, which would break the moment it is
+ *  reworded or localised. */
+const cancelError = () => Object.assign(new Error('run cancelled by user'), { cancelled: true })
+
+/**
+ * 🔑 COOPERATIVE cancellation — the only kind available here.
+ *
+ * A run is a chain of `chrome.scripting.executeScript` calls, and an injected
+ * function CANNOT be interrupted once it is in the page. So cancel takes effect
+ * at the next CHECKPOINT, never mid-injection. That is why the button says
+ * "Menghentikan…" after the click: pretending it stopped instantly would be a
+ * lie the user could see through the moment one more field filled.
+ */
+const throwIfCancelled = () => { if (runCancelled) throw cancelError() }
+
+const runLogView = document.getElementById('runLogView')
+
+/** One compact line per event. Keeps the last 200 — a Lengkap run emits a few
+ *  hundred and an unbounded list makes the popup crawl. */
+/* A hoisted DECLARATION, not a const arrow: `logEvent` above calls it, and a
+   const in its temporal dead zone makes even `typeof` throw ReferenceError —
+   exactly the class of bug check.js's load pass exists to catch. */
+function renderRunLog() {
+  if (!runLogView) return
+
+  const brief = e => {
+    const d = e.data
+    if (d === undefined || d === null) return ''
+    if (typeof d === 'string') return d
+    if (typeof d !== 'object') return String(d)
+    if (e.kind === 'status') return String(d.text ?? '')
+    const bits = []
+    for (const [k, v] of Object.entries(d)) {
+      if (v === null || v === undefined || typeof v === 'object') continue
+      bits.push(k + '=' + v)
+      if (bits.length === 4) break
+    }
+    return bits.join(' ') || Object.keys(d).join(',')
+  }
+
+  const t0 = runLog.length ? runLog[0].t : Date.now()
+
+  runLogView.innerHTML = ''
+  for (const e of runLog.slice(-200)) {
+    const line = document.createElement('div')
+    const err = /error|fail/i.test(e.kind) || (e.data && e.data.state === 'error')
+    line.className = 'run-log-line' + (err ? ' is-err' : (e.data && e.data.state === 'done' ? ' is-done' : ''))
+    const secs = Math.max(0, Math.round((e.t - t0) / 1000))
+    line.innerHTML =
+      '<span class="run-log-t">' + String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0') + '</span>' +
+      '<span class="run-log-k">' + e.kind + '</span>' +
+      '<span class="run-log-d"></span>'
+    line.lastChild.textContent = brief(e)
+    runLogView.appendChild(line)
+  }
+  runLogView.scrollTop = runLogView.scrollHeight
+}
+
+/**
+ * Flip the whole popup between idle and running.
+ *
+ * The config is DIMMED AND INERT, never hidden or emptied: it is the context
+ * that makes the log mean anything, and a panel that vanishes mid-run reads as
+ * a crash. `pointer-events: none` on the container is the entire guard — see
+ * popup.css — rather than disabling each control and having to remember which
+ * ones to re-enable.
+ */
+const setRunning = on => {
+  runCancelled = false
+  document.body.classList.toggle('is-running', on)
+
+  if (runLogView) runLogView.classList.toggle('hidden', !on && !runLog.length)
+
+  if (!quickFillBtn) return
+
+  if (on) {
+    quickFillBtn.dataset.idleLabel = quickFillBtn.dataset.idleLabel || quickFillBtn.textContent
+    quickFillBtn.textContent = '⏹ Batal'
+    quickFillBtn.classList.add('is-cancel')
+    quickFillBtn.disabled = false      // it IS the cancel control now
+  } else {
+    quickFillBtn.textContent = quickFillBtn.dataset.idleLabel || '⚡ Quick Fill'
+    quickFillBtn.classList.remove('is-cancel')
+    quickFillBtn.disabled = false
+  }
 }
 
 /**
@@ -1802,6 +1906,10 @@ async function runQuickFill() {
   runLog = []
   fieldDetail = {}
 
+  /* Dims + locks the config and turns Quick Fill into Batal. Called BEFORE the
+     first setStatus so the very first line is already visible in the live log. */
+  setRunning(true)
+
   setStatus('Starting…')
 
   /* Mounted only on the credit-application create route, so everywhere else
@@ -1835,7 +1943,11 @@ async function runQuickFill() {
   } catch (e) { /* page not scriptable — the run proceeds unspied */ }
 
   try {
-    await runAllWizardSteps({ onStep: n => setStatus(String(n)) })
+    /* onStep fires once per scan/fill pass, which makes it the natural
+       checkpoint for the wizard half of the run. Verified safe to throw from:
+       runAllWizardSteps wraps these calls in `try … finally` with NO catch, so
+       a cancel propagates to runQuickFill instead of being swallowed. */
+    await runAllWizardSteps({ onStep: n => { throwIfCancelled(); setStatus(String(n)) } })
 
     if (!planned) {
       /* The scope decides what "done" can even mean, so say which one ran
@@ -1852,6 +1964,14 @@ async function runQuickFill() {
 
     return true
   } catch (err) {
+    /* A user-requested stop is NOT a failure. Reporting it red taught the user
+       to distrust red, which is the actual cost of conflating the two. */
+    if (err && err.cancelled) {
+      setStatus('Dibatalkan oleh pengguna', 'error')
+      logEvent('run-cancelled', { at: 'checkpoint' })
+
+      return false
+    }
     logEvent('run-error', { message: String((err && err.message) || err), stack: err && err.stack })
     setStatus('Failed: ' + (err && err.message ? err.message : String(err)), 'error')
 
@@ -1871,17 +1991,38 @@ async function runQuickFill() {
     } catch (e) { /* page gone — nothing to read */ }
     logEvent('run-end', {})
     persistRunLog()
+
+    /* LAST, and in `finally`: whatever happened — done, failed, cancelled, or a
+       throw from the snapshot above — the popup must never be left with a locked
+       config and a button reading "Batal" for a run that is no longer going. */
+    setRunning(false)
   }
 }
 
 quickFillBtn.addEventListener('click', async () => {
+  /* Mid-run the SAME button is the cancel control. A dedicated Batal button
+     would sit dead for the 99% of the time no run is going, and the run's own
+     button is where the user is already looking. */
+  if (document.body.classList.contains('is-running')) {
+    runCancelled = true
+    quickFillBtn.textContent = 'Menghentikan…'
+    quickFillBtn.disabled = true
+    /* ⚠️ Honest wording. Cancellation is COOPERATIVE — an injected function
+       cannot be interrupted, so the run stops at its next checkpoint, not now.
+       "Dibatalkan" here would be a claim the next filled field contradicts. */
+    setStatus('Menghentikan setelah langkah ini…')
+
+    return
+  }
+
   quickFillBtn.disabled = true
 
   try {
     await runQuickFill()
   } finally {
+    /* setRunning(false) already restored the label and the enabled state; this
+       is the belt-and-braces path for a throw before setRunning ever ran. */
     quickFillBtn.disabled = false
-    // The label never changed, so there is nothing to restore.
   }
 })
 
@@ -2410,14 +2551,28 @@ async function fillPlannedQualitative() {
 }
 
 async function runPlannedExtras() {
+  /* 🔑 THE CANCEL CHECKPOINTS.
+     Between passes, never inside one. A pass is a chain of injected functions
+     that cannot be interrupted, and stopping halfway through (say, collaterals)
+     would leave a half-built record that is worse to clean up than the whole
+     one. Each `throwIfCancelled` unwinds to runQuickFill's catch, which reports
+     "Dibatalkan" rather than a failure. `setStatus` doubles as the live-log
+     line, so the user can see which pass is running and how far it got. */
+  throwIfCancelled(); setStatus('Fasilitas…')
   const facilities = await fillPlannedFacilities()
+  throwIfCancelled(); setStatus('Baris tabel…')
   const rows = await fillPlannedRows()
+  throwIfCancelled(); setStatus('Agunan…')
   const agunanRun = await fillPlannedCollaterals()
   const agunan = Array.isArray(agunanRun) ? agunanRun : agunanRun.collaterals
   const facilityLinks = Array.isArray(agunanRun) ? null : agunanRun.assigned
+  throwIfCancelled(); setStatus('Mutasi rekening…')
   const mutations = await fillPlannedMutations()
+  throwIfCancelled(); setStatus('Laporan keuangan…')
   const financialReports = await fillPlannedFinancialReports()
+  throwIfCancelled(); setStatus('Dokumen…')
   const documents = await fillPlannedDocuments()
+  throwIfCancelled(); setStatus('Data kualitatif…')
   const qualitative = await fillPlannedQualitative()
 
   /* Every pass's RAW return, before it is compressed into `problems`. The

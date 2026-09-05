@@ -28,9 +28,20 @@
     <button id="copyLogBtn" class="status-copy hidden" title="Salin log run terakhir">Salin log</button>
   </div>
 
+  <!-- Live run log. The status bar is ONE line and a run is many minutes; without
+       this the user watches a spinner and cannot tell a slow step from a stuck
+       one. Hidden until a run starts, and it renders the SAME `runLog` events the
+       copy button exports — one source, so what is on screen and what gets pasted
+       into a bug report can never disagree. -->
+  <div id="runLogView" class="run-log hidden" aria-live="polite"></div>
+
   <!-- Simulation options. Populated by simulation-ui.js and shown ONLY on the
        credit-application create route; everywhere else Quick Fill behaves as it
-       always did. Empty in markup because it is entirely data-driven. -->
+       always did. Empty in markup because it is entirely data-driven.
+
+       ⚠️ During a run this is DIMMED AND INERT (`.is-running` on <body>), not
+       rebuilt or emptied: the config that produced the run must stay READABLE
+       while it happens, or the log loses the context that explains it. -->
   <section id="simPanel" class="sim-panel hidden"></section>
 
   <!-- ── Step 1: Detect ──────────────────────────────────────────────────── -->
