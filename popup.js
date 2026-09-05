@@ -326,6 +326,9 @@ const persistRunLog = () => {
  */
 let runCancelled = false
 
+/** The config panel's fold state before a run, restored when it ends. */
+let simWasCollapsed = false
+
 /** Wall-clock start of the current run, for the elapsed readout. */
 let runStartedAt = 0
 
@@ -363,19 +366,44 @@ const runLogView = document.getElementById('runLogView')
 function renderRunLog() {
   if (!runLogView) return
 
+  /* One LINE per event, not a paragraph. The first version printed every
+     `key=value`, and a `fields` event with four full descriptor names filled a
+     third of the popup; `fieldValues` fell through to `Object.keys().join()`
+     and printed every field name on the form. The full detail is one click
+     away in "Salin log" — the screen is for seeing where the run IS. */
+  const CLIP = 120
+  const clip = t => (t.length > CLIP ? t.slice(0, CLIP - 1) + '…' : t)
+  /* Every descriptor starts with it; on a 380px popup it is pure noise. */
+  const shortKey = k => String(k).replace(/^CREDIT_APPLICATION_/, '')
+
   const brief = e => {
     const d = e.data
     if (d === undefined || d === null) return ''
-    if (typeof d === 'string') return d
+    if (typeof d === 'string') return clip(d)
     if (typeof d !== 'object') return String(d)
     if (e.kind === 'status') return String(d.text ?? '')
+    if (Array.isArray(d)) return `${d.length} item${d.length === 1 ? '' : 's'}`
+
+    const entries = Object.entries(d)
+
+    /* name → status maps (`fields`): count the oks, NAME the rest. Which field
+       was not_found is the one thing worth reading off the screen. */
+    if (e.kind === 'fields') {
+      const ok = entries.filter(([, v]) => v === 'ok').length
+      const rest = entries.filter(([, v]) => v !== 'ok').map(([k, v]) => `${v}: ${shortKey(k)}`)
+
+      return clip(`${entries.length} fields · ${ok} ok` + (rest.length ? ' · ' + rest.join(' · ') : ''))
+    }
+
     const bits = []
-    for (const [k, v] of Object.entries(d)) {
+    for (const [k, v] of entries) {
       if (v === null || v === undefined || typeof v === 'object') continue
-      bits.push(k + '=' + v)
+      bits.push(shortKey(k) + '=' + v)
       if (bits.length === 4) break
     }
-    return bits.join(' ') || Object.keys(d).join(',')
+    const more = entries.length - bits.length
+
+    return clip((bits.join(' ') || `${entries.length} entries`) + (more > 0 && bits.length ? ` +${more} more` : ''))
   }
 
   const t0 = runLog.length ? runLog[0].t : Date.now()
@@ -408,6 +436,18 @@ function renderRunLog() {
 const setRunning = on => {
   runCancelled = false
   document.body.classList.toggle('is-running', on)
+
+  /* Fold the config for the run and put the user's own fold back afterwards.
+     Folded, its header still names the fixture (SIM.projectName) and is the
+     tappable "peek" control; unfolded it would take the height the log needs.
+     Restored rather than left folded, because idle is when the config gets
+     EDITED and a click to unfold on every open is friction nobody asked for. */
+  try {
+    if (window.SIMUI && typeof SIMUI.setCollapsed === 'function' && isSimulationMounted()) {
+      if (on) { simWasCollapsed = Boolean(SIM.state.collapsed); SIMUI.setCollapsed(true) }
+      else SIMUI.setCollapsed(simWasCollapsed)
+    }
+  } catch (_) { /* panel not mounted on this route */ }
 
   if (runLogView) runLogView.classList.toggle('hidden', !on && !runLog.length)
 
@@ -1384,7 +1424,12 @@ executeBtn.addEventListener('click', async () => {
 
   const lockUI = () => {
     detectBtn.disabled = true
-    quickFillBtn.disabled = true
+    /* 🔴 NOT while a run is going. Quick Fill IS the cancel control then, and
+       locking it here left the user unable to stop a run during every fill
+       pass — only in the gaps between passes, which is where nobody is
+       looking. Measured on the live v1.0.91 popup: Batal rendered disabled
+       through "Fill pass 2…". setRunning owns that button for the run. */
+    if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = true
     allStepsCb.disabled = true
     executeBtn.disabled = true
     buildJsonBtn.disabled = true
@@ -1394,7 +1439,8 @@ executeBtn.addEventListener('click', async () => {
   }
   const unlockUI = () => {
     detectBtn.disabled = false
-    quickFillBtn.disabled = false
+    /* Same guard: re-enabling here would undo a pressed "Menghentikan…". */
+    if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = false
     allStepsCb.disabled = false
     executeBtn.disabled = false
     delayInput.disabled = false

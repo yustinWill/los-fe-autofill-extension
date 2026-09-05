@@ -353,6 +353,10 @@ window.SIMUI = (() => {
   }
 
   const setCollapsed = folded => {
+    /* Exposed to popup.js (v1.0.92): a run folds the panel so the log gets the
+       height, and unfolds it back to the user's own state when it ends. Guarded
+       because popup.js may call it before, or without, a mount. */
+    if (!root || !head) return
     SIM.state.collapsed = folded
     SIM.save()
     root.classList.toggle('hidden', folded)
@@ -403,5 +407,5 @@ window.SIMUI = (() => {
     head = null
   }
 
-  return { mount, unmount, render }
+  return { mount, unmount, render, setCollapsed }
 })()

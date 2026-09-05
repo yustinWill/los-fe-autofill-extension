@@ -1492,6 +1492,61 @@ if (!S) {
       : fail('v2FillDocuments must fall back to "no attachment" when /Wajib/ matches nothing — otherwise a narrow window silently attaches no required documents')
   }
 
+  console.log('\ndocked running layout: stop stays live, log fills, config folds')
+
+  {
+    const strip4 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src4 = strip4(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const ui4 = strip4(fs.readFileSync(path.join(dir, 'simulation-ui.js'), 'utf8'))
+    const css4 = fs.readFileSync(path.join(dir, 'popup.css'), 'utf8')
+
+    /* 🔴 THE functional one. lockUI runs on every fill pass and disabled the
+       Quick Fill button — which mid-run IS the cancel control. Measured on the
+       live v1.0.91 popup: Batal rendered disabled through "Fill pass 2…", so a
+       run could only be stopped in the gaps between passes. */
+    const lockBody = (src4.match(/const lockUI = \(\) => \{([\s\S]*?)\n  \}/) || [])[1] || ''
+    const lockGuarded = /contains\('is-running'\)\)\s*quickFillBtn\.disabled = true/.test(lockBody)
+
+    lockGuarded
+      ? pass('lockUI leaves the cancel control alone while a run is going')
+      : fail('lockUI disables quickFillBtn unconditionally — Batal is dead during every fill pass, exactly when the user wants it')
+
+    const unlockBody = (src4.match(/const unlockUI = \(\) => \{([\s\S]*?)\n  \}/) || [])[1] || ''
+    const unlockGuarded = /contains\('is-running'\)\)\s*quickFillBtn\.disabled = false/.test(unlockBody)
+
+    unlockGuarded
+      ? pass('unlockUI does not re-enable a pressed Menghentikan…')
+      : fail('unlockUI re-enables quickFillBtn mid-run, undoing the disabled state a pressed cancel set')
+
+    /* The fold is what gives the log the height; the restore is what keeps the
+       idle popup editable without a click. Both, or neither is a feature. */
+    const folds = /SIMUI\.setCollapsed\(true\)/.test(src4)
+    const restores = /SIMUI\.setCollapsed\(simWasCollapsed\)/.test(src4)
+    const exported = /return \{[^}]*\bsetCollapsed\b[^}]*\}/.test(ui4)
+
+    folds && restores && exported
+      ? pass('a run folds the config and restores the user\'s own fold state after')
+      : fail(`config fold is incomplete — folds:${folds} restores:${restores} exported:${exported}`)
+
+    /* Log lines are for seeing where the run IS; the paragraph version buried
+       the status lines under field-name dumps. */
+    const shortens = /replace\(\/\^CREDIT_APPLICATION_\//.test(src4)
+    const clips = /const CLIP = \d+/.test(src4)
+
+    shortens && clips
+      ? pass('log lines drop the CREDIT_APPLICATION_ prefix and are clipped')
+      : fail('renderRunLog prints raw descriptor names unclipped — a fields event fills a third of the popup')
+
+    /* No outer scroll: the log is the ONE scrolling region, and the stop
+       control + folded header are pinned beneath it. */
+    const docked = /body\.is-running \{[^}]*overflow:\s*hidden/.test(css4)
+    const logFills = /body\.is-running #runLogView \{[^}]*flex:\s*1 1 0/.test(css4)
+
+    docked && logFills
+      ? pass('running layout is docked: body does not scroll, the log fills and scrolls')
+      : fail('the running layout still relies on an outer body scroll to reach the config — nothing on screen says it is down there')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

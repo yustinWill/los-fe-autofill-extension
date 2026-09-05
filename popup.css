@@ -896,3 +896,64 @@ body.is-running #simPanel .sim-head { pointer-events: auto; cursor: pointer; }
 }
 
 .run-again-q { flex: 1; font-size: 11px; font-weight: 600; color: #92400e; }
+
+/* ── Docked running layout (v1.0.92) ─────────────────────────────────────────
+   Supersedes the order/min-height rules above. Pushing the config below the
+   fold and hoping for a scroll did not read as scrollable at all (user,
+   2026-09-06): the log had its own scroll, the body another, and nothing on
+   screen said the config was down there.
+
+   So: NO outer scroll. The popup is its full 600px, the LOG is the one region
+   that scrolls and fills whatever is left, and the stop control plus the
+   config's FOLDED HEADER are pinned beneath it — always visible, the header
+   naming the fixture and reading as the tap target it is. Unfolding gives the
+   config a capped share with its own scroll, and the log shrinks to make room. */
+body.is-running { height: 600px; max-height: 600px; overflow: hidden; }
+
+body.is-running #runLogView {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+body.is-running #stepDetect { flex: none; }
+
+body.is-running #simPanel {
+  flex: none;
+  max-height: 44%;
+  overflow-y: auto;
+  padding: 0;
+  /* Dim the BODY, not the header: a greyed-out header reads as disabled, and
+     it is the one part of the panel that is live. */
+  opacity: 1;
+  filter: none;
+}
+body.is-running #simPanel .sim-body { opacity: 0.6; filter: grayscale(0.3); padding: 10px 12px; }
+
+/* The lock badge moves INTO the header line — a separate block cost a row. */
+body.is-running #simPanel::before { display: none; }
+body.is-running #simPanel .sim-head {
+  margin: 0;
+  padding: 9px 12px;
+  background: #eef2ff;
+  border-top: 1px solid #c7d2fe;
+  border-bottom: 1px solid #c7d2fe;
+}
+body.is-running #simPanel .sim-head:hover { background: #e0e7ff; }
+body.is-running #simPanel .sim-head-title::after {
+  content: ' · terkunci';
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+body.is-running .app-footer { display: none; }
+
+/* A visible track, so the log reads as scrollable rather than as a box that
+   happens to be full. */
+.run-log { scrollbar-width: thin; scrollbar-color: #475569 transparent; }
+.run-log::-webkit-scrollbar { width: 7px; }
+.run-log::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+.run-log::-webkit-scrollbar-track { background: transparent; }
