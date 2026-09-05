@@ -4244,88 +4244,97 @@ async function v2FillDocuments(plan, openWait = 900) {
     } else {
       /* Re-query every iteration: saving a row re-renders the table, so a
          pencil captured up front is detached by the time its turn comes. */
-      for (let i = 0; i < 12; i++) {
-        const block2 = blockEl(target0.id, target0.heading)
-        /* "Ubah" is the pre-migration name; DataTable's RowActions emit "Edit"
-           (aria-label AND title) — measured 2026-08-20. */
-        const pencils = [...block2.querySelectorAll('button[aria-label="Ubah"], button[aria-label="Edit"], button[title="Edit"]')]
-        /**
-         * 🔴 BOUND THE UPWARD WALK. `FlushTable` is a CSS grid of divs with no
-         * row element to key on, so the row has to be reconstructed by climbing
-         * from the pencil — and an unbounded climb does not stop at the row, it
-         * reaches the TABLE. Measured 2026-08-17: one row's reconstructed text
-         * came back as "NAMA DOKUMEN TIPE DOKUMEN KETENTUAN LAMPIRAN AKSI …"
-         * — the whole table — so a sibling's "1 file" badge counted as THIS
-         * row's attachment and a genuinely empty row was skipped. The run
-         * reported success having filled one row fewer than it should.
-         *
-         * The upper bound is the fix: a single document row is comfortably
-         * under 200 characters, a table of them is not. Same length-bounded
-         * `cellOf` trick `v2AssignCollateralFacilities` already uses.
-         */
-        const ROW_TEXT_LIMIT = 200
-        const rowTextOf = p => {
-          let row = p.parentElement
-          let best = ''
+      /**
+       * 🔴 ONE VISIT PER ROW, and the facts come from the DRAWER when the row
+       * does not show them.
+       *
+       * "Wajib" (Ketentuan) and "N file" (Lampiran) are DataTable COLUMNS, and
+       * DataTable folds the columns it cannot fit into each row's expander
+       * drawer. On the current build that is the NORMAL state at a working
+       * window width — the visible row is name / type / actions only. Two
+       * versions of this loop got that wrong:
+       *   - matching row TEXT on /Wajib/ failed CLOSED: nothing matched, nothing
+       *     attached, no error (the audit's "latent" finding, live here);
+       *   - v1.0.90's fallback to "no N file in the row" failed OPEN: the count
+       *     is never in the row either, so EVERY row was "unattached" forever —
+       *     the first pencil was opened 12 times, the same row re-saved 12
+       *     times, the mandatory rows below it never reached, and 24
+       *     outcome-less note entries produced a false "24 dokumen belum
+       *     tersimpan". Measured 2026-09-06: 391s of a 14m33s run, and Ajukan
+       *     still refused on "Formulir Permohonan Kredit wajib diunggah".
+       *
+       * DataTable renders every folded column INSIDE the drawer as label/value
+       * (`hidden.map(...)`, DataTable.jsx), and the row's own `expand` adds
+       * "Belum ada lampiran" when nothing is attached. So: enumerate the rows
+       * ONCE; for each, read requirement + attachment from the row text if
+       * present, else open its caret (`[data-m="rowcaret"] button`, aria-label
+       * "Rincian") and read the drawer — the row's next sibling. Attach ONLY
+       * where Wajib and nothing attached. Record EVERY row's fate, with an
+       * `outcome` when a save was attempted or a `skipped` reason when not, so
+       * the summary can tell a skipped optional row from an unsaved one.
+       */
+      const PENCIL = 'button[aria-label="Ubah"], button[aria-label="Edit"], button[title="Edit"]'
+      const rowsIn = () => {
+        const b = blockEl(target0.id, target0.heading)
 
-          for (let d = 0; d < 6 && row; d++) {
-            const t = (row.innerText || '').replace(/\s+/g, ' ').trim()
+        if (!b) return []
 
-            if (t.length > ROW_TEXT_LIMIT) break
-            if (t.length > best.length) best = t
-            row = row.parentElement
+        /* A row is the grid div holding the pencil: DataTable lays each row out
+           with an inline `grid-template-columns`. Deduped, one pencil per row. */
+        return [...b.querySelectorAll(PENCIL)]
+          .map(p => p.closest('[style*="grid-template-columns"]'))
+          .filter((r, i, arr) => r && arr.indexOf(r) === i)
+      }
+      const textOf = el => ((el && el.innerText) || '').replace(/\s+/g, ' ').trim()
+      const nameOf = row => ((row.innerText || '').split('\n').map(l => l.trim()).find(Boolean) || '?').slice(0, 80)
+      const REQ = /\b(Wajib|Opsional|Dikecualikan|Menyusul)\b/
+      const HAS_FILE = /\d+\s*file\b/i
+      const NO_FILE = /Belum ada lampiran/i
+
+      const total = Math.min(rowsIn().length, 12)
+
+      for (let i = 0; i < total; i++) {
+        /* Re-query every iteration: saving a row re-renders the table, so a row
+           captured up front is detached by the time its turn comes. */
+        const row = rowsIn()[i]
+
+        if (!row) break
+
+        const name = nameOf(row)
+        let facts = textOf(row)
+
+        /* Facts not on the row → open the drawer and read it. Left open: it is
+           harmless, and visiting a row twice is exactly what this loop no
+           longer does. */
+        if (!REQ.test(facts) || !(HAS_FILE.test(facts) || NO_FILE.test(facts))) {
+          const caret = row.querySelector('[data-m="rowcaret"] button')
+
+          if (caret && caret.getAttribute('aria-expanded') !== 'true') {
+            caret.click()
+            await wait(350)
           }
 
-          return best
+          facts = textOf(row) + ' ' + textOf(row.nextElementSibling)
         }
 
-        const unattached = p => !/\d+\s*file/i.test(rowTextOf(p))
+        if (!REQ.test(facts)) { report.required.push({ block: target0.id, row: name, skipped: 'ketentuan tidak terbaca' }); continue }
+        if (!/\bWajib\b/.test(facts)) { report.required.push({ block: target0.id, row: name, skipped: 'bukan wajib' }); continue }
+        if (HAS_FILE.test(facts)) { report.required.push({ block: target0.id, row: name, skipped: 'sudah ada lampiran' }); continue }
 
-        /* Wajib AND nothing attached yet. The attachment cell prints "N file"
-           once a document is on the row, so its absence is the tell. */
-        const strict = pencils.find(p => /Wajib/.test(rowTextOf(p)) && unattached(p))
+        const pencil = row.querySelector(PENCIL)
 
-        /**
-         * 🔴 FALLS BACK RATHER THAN FAILING CLOSED.
-         *
-         * Both "Wajib" and "N file" are DataTable COLUMNS, and DataTable SHEDS
-         * columns into the expander drawer when the table is narrow. When the
-         * requirement column sheds, `/Wajib/` matches nothing, `target` is
-         * undefined and this loop used to `break` — attaching NOTHING and
-         * reporting no error. The submit then fails on missing mandatory
-         * documents, far from the cause.
-         *
-         * So when the strict filter finds nothing, retry on "no file attached"
-         * alone. An optional row that gains a document is harmless; a mandatory
-         * row that is silently skipped blocks the submit.
-         *
-         * ⚠️ This cannot change a case that already works: the fallback only
-         * runs where the old code had already given up. The enclosing
-         * `i < 12` cap still bounds it, and once every row shows a file both
-         * filters agree there is nothing left.
-         */
-        const target = strict || pencils.find(unattached)
-
-        if (!target) break
-
-        if (!strict) report.required.push({ ok: true, block: target0.id, note: 'requirement column not visible (shed to drawer) — matched on missing attachment instead' })
+        if (!pencil) { report.required.push({ block: target0.id, row: name, outcome: 'no pencil' }); continue }
 
         /* Same reasoning as the qualitative pass: work the table the way a
            person does, on screen, rather than clicking a row nobody has seen. */
-        try { target.scrollIntoView({ block: 'center', behavior: 'auto' }); await wait(60) } catch (err) { /* detached */ }
+        try { pencil.scrollIntoView({ block: 'center', behavior: 'auto' }); await wait(60) } catch (err) { /* detached */ }
 
-        target.click()
+        pencil.click()
         await wait(openWait)
-
-        const label = (() => {
-          const box = dialog()
-
-          return box ? (box.innerText || '').split('\n').find(l => l.trim()) : '?'
-        })()
 
         const outcome = await completeModal(`dokumen-wajib-${i + 1}.pdf`)
 
-        report.required.push({ block: target0.id, row: label, outcome })
+        report.required.push({ block: target0.id, row: name, outcome })
 
         if (outcome !== 'saved') break
         await wait(500)

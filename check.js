@@ -1480,16 +1480,11 @@ if (!S) {
   }
 
   {
-    /* Mandatory documents must FAIL OPEN. "Wajib" and "N file" are DataTable
-       columns that shed into the drawer at narrow widths; the strict filter then
-       matched nothing, the loop broke, and NOTHING was attached with no error —
-       the submit failed later on missing documents, far from the cause. */
-    const drv2 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
-    const hasFallback = /const target = strict \|\| pencils\.find\(unattached\)/.test(drv2)
-
-    hasFallback
-      ? pass('the mandatory-document pass falls back when the Wajib column is shed')
-      : fail('v2FillDocuments must fall back to "no attachment" when /Wajib/ matches nothing — otherwise a narrow window silently attaches no required documents')
+    /* RETIRED 2026-09-06. This block asserted v1.0.90's "fall back to any row
+       without N file" — which was itself the bug: with the count folded into
+       the drawer, every row is "unattached", so it re-opened the first row 12
+       times. The replacement invariants live in the "mandatory documents"
+       section below. Kept as prose so the next reader does not reintroduce it. */
   }
 
   console.log('\ndocked running layout: stop stays live, log fills, config folds')
@@ -1545,6 +1540,54 @@ if (!S) {
     docked && logFills
       ? pass('running layout is docked: body does not scroll, the log fills and scrolls')
       : fail('the running layout still relies on an outer body scroll to reach the config — nothing on screen says it is down there')
+  }
+
+  console.log('\nmandatory documents: one visit per row, facts from the drawer')
+
+  {
+    /**
+     * 🔴 Two versions of this loop failed in opposite directions on the same
+     * fact: "Wajib" and "N file" are DataTable COLUMNS that fold into the row's
+     * drawer at a normal window width. Matching row text on /Wajib/ attached
+     * nothing; v1.0.90's "no N file in the row" fallback opened the FIRST row 12
+     * times and never reached the mandatory ones (391s, false "24 dokumen belum
+     * tersimpan", Ajukan still refused — measured 2026-09-06).
+     */
+    const strip5 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const drv5 = strip5(fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8'))
+    const docs = drv5.slice(drv5.indexOf('async function v2FillDocuments'))
+    const loop = docs.slice(docs.indexOf('const rowsIn = '), docs.indexOf('// ── 2. Optional rows'))
+
+    const readsDrawer = /\[data-m="rowcaret"\] button/.test(loop) && /row\.nextElementSibling/.test(loop)
+
+    readsDrawer
+      ? pass('the pass opens a row\'s Rincian caret and reads its drawer when the row hides the facts')
+      : fail('v2FillDocuments does not read the drawer — Ketentuan and Lampiran are folded there at a normal width, so it cannot know which rows are Wajib')
+
+    /* Index-driven over a snapshot COUNT, never `find(first unattached)` — the
+       shape that re-opened one row twelve times. */
+    const visitsOnce = /const total = Math\.min\(rowsIn\(\)\.length, 12\)/.test(loop) && /const row = rowsIn\(\)\[i\]/.test(loop) && !/pencils\.find\(/.test(loop)
+    visitsOnce
+      ? pass('rows are visited by index, each once')
+      : fail('the document loop still picks "the first matching pencil" each iteration — with the count folded away that is the same row every time')
+
+    /* Every recorded row carries EITHER an outcome OR a skipped reason. The
+       outcome-less `note` entries are what inflated the summary. */
+    const noNotes = !/report\.required\.push\(\{[^}]*\bnote:/.test(loop)
+    const recordsSkips = /skipped: 'bukan wajib'/.test(loop) && /skipped: 'sudah ada lampiran'/.test(loop) && /skipped: 'ketentuan tidak terbaca'/.test(loop)
+    noNotes && recordsSkips
+      ? pass('every row is recorded with an outcome or a skipped reason, never a bare note')
+      : fail('the pass records outcome-less notes or fails to name why a row was skipped — the summary cannot tell a skipped optional row from an unsaved one')
+
+    /* And the summary must honour that distinction. */
+    const src5 = strip5(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const seg = src5.slice(src5.indexOf('if (documents) {'), src5.indexOf('dokumen belum tersimpan') + 40)
+    const attemptedOnly = /d\.outcome !== undefined && d\.outcome !== 'saved'/.test(seg)
+    const namesUnread = /ketentuan tidak terbaca/.test(src5.slice(src5.indexOf('if (documents) {')))
+
+    attemptedOnly && namesUnread
+      ? pass('"belum tersimpan" counts only attempted saves, and an unreadable Ketentuan is named separately')
+      : fail('popup.js still counts every outcome-less document entry as unsaved — a skipped Opsional row would read as a failed save')
   }
 
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')

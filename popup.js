@@ -2887,10 +2887,23 @@ async function runPlannedExtras() {
     if (documents.ok === false) {
       problems.push(`dokumen: ${documents.reason || 'gagal'}`)
     } else {
-      const unsaved = [...(documents.required || []), ...(documents.optional || [])]
-        .filter(d => d.outcome !== 'saved')
+      const entries = [...(documents.required || []), ...(documents.optional || [])]
+
+      /* 🔴 Only rows the pass ATTEMPTED count as unsaved. A row skipped because
+         it is Opsional or already carries a file has no `outcome`, and counting
+         it is how v1.0.90 reported "24 dokumen belum tersimpan" over 24 note
+         entries that were never saves in the first place (2026-09-06). Block
+         failures (`ok: false`) still count — nothing was attempted there
+         because nothing COULD be. */
+      const unsaved = entries.filter(d => (d.outcome !== undefined && d.outcome !== 'saved') || d.ok === false)
+
+      /* A requirement the pass could not read is NOT a skip to stay quiet about:
+         it means a Wajib row may have been passed over. Named separately so it
+         is never mistaken for a failed save. */
+      const unread = entries.filter(d => d.skipped === 'ketentuan tidak terbaca').length
 
       if (unsaved.length) problems.push(`${unsaved.length} dokumen belum tersimpan`)
+      if (unread) problems.push(`${unread} dokumen: ketentuan tidak terbaca`)
       /* Not a failure when the field pass already attached SLIK: the BU form
          renders SLIK as per-variant FILE FIELDS (…_COMPANY / …_SHAREHOLDER)
          which the generic fill covers, and the docs pass's dropzone hunt then
