@@ -1,5 +1,20 @@
 # driver-v1 — what it reaches, and what it cost to learn
 
+> ⚠️ **2026-09-05 — the route below has changed hands. Read this first.**
+>
+> los-fe completed its v2 migration: `src/app-v2/` was promoted to `src/app/`, the
+> `/v2` URL prefix was dropped (2026-09-04), and **`/credit-application/create` now
+> serves the v2 Kairos wizard.** Following the steps below against that URL measures
+> the *wrong app*, and will make every number here look refuted.
+>
+> **The surviving v1 surface is `/team-management/{list,create,detail/:id,update/:id}`**
+> — los-fe `src/App.tsx` pins it with `V1_ONLY_PREFIXES = ['/team-management']`, served
+> from `src/legacy/`. Verify v1 behaviour there.
+>
+> The coverage numbers below are **historical**. The CONTROL MECHANICS are not — they
+> still apply to any MUI + react-hook-form wizard, which is the reason this driver is
+> kept rather than deleted (see the header of `driver-v1.js`).
+
 **Written 2026-08-11**, from a full pass over the legacy KairosLOS credit
 application (`los-fe`, `/credit-application/create`). Every number here was
 measured in a browser against a running app, not reasoned about.

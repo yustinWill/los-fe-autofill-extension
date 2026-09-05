@@ -177,6 +177,22 @@ if (!S) {
   S.isCreditApplication('http://localhost:3000/v2/credit-application/list')
     ? fail('detected the LIST route — the panel would offer options that cannot apply')
     : pass('ignores non-create routes')
+
+  /* 🔴 THE PREFIX IS GONE — and the two assertions above CANNOT SEE THAT.
+     los-fe dropped `/v2` on 2026-09-04 and `App.tsx`'s `V2Shim` redirects rather than
+     preserving it, so the real create form's `tab.url` has no prefix at all. Both cases
+     above pass IDENTICALLY whether or not the regex demands `/v2` — measured — because a
+     prefix-less URL was simply never fed in. An assertion that cannot fail is not evidence.
+
+     Sabotage check: put `\/v2` back into `simulation.js`'s `isCreditApplication` and this
+     pair goes red ALONE while the two above stay green. */
+  S.isCreditApplication('http://localhost:3000/credit-application/create')
+    ? pass('detects the create route WITHOUT the /v2 prefix')
+    : fail('missed the prefix-less create route — /v2 was dropped 2026-09-04, so the panel never mounts on the real form')
+
+  S.isCreditApplication('http://localhost:3000/credit-application/list')
+    ? fail('detected the prefix-less LIST route — the panel would offer options that cannot apply')
+    : pass('ignores non-create routes without the prefix')
 }
 
 // ── 3. Panel behaviour ────────────────────────────────────────────────────────

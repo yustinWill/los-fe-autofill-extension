@@ -382,7 +382,22 @@ window.SIM = (() => {
     return kind
   }
 
-  const isCreditApplication = url => /\/v2\/credit-application\/create/.test(String(url || ''))
+  /* 🔴 NO `/v2` HERE. The prefix was the migration's URL namespace and los-fe DROPPED it
+     on 2026-09-04 once v2 became the only UI (`src/constants/PageEnum.ts`:
+     CREDIT_APPLICATION_CREATE = '/credit-application/create'). `App.tsx`'s `V2Shim` keeps
+     old links alive with `<Navigate replace />` — a REDIRECT, so it rewrites the address
+     bar rather than preserving it. `tab.url` on the real create form therefore never
+     carries `/v2`, and the old anchored pattern made `mountSimulation` (popup.js) answer
+     false on the ONE route it exists for: no panel, no plan, and Quick Fill still reported
+     "Done — page + modals filled" having skipped every `runPlannedExtras` pass.
+
+     Matching loosely — not anchored, no `^` — is deliberate: it still matches a legacy
+     `/v2/...` URL during the shim's redirect window, so both shapes work.
+
+     ⚠️ It must stay NARROWER than the module: the wording in this file hardcodes
+     credit-application copy, so the panel must never mount on `/credit-application/list`,
+     `/detail/{id}`, `/update/{id}` or the debtor form. None contains this substring. */
+  const isCreditApplication = url => /\/credit-application\/create/.test(String(url || ''))
 
   return {
     COLLATERAL_TYPES,

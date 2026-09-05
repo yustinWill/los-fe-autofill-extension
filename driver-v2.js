@@ -3660,7 +3660,9 @@ async function v2AddFacilities(plan, openWait = 900) {
 
       if (!node) break
 
-      const candidates = [...node.querySelectorAll('label, .kai-label, span')]
+      /* No `.kai-label` — that class has never existed in los-fe (checked 2026-09-05);
+         it was invented here, not measured. The LABEL branch below wins anyway. */
+      const candidates = [...node.querySelectorAll('label, span')]
         .filter(el => !el.contains(input) && el.textContent.trim().length > 3)
 
       if (candidates.length) {
@@ -3960,7 +3962,10 @@ async function v2AddFacilities(plan, openWait = 900) {
  *
  *   1. **The rows have no "Tambah" opener at all.** A mandatory document row
  *      already EXISTS — the BE seeds it from the product — and is opened by the
- *      row's PENCIL, an IconButton whose only handle is `aria-label="Ubah"`.
+ *      row's PENCIL, an IconButton. ⚠️ Its accessible name is `aria-label="Edit"`,
+ *      NOT "Ubah" — corrected 2026-09-05 against los-fe origin/staging. The
+ *      selector list below carries both, so this was harmless, but do not
+ *      re-derive "Ubah" from this comment.
  *      `v2AddRows` finds its opener by exact BUTTON TEXT, and a pencil has none.
  *   2. **Both blocks' add buttons carry the SAME label, "Upload Dokumen"**, so
  *      even the add path cannot tell Dokumen Pengajuan Kredit from Dokumen

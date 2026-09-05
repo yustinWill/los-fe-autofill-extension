@@ -8,9 +8,33 @@
 // file, no imports, no shared helpers. That is why `sleep`, `waitFor`,
 // `getFiberFieldName` and friends are redeclared inside each one.
 //
-// Targets the legacy CustomFormWizard (src/components/custom/CustomFormWizard):
-// MUI markup, so fields are addressable by `input[name="FIELD"]` and control
-// kind is read off MUI's own class names.
+// Targets the legacy CustomFormWizard (src/legacy/**, formerly
+// src/components/custom/CustomFormWizard): MUI markup, so fields are addressable by
+// `input[name="FIELD"]` and control kind is read off MUI's own class names.
+//
+// ─── 🔑 KEEP THIS FILE. It is not dead code. ──────────────────────────────────
+//
+// 2026-09-05. los-fe finished its v2 migration: `src/app-v2/` was promoted to
+// `src/app/`, the v1 credit application is GONE, and `/credit-application/create`
+// now serves the v2 Kairos wizard. It would be easy to read that as "v1 is over".
+// It is not, for two independent reasons:
+//
+//   1. v1 STILL RUNS IN THIS APP. los-fe `src/App.tsx` declares
+//      `V1_ONLY_PREFIXES = ['/team-management']`, and those four pages
+//      (list/create/detail/:id/update/:id) still render from `src/legacy/`.
+//      This driver is the only thing that can fill them.
+//
+//   2. ~78% of this file is NOT LOS-specific. `v1Detect`, `v1FillField`,
+//      `v1ReadValues`, `v1RevealGated`, the confirm pair and the five modal
+//      functions are generic MUI + react-hook-form mechanics — the live-dialog
+//      rule, the RHF-store read, the Cleave `insertText` handling. They transfer
+//      to ANY MUI + RHF form, which is why the user asked for them to be kept
+//      (2026-09-05): a future similar form gets this for free.
+//
+// Nothing about keeping it costs anything: `drivers.js` `pageVariant()` selects by
+// DOM markers, never by URL, and it tests v2 FIRST — so on a v2 page this file is
+// never reached. `check.js` asserts driver capability PARITY across v1 and v2, so a
+// half-removal of the v1 registration fails the suite loudly rather than silently.
 
 // ─── Page-context detect function ─────────────────────────────────────────────
 // Self-contained — runs in world:'MAIN'. Peeks select options WITHOUT leaving them open.

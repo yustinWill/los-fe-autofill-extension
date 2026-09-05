@@ -364,7 +364,20 @@ function simOverride(label) {
        able to build a Perorangan application. Wired 2026-08-15.
        ⚠️ Step 2's field, `DEBTOR_GENERAL_DATA_DEBTOR_TYPE`
        (creditApplication.json:621). */
-    'jenis calon debitur': activePlan.debtorType
+    'jenis calon debitur': activePlan.debtorType,
+
+    /* 🔴 The two step-4 GATES must agree with the plan. smartDefault answers
+       the first pill ("Tidak"), and with a gate at Tidak neither the table
+       nor its opener exists — so a plan carrying a property collateral ended
+       "no Tambah Agunan on any step" while the run itself had just written
+       Tidak (N·BU-P Lengkap, 2026-08-21; underlying failed the same way,
+       silently). `undefined` when the plan wants none, so the pill falls
+       through to the old behaviour instead of deliberately closing a gate
+       the user may have opened by hand. */
+    'pengajuan kredit dengan agunan':
+      (activePlan.collaterals && activePlan.collaterals.length > 0) ? 'Ya' : undefined,
+    'pengajuan kredit dengan underlying':
+      (((activePlan.rows && activePlan.rows.underlying) || 0) > 0) ? 'Ya' : undefined
   }[key]
 }
 
@@ -4145,7 +4158,9 @@ async function v2AddFacilities(plan, openWait = 900) {
 
       if (!node) break
 
-      const candidates = [...node.querySelectorAll('label, .kai-label, span')]
+      /* No `.kai-label` — that class has never existed in los-fe (checked 2026-09-05);
+         it was invented here, not measured. The LABEL branch below wins anyway. */
+      const candidates = [...node.querySelectorAll('label, span')]
         .filter(el => !el.contains(input) && el.textContent.trim().length > 3)
 
       if (candidates.length) {
@@ -4445,7 +4460,10 @@ async function v2AddFacilities(plan, openWait = 900) {
  *
  *   1. **The rows have no "Tambah" opener at all.** A mandatory document row
  *      already EXISTS — the BE seeds it from the product — and is opened by the
- *      row's PENCIL, an IconButton whose only handle is `aria-label="Ubah"`.
+ *      row's PENCIL, an IconButton. ⚠️ Its accessible name is `aria-label="Edit"`,
+ *      NOT "Ubah" — corrected 2026-09-05 against los-fe origin/staging. The
+ *      selector list below carries both, so this was harmless, but do not
+ *      re-derive "Ubah" from this comment.
  *      `v2AddRows` finds its opener by exact BUTTON TEXT, and a pencil has none.
  *   2. **Both blocks' add buttons carry the SAME label, "Upload Dokumen"**, so
  *      even the add path cannot tell Dokumen Pengajuan Kredit from Dokumen
@@ -4773,18 +4791,44 @@ async function v2FillDocuments(plan, openWait = 900) {
     await wait(500)
   }
 
-  // ── 3. The SLIK dropzone — page level, not a modal ────────────────────────
+  // ── 3. The SLIK dropzones — page level, not a modal ───────────────────────
   if (spec.slik) {
-    const cell = document.querySelector('[data-field="CREDIT_APPLICATION_SLIK_FILE_LIST"]')
-    const input = cell && cell.querySelector('input[type=file]')
+    /* THREE possible fields, by debtor type: the Perorangan forms carry ONE
+       (`…SLIK_FILE_LIST`), the Badan Usaha form carries a PAIR (`…_COMPANY`,
+       `…_SHAREHOLDER`) that the page-level field pass usually attaches before
+       this capability runs. Hard-coding the Perorangan name made a green BU
+       run report "no SLIK dropzone on this step" while both BU files sat
+       attached (N·BU-P Lengkap, 2026-08-21). Already-attached counts as
+       satisfied — the goal is a file in the cell, not this code path being
+       the one that put it there. */
+    const SLIK_FIELDS = [
+      'CREDIT_APPLICATION_SLIK_FILE_LIST',
+      'CREDIT_APPLICATION_SLIK_FILE_LIST_COMPANY',
+      'CREDIT_APPLICATION_SLIK_FILE_LIST_SHAREHOLDER',
+    ]
+    const cells = SLIK_FIELDS
+      .map(name => ({ name, cell: document.querySelector('[data-field="' + name + '"]') }))
+      .filter(x => x.cell)
 
-    if (!input) {
+    if (!cells.length) {
       report.slik = { ok: false, reason: 'no SLIK dropzone on this step' }
     } else {
-      const before = (cell.innerText || '')
+      const results = []
 
-      await dropFile(input, 'slik-calon-debitur.pdf')
-      report.slik = { ok: /file diunggah|\.pdf/i.test(cell.innerText || '') && cell.innerText !== before }
+      for (const { name, cell } of cells) {
+        const before = (cell.innerText || '')
+
+        if (/file diunggah|\.pdf/i.test(before)) { results.push({ field: name, ok: true, already: true }); continue }
+
+        const input = cell.querySelector('input[type=file]')
+
+        if (!input) { results.push({ field: name, ok: false, reason: 'no file input in cell' }); continue }
+
+        await dropFile(input, 'slik-calon-debitur.pdf')
+        results.push({ field: name, ok: /file diunggah|\.pdf/i.test(cell.innerText || '') && cell.innerText !== before })
+      }
+
+      report.slik = { ok: results.every(r => r.ok), results }
     }
   }
 
@@ -5315,7 +5359,22 @@ window.SIM = (() => {
     return kind
   }
 
-  const isCreditApplication = url => /\/v2\/credit-application\/create/.test(String(url || ''))
+  /* 🔴 NO `/v2` HERE. The prefix was the migration's URL namespace and los-fe DROPPED it
+     on 2026-09-04 once v2 became the only UI (`src/constants/PageEnum.ts`:
+     CREDIT_APPLICATION_CREATE = '/credit-application/create'). `App.tsx`'s `V2Shim` keeps
+     old links alive with `<Navigate replace />` — a REDIRECT, so it rewrites the address
+     bar rather than preserving it. `tab.url` on the real create form therefore never
+     carries `/v2`, and the old anchored pattern made `mountSimulation` (popup.js) answer
+     false on the ONE route it exists for: no panel, no plan, and Quick Fill still reported
+     "Done — page + modals filled" having skipped every `runPlannedExtras` pass.
+
+     Matching loosely — not anchored, no `^` — is deliberate: it still matches a legacy
+     `/v2/...` URL during the shim's redirect window, so both shapes work.
+
+     ⚠️ It must stay NARROWER than the module: the wording in this file hardcodes
+     credit-application copy, so the panel must never mount on `/credit-application/list`,
+     `/detail/{id}`, `/update/{id}` or the debtor form. None contains this substring. */
+  const isCreditApplication = url => /\/credit-application\/create/.test(String(url || ''))
 
   return {
     COLLATERAL_TYPES,
