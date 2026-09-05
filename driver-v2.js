@@ -1250,7 +1250,16 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       return 'no_option'
     }
 
-    const target = match || opts[0]
+    /* 🔴 An AUTO-PICK must never land on a wildcard. `want` is '' whenever detect
+       saw no options — every geo CHILD select (Kota/Kecamatan/Kelurahan) is like
+       that, because its list only exists once the parent is set — and the fallback
+       used to take opts[0] blind. On Provinsi that meant "Lainnya", which maps to
+       no cities and left the Kota below it empty (user, 2026-09-06). This is the
+       in-page twin of popup.js's WILDCARD filter: the popup never sees these
+       options, so the rule has to live here too. A wildcard is still taken when
+       it is the ONLY option — an empty select is worse than a wildcard. */
+    const WILDCARD = /^(lainnya|lain-lain|lain lain|other|others)$/i
+    const target = match || opts.find(b => !WILDCARD.test(b.textContent.trim())) || opts[0]
 
     if (!target) { await closePanels(); return false }
     target.click()

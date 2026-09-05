@@ -142,6 +142,22 @@ const _ALIASES       = ['Budi', 'Agus', 'Hendra', 'Reza', 'Denny', 'Eko', 'Feri'
 const _CITIES        = ['Jakarta Selatan', 'Surabaya', 'Bandung', 'Medan', 'Semarang', 'Yogyakarta', 'Makassar', 'Denpasar', 'Palembang',
                         'Malang', 'Bogor', 'Bekasi', 'Tangerang', 'Solo', 'Balikpapan', 'Pontianak']
 const _STREET_NUMS   = ['1', '12', '27', '45', '88', '103', '5A', '10B', '17', '33', '76', '91C']
+
+/* 🔴 NOT `_PICK(_STREETS) + _PICK(_STREET_NUMS)`. Both lists are 12 long and
+   every address site drew from both at once, so the two cursors moved in
+   lockstep: street i always carried number i, "Jl. Sudirman No. 1" was always
+   followed by "Jl. Thamrin No. 12", and — since v1.0.86 seeds both cursors the
+   same — the pairing was IDENTICAL on every run. 12 addresses, not 144.
+
+   One cursor (the street's), and the number derived from it with a stride that
+   is coprime to 12 plus a run-dependent offset: within a run every street still
+   gets a distinct number, and across runs the pairing changes. */
+const _ADDR = () => {
+  const street = _PICK(_STREETS)
+  const i = (_ROT_STATE.get(_STREETS.join('\x01')) || 1) - 1   // the index _PICK just used
+
+  return `${street} No. ${_STREET_NUMS[(i * 5 + _ROT_SEED * 7) % _STREET_NUMS.length]}`
+}
 const _STREETS       = ['Jl. Sudirman', 'Jl. Thamrin', 'Jl. Gatot Subroto', 'Jl. Kuningan', 'Jl. HR Rasuna Said', 'Jl. Sisingamangaraja', 'Jl. Panglima Polim',
                         'Jl. Asia Afrika', 'Jl. Diponegoro', 'Jl. Ahmad Yani', 'Jl. Pemuda', 'Jl. Merdeka']
 const _POSITIONS     = ['Direktur', 'Manajer', 'Staff', 'Supervisor', 'Kepala Divisi', 'Komisaris',
@@ -244,9 +260,9 @@ const LABEL_DEFAULTS = {
   'tanggal pendirian':         '20-05-2010',
 
   // ── Alamat ─────────────────────────────────────────────────────────────────
-  get 'alamat tempat tinggal (sesuai ktp)'() { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
-  get 'alamat tempat tinggal (domisili)'()   { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
-  get 'alamat perusahaan'()  { return _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS) },
+  get 'alamat tempat tinggal (sesuai ktp)'() { return _ADDR() },
+  get 'alamat tempat tinggal (domisili)'()   { return _ADDR() },
+  get 'alamat perusahaan'()  { return _ADDR() },
   get 'kode pos'()           { return String(10000 + Math.floor(Math.random() * 89000)) },
   get 'rw'()                 { return String(Math.floor(Math.random() * 9) + 1).padStart(3, '0') },
   get 'rt'()                 { return String(Math.floor(Math.random() * 9) + 1).padStart(3, '0') },
@@ -316,7 +332,7 @@ const SMART_RULES = [
   [/\b(telepon perusahaan|company phone|nomor telepon)\b/, () => '021' + _R6() + _RD2()],
   [/\bfax\b/,                                                       '02112345679'],
   [/\b(website|url)\b/,                                             'https://example.com'],
-  [/\b(alamat|full address|address)\b/,                  () => _PICK(_STREETS) + ' No. ' + _PICK(_STREET_NUMS), 'Jl. A No. 1'],
+  [/\b(alamat|full address|address)\b/,                  () => _ADDR(), 'Jl. A No. 1'],
   [/\b(kelurahan|sub district)\b/,                       () => _PICK(['Menteng', 'Kebayoran', 'Kuningan', 'Senayan', 'Tebet', 'Cikini'])],
   [/\b(kecamatan|district)\b/,                           () => _PICK(['Menteng', 'Kebayoran Baru', 'Setiabudi', 'Tebet', 'Mampang'])],
   [/\b(kota|city|kabupaten)\b/,                          () => _PICK(_CITIES)],
@@ -1874,7 +1890,16 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
       return 'no_option'
     }
 
-    const target = match || opts[0]
+    /* 🔴 An AUTO-PICK must never land on a wildcard. `want` is '' whenever detect
+       saw no options — every geo CHILD select (Kota/Kecamatan/Kelurahan) is like
+       that, because its list only exists once the parent is set — and the fallback
+       used to take opts[0] blind. On Provinsi that meant "Lainnya", which maps to
+       no cities and left the Kota below it empty (user, 2026-09-06). This is the
+       in-page twin of popup.js's WILDCARD filter: the popup never sees these
+       options, so the rule has to live here too. A wildcard is still taken when
+       it is the ONLY option — an empty select is worse than a wildcard. */
+    const WILDCARD = /^(lainnya|lain-lain|lain lain|other|others)$/i
+    const target = match || opts.find(b => !WILDCARD.test(b.textContent.trim())) || opts[0]
 
     if (!target) { await closePanels(); return false }
     target.click()

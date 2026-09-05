@@ -1715,6 +1715,67 @@ if (!S) {
       : fail(`WILDCARD is ${wc || 'missing'} — filtering "Tidak ada" would drop a real answer on collateral/dependant selects`)
   }
 
+  console.log('\nauto-picked choosers: no wildcard, and the log says so')
+
+  {
+    /**
+     * When detect saw no options, smartDefault returns '' and the DRIVER chooses
+     * — fillPanel used to take opts[0] blind. Every geo CHILD select is in that
+     * state until its parent is set, and on Provinsi opts[0] was "Lainnya": no
+     * cities, Kota left empty (2026-09-06). The log then recorded `wrote: ""`
+     * against `status: ok` 29 times in the v1.0.92 run — the field WAS filled,
+     * just not by us, and the log said otherwise.
+     */
+    const drv9 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    /* The whole driver, not a fixed-width slice: the first version cut 2600 chars
+       after the function head and the line sat past it behind its own comment. */
+    const autoPickSkipsWildcard = /const target = match \|\| opts\.find\(b => !WILDCARD\.test\(b\.textContent\.trim\(\)\)\) \|\| opts\[0\]/.test(drv9)
+
+    autoPickSkipsWildcard
+      ? pass('fillPanel auto-picks the first NON-wildcard option, wildcard only as a last resort')
+      : fail('fillPanel still falls back to opts[0] — a Provinsi with no wanted value lands on "Lainnya" and leaves Kota empty')
+
+    const src9 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const sites = (src9.match(/recordFieldDetail\([^,]+, shownValue\(/g) || []).length
+    const bare = (src9.match(/recordFieldDetail\([^,]+, value, /g) || []).length
+
+    sites === 4 && bare === 0
+      ? pass('all 4 field-record sites pass the value through shownValue')
+      : fail(`${bare} record site(s) still log the raw value — an auto-picked chooser shows wrote "" with status ok (${sites}/4 converted)`)
+
+    /* Behavioural: the marker appears for an empty chooser value only. */
+    const ev9 = expr => vm.runInContext(expr, sandbox)
+    const marked = String(ev9(`shownValue({ type: 'select' }, '')`))
+    const untouched = String(ev9(`shownValue({ type: 'text' }, '')`)) === '' && String(ev9(`shownValue({ type: 'select' }, 'Aceh')`)) === 'Aceh'
+    const markedRight = /dipilih otomatis/.test(marked) && untouched
+
+    markedRight
+      ? pass('shownValue marks only an empty chooser value')
+      : fail(`shownValue wrong — empty select → ${JSON.stringify(marked)}, others untouched: ${untouched}`)
+  }
+
+  console.log('\naddresses: street and number no longer move in lockstep')
+
+  {
+    /* 12 streets × 12 numbers drew both from _PICK at the same sites, so street
+       i always carried number i — 12 addresses, not 144, and identical on every
+       run once both cursors were seeded the same. Behavioural, in the sandbox. */
+    const ev = expr => vm.runInContext(expr, sandbox)
+    const pairsFor = seed => {
+      ev(`_PICK_RESET(); _ROT_SEED = ${seed}`)
+      return JSON.parse(ev(`JSON.stringify(Array.from({ length: 12 }, () => _ADDR()))`))
+        .map(a => { const m = a.match(/^(.*) No\. (\S+)$/); return [ev(`_STREETS.indexOf(${JSON.stringify(m[1])})`), ev(`_STREET_NUMS.indexOf(${JSON.stringify(m[2])})`)] })
+    }
+    const A = pairsFor(3), B = pairsFor(4)
+    const lockstep = A.filter(([i, j]) => i === j).length
+    const distinctA = new Set(A.map(p => p.join('/'))).size
+    const differs = JSON.stringify(A) !== JSON.stringify(B)
+
+    lockstep <= 2 && distinctA === 12 && differs
+      ? pass(`12 addresses per run are all distinct, ${lockstep}/12 on the old diagonal, and the pairing changes with the seed`)
+      : fail(`addresses still in lockstep — diagonal:${lockstep}/12 distinct:${distinctA} seed-varies:${differs}`)
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
