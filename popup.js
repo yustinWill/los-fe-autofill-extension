@@ -644,16 +644,38 @@ let COMPLETE_DATA = true
  */
 const _ROT_STATE = new Map()
 
+/**
+ * 🔴 WHERE EVERY POOL STARTS — and why it is no longer 0.
+ *
+ * Rotation state is per page-load, so before this every pool began at index 0 on
+ * every run. For a pool whose field appears ONCE per run that made the extra
+ * entries literally unreachable: `_PURPOSES[0]` and `_FINDINGS[0]` were the only
+ * values that would ever be seen, however long the list grew. Adding entries to
+ * those pools without this changes nothing at all.
+ *
+ * ⚠️ Deliberately a per-run OFFSET, not random picking. `_PICK` rotates so a run
+ * stays deterministic and reproducible — the whole reason it is not
+ * `Math.random()`. The seed is logged at run-start, so a failed run can be
+ * replayed by pinning `_ROT_SEED` to the value in its log.
+ */
+let _ROT_SEED = Math.floor(Math.random() * 997)
+
 const _PICK = arr => {
   if (!Array.isArray(arr) || !arr.length) return ''
   const key = arr.join('')
-  const i = _ROT_STATE.get(key) || 0
+  /* `?? _ROT_SEED`, not `|| 0` — a stored 0 is a legitimate cursor position, and
+     `||` would restart that pool from the seed every time it wrapped past it. */
+  const i = _ROT_STATE.get(key) ?? _ROT_SEED
   _ROT_STATE.set(key, i + 1)
   return arr[i % arr.length]
 }
 
 /** Reset every rotation counter — call between independent fixture runs. */
-const _PICK_RESET = () => _ROT_STATE.clear()
+const _PICK_RESET = () => {
+  _ROT_STATE.clear()
+  /* Re-seed too, or two runs in one popup session would repeat each other. */
+  _ROT_SEED = Math.floor(Math.random() * 997)
+}
 const _RAMT = (mn, mx, step = 1000000) => String(mn + Math.floor(Math.random() * Math.ceil((mx - mn) / step)) * step)
 const _RD2  = () => String(Math.floor(Math.random() * 90) + 10)  // 2-digit random
 const _R6   = () => String(Math.floor(Math.random() * 900000) + 100000)
@@ -697,19 +719,56 @@ const _PURPOSES    = ['Menambah modal kerja untuk memenuhi pesanan yang meningka
                       'Menambah armada kendaraan operasional']
 const _OCCUPATIONS = ['Wiraswasta', 'Karyawan Swasta', 'Pegawai Negeri Sipil', 'Pedagang', 'Petani',
                       'Guru', 'Dokter', 'Konsultan', 'Kontraktor', 'Pensiunan']
-const _RELATIONS   = ['Istri', 'Suami', 'Anak', 'Orang Tua', 'Saudara Kandung', 'Kerabat', 'Rekan Kerja']
+const _RELATIONS   = ['Istri', 'Suami', 'Anak', 'Orang Tua', 'Saudara Kandung', 'Kerabat', 'Rekan Kerja',
+                      'Ayah', 'Ibu', 'Adik', 'Kakak', 'Menantu', 'Keponakan', 'Sepupu',
+                      'Mertua', 'Teman Dekat']
+/* ⚠️ MIXED SENTIMENT ON PURPOSE. The first five were all positive, so a fixture
+   never produced a site visit with anything wrong — and nothing that READS a
+   cautionary finding was ever exercised. Half of what follows is a concern. */
 const _FINDINGS    = ['Lokasi usaha sesuai dengan dokumen yang dilampirkan',
                       'Kegiatan usaha berjalan normal saat kunjungan',
                       'Stok barang tersedia dan tertata rapi',
                       'Tempat usaha ramai dan mudah dijangkau',
-                      'Peralatan produksi dalam kondisi terawat']
+                      'Peralatan produksi dalam kondisi terawat',
+                      'Papan nama usaha tidak terpasang di lokasi',
+                      'Sebagian stok terlihat menumpuk dan kurang perputaran',
+                      'Alamat pada dokumen berbeda dengan lokasi operasional',
+                      'Aktivitas usaha terpantau sepi pada saat kunjungan',
+                      'Sebagian peralatan produksi tidak beroperasi',
+                      'Pencatatan penjualan masih dilakukan secara manual',
+                      'Lokasi usaha menyatu dengan tempat tinggal pemilik',
+                      'Karyawan hadir sesuai dengan keterangan pemilik usaha',
+                      'Akses jalan menuju lokasi sempit untuk kendaraan besar',
+                      'Gudang penyimpanan tertata dan memiliki ventilasi memadai',
+                      'Belum tersedia izin usaha terbaru pada saat kunjungan']
 const _FOLLOWUPS   = ['Direkomendasikan untuk diproses ke tahap berikutnya',
                       'Perlu verifikasi tambahan atas dokumen legalitas',
                       'Disarankan menambah agunan pendukung',
                       'Direkomendasikan dengan catatan pemantauan berkala',
-                      'Perlu konfirmasi ulang atas data keuangan']
+                      'Perlu konfirmasi ulang atas data keuangan',
+                      'Mohon dilengkapi laporan keuangan periode berjalan',
+                      'Disarankan menurunkan plafon sesuai kapasitas arus kas',
+                      'Perlu kunjungan ulang sebelum pencairan dilakukan',
+                      'Direkomendasikan dengan syarat pengikatan agunan sempurna',
+                      'Perlu klarifikasi atas tunggakan pada fasilitas lain',
+                      'Disarankan memperpendek tenor sesuai siklus usaha',
+                      'Mohon dilampirkan izin usaha yang masih berlaku',
+                      'Perlu penilaian ulang atas nilai agunan yang diajukan',
+                      'Direkomendasikan dengan tambahan personal guarantee',
+                      'Disarankan pemantauan rekening koran tiga bulan ke depan',
+                      'Perlu persetujuan komite untuk eksposur di atas limit']
 const _NOTES       = ['Tidak ada keterangan', 'Data telah diverifikasi', 'Sesuai dokumen pendukung',
-                      'Menunggu konfirmasi lanjutan', 'Tidak ada catatan khusus']
+                      'Menunggu konfirmasi lanjutan', 'Tidak ada catatan khusus',
+                      'Dokumen asli telah dicocokkan', 'Diinput berdasarkan wawancara',
+                      'Menunggu salinan legalisir', 'Data dikonfirmasi via telepon',
+                      'Sesuai hasil kunjungan lapangan', 'Diverifikasi oleh unit bisnis',
+                      'Salinan sudah diterima lengkap', 'Perlu pembaruan tahun depan',
+                      'Tidak ada perubahan dari data sebelumnya', 'Dilengkapi setelah akad',
+                      'Mengikuti data pada SLIK', 'Sesuai keterangan calon debitur',
+                      'Menunggu hasil taksasi', 'Diinput dari dokumen scan',
+                      'Sudah dicek oleh analis kredit', 'Data sementara akan diperbarui',
+                      'Sesuai rekening koran terakhir', 'Konfirmasi lisan sudah dilakukan',
+                      'Tidak ditemukan catatan negatif']
 const _GROUPS      = ['Kelompok Usaha Mandiri', 'Koperasi Sejahtera', 'Paguyuban Niaga', 'Kelompok Tani Makmur']
 
 const LABEL_DEFAULTS = {
@@ -725,7 +784,13 @@ const LABEL_DEFAULTS = {
   get 'nomor handphone'()    { return '0812' + _R6() + _RD2() + _RD2() },
   get 'nomor telepon rumah'() { return '021' + _R6() + _RD2() },
   get 'nomor telepon perusahaan'() { return '021' + _R6() + _RD2() },
-  get 'alamat email'()       { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' },
+  /* `/\s+/g`, never `replace(' ', '.')` — that replaces only the FIRST space, so
+     a three-word name ("Muhammad Rizky Ramadhan") produced
+     "muhammad.rizky ramadhan@example.com": a space in the local part, which is
+     an invalid address the form rejects. Every current name happens to be two
+     words, which is the only reason this was not already a bug — and exactly the
+     kind of latent trap that fires the moment a name pool grows. */
+  get 'alamat email'()       { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(/\s+/g, '.'); return n + '@example.com' },
 
   // ── Lahir / pendirian ──────────────────────────────────────────────────────
   get 'tanggal lahir'()      { const y = 1975 + Math.floor(Math.random() * 25); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y },
@@ -798,7 +863,7 @@ const SMART_RULES = [
   [/\b(passport|paspor)\b/,                              () => 'A' + (1000000 + Math.floor(Math.random() * 8999999))],
   [/\b(kartu keluarga|family card)\b/,                   () => '32' + _RD2() + _RD2() + _R6() + _R6()],
   [/\bprivy\b/,                                                    'PRV123456'],
-  [/\bemail\b/,                                          () => { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(' ', '.'); return n + '@example.com' }, 'a@ex.co'],
+  [/\bemail\b/,                                          () => { const n = _PICK(_NAMES_DEBTOR).toLowerCase().replace(/\s+/g, '.'); return n + '@example.com' }, 'a@ex.co'],
   [/\b(handphone|mobile phone|no hp)\b/,                 () => '0812' + _R6() + _RD2() + _RD2()],
   [/\b(telepon rumah|home phone)\b/,                     () => '021' + _R6() + _RD2()],
   [/\b(telepon perusahaan|company phone|nomor telepon)\b/, () => '021' + _R6() + _RD2()],
@@ -934,6 +999,15 @@ function simOverride(label) {
   }[key]
 }
 
+/* Choosers that must NOT rotate — the choice decides the SHAPE of the run, not
+   a value in it. Same three fields as `BRANCH_SELECTS` (driver-v2.js:1030), for
+   the same reason: they pick which form you get, and a fixture labelled "BU-P"
+   that rotated into "Kredit Perorangan - Konsumtif" is not varied, it is wrong.
+   On the wizard they never reach here at all — `simOverride` answers them first
+   — but `walkRecordModals` calls smartDefault with NO plan, so the pin has to
+   live here too. */
+const NO_ROTATE = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE)$/
+
 function smartDefault(name, label, type, options = []) {
   // Chooser kinds. v1: autocomplete / muiselect / select / radio.
   // v2: select (SearchableSelect), pills (PillGroup), multiselect.
@@ -950,7 +1024,25 @@ function smartDefault(name, label, type, options = []) {
       const hit = live.find(o => String(o.value) === hinted || String(o.label) === hinted)
       if (hit) return hit.value
     }
-    return live.length ? live[0].value : ''
+    /* 🔴 ROTATE rather than always taking option 0.
+       Every chooser with no LABEL_DEFAULTS hit used to answer `live[0].value`,
+       so Agama was always the first religion, Pendidikan the first degree and
+       all eleven Provinsi selects the SAME province — the single largest source
+       of repetition in a fixture (~44 chooser fields per Lengkap run, none of
+       which hits a LABEL_DEFAULTS key).
+
+       ⚠️ Scope: `select` and `multiselect` only. It does NOT vary pills or
+       Ya/Tidak groups — PillGroup and SegmentedToggle both render
+       SegmentedControl with `role="group"`, which `classify` reports as
+       'toggle', handled above by TICK_CHECKBOXES. The step-4 gates are
+       therefore untouched.
+
+       Lands because peekOptions and fillPanel both key on `b.textContent.trim()`,
+       and a stale value degrades to `opts[0]` — today's behaviour, never an
+       empty field. */
+    if (!live.length) return ''
+
+    return NO_ROTATE.test(name || '') ? live[0].value : _PICK(live.map(o => o.value))
   }
   // v2 renders a CHECKBOX descriptor as a two-segment Tidak/Ya toggle. False
   // picks the off segment — a create form starts blank, so the off state is the
@@ -1920,6 +2012,10 @@ async function runQuickFill() {
 
   logEvent('run-start', {
     planned,
+    /* The rotation offset every pool started from. Logged because variety is
+       only safe if a run stays REPRODUCIBLE: pin `_ROT_SEED` to this value to
+       replay the exact fixture a failing run used. */
+    rotSeed: _ROT_SEED,
     plan: planned ? activePlan : null,
     scope: currentScope(),
     prefs: {

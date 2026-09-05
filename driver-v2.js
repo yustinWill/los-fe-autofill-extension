@@ -4361,6 +4361,39 @@ async function v2FillQualitative(plan, openWait = 900) {
   const spec = Object.assign({ limit: 16 }, plan || {})
   const results = []
 
+  /**
+   * 🔴 SIXTEEN ANALYSES USED TO SHARE ONE SENTENCE.
+   *
+   * Every 5C narrative got `Hasil ${name}: tidak ditemukan catatan negatif.`,
+   * differing only by the interpolated aspect. That is the largest single
+   * repeater in a run, and it sat on the fields a reviewer actually READS — so
+   * a fixture looked, to a human, like sixteen copies of one paragraph.
+   *
+   * Worse, every one was POSITIVE. A fixture where nothing is ever a concern
+   * never exercises whatever reads a cautionary analysis, so the mix below is
+   * deliberately not all-clean.
+   *
+   * ⚠️ Declared INSIDE the function on purpose. This whole function is
+   * serialised by `Function.toString()` into the page, so a module-scope array
+   * would be `undefined` there — the trap documented at the top of this file.
+   */
+  const NARRATIVES = [
+    n => `Hasil ${n}: tidak ditemukan catatan negatif. Data telah diverifikasi pada proses analisa kredit.`,
+    n => `Analisa ${n} menunjukkan kondisi yang stabil dan sesuai dengan dokumen pendukung yang diserahkan debitur.`,
+    n => `${n}: hasil verifikasi lapangan sejalan dengan data yang disampaikan. Tidak ada indikasi penyimpangan material.`,
+    n => `Pada aspek ${n} terdapat catatan minor terkait kelengkapan administrasi, namun tidak mempengaruhi kelayakan kredit.`,
+    n => `${n} dinilai memadai. Riwayat usaha dan arus kas mendukung kemampuan pembayaran sesuai skema yang diajukan.`,
+    n => `Evaluasi ${n} menemukan fluktuasi pada periode tertentu; perlu pemantauan berkala namun masih dalam batas wajar.`,
+    n => `${n}: dokumen pendukung lengkap dan konsisten dengan hasil wawancara serta kunjungan ke lokasi usaha.`,
+    n => `Aspek ${n} memerlukan perhatian khusus. Direkomendasikan monitoring triwulanan hingga kondisi membaik.`,
+    n => `${n} berada pada level yang dapat diterima. Tidak ditemukan tunggakan pada fasilitas kredit sebelumnya.`,
+    n => `Penilaian ${n} positif dengan catatan agar debitur melengkapi laporan keuangan periode berjalan.`,
+    n => `${n}: terdapat ketergantungan pada beberapa pelanggan utama sehingga risiko konsentrasi perlu dicermati.`,
+    n => `Hasil kajian ${n} mendukung pengajuan. Prospek usaha dinilai baik dengan tren pendapatan yang meningkat.`
+  ]
+
+  let narrativeIx = 0
+
   const dialog = () => {
     const open = [...document.querySelectorAll('[role="dialog"]')].filter(d => d.getAttribute('aria-hidden') !== 'true')
 
@@ -4420,7 +4453,7 @@ async function v2FillQualitative(plan, openWait = 900) {
     document.execCommand(
       'insertText',
       false,
-      `Hasil ${name}: tidak ditemukan catatan negatif. Data telah diverifikasi pada proses analisa kredit.`
+      NARRATIVES[narrativeIx++ % NARRATIVES.length](name)
     )
     host.dispatchEvent(new Event('input', { bubbles: true }))
     await wait(150)
