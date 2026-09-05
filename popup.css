@@ -843,6 +843,43 @@ body.is-running #stepDetect { border-top: none; }
 body.is-running #stepDetect .step-row { gap: 0; }
 body.is-running #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }
 
+/* ── Running layout: log first and tall, then stop, then the config ───────────
+   `body` is already a flex column, so ORDER reorders without touching the DOM
+   or any JS. During a run the log is what the user is actually reading, so it
+   takes the height the hidden sections gave back; the stop control sits
+   directly under it, and the config — which is for glancing at, not editing —
+   goes last. */
+body.is-running #runLogView { order: 1; }
+body.is-running #stepDetect { order: 2; }
+body.is-running #runAgainBar { order: 3; }
+body.is-running #simPanel   { order: 4; }
+
+/* ⚠️ Anything WITHOUT an explicit order defaults to 0 and floats to the TOP.
+   The footer did exactly that and landed between the status bar and the log.
+   Every flex child that survives a run needs a number, not just the ones being
+   moved deliberately. */
+body.is-running .app-footer { order: 5; }
+
+/* Grows into the freed space instead of the fixed 168px it uses when a run has
+   finished and the whole popup is on screen. */
+body.is-running #runLogView {
+  flex: 1 1 auto;
+  max-height: none;
+  /* Sized so the log takes nearly the whole 600px popup and the stop control
+     sits in a small strip beneath it, with the config below the fold — reachable
+     by scrolling, which is what its collapsed header is for. Deliberately NOT
+     tall enough to clip Batal itself: it is the only action a run offers, and a
+     half-visible primary control is a worse trade than one line less of log. */
+  min-height: 440px;
+}
+
+/* 🔑 The panel is inert but its HEADER stays live, because the config is now
+   below the fold and collapsing it is how you get back to the log. Blocking the
+   caret along with the inputs would make a collapsible panel that cannot be
+   collapsed — the control is already there (SIM.state.collapsed), it just needs
+   to remain reachable. Editing the values stays blocked. */
+body.is-running #simPanel .sim-head { pointer-events: auto; cursor: pointer; }
+
 /* ── "Run again?" ─────────────────────────────────────────────────────────────
    Shown when a run ENDS — done, failed or cancelled alike. A second run on a
    dirty state was the trap: the rotation cursor carried over, the old log was
