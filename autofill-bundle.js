@@ -4402,22 +4402,61 @@ async function v2AddFacilities(plan, openWait = 900) {
 
     if (!scope) return false
 
-    const trigger = [...scope.querySelectorAll('button')]
+    const findTrigger = () => [...(dialog() || scope).querySelectorAll('button')]
       .find(b => (b.textContent || '').toLowerCase().includes(String(triggerText).toLowerCase()))
+    let trigger = findTrigger()
 
     if (!trigger) return false
 
     const before = new Set([...scope.querySelectorAll('button')])
+    const isAction = b => /^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim())
+    const readUsable = () => {
+      const optionsBox = dialog()
+      const options = optionsBox
+        ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
+        : []
 
+      return { options, usable: options.filter(b => !isAction(b)) }
+    }
+
+    /**
+     * 🔴 POLL — never one blind read after a fixed sleep.
+     *
+     * The old shape was `click; wait(openWait); read once`. Measured live the
+     * panels populate in ~50 ms, yet the v1.0.97 run (2026-09-06) read the
+     * Metode Perhitungan panel EMPTY for 1001-2 — a product that has Flat /
+     * Anuitas / Efektif — and then read the product panel empty on the retry
+     * with 12 products present. One read at one instant, on a modal that had
+     * just re-rendered after the scheme pick, is a coin toss the run lost
+     * twice: the facility was abandoned, and with it collateral linking, the
+     * Data Kualitatif block and Ajukan.
+     *
+     * So: poll every 100 ms until options appear (up to max(openWait, 3000)),
+     * and if nothing has appeared after ~1.2 s re-find the trigger by TEXT and
+     * click the fresh node once — a re-render can detach the node first found,
+     * and a click on a detached button opens nothing.
+     */
     trigger.click()
-    await wait(openWait)
 
-    const optionsBox = dialog()
-    const options = optionsBox
-      ? [...optionsBox.querySelectorAll('button')].filter(b => b !== trigger && !before.has(b) && (b.textContent || '').trim())
-      : []
+    const budget = Math.max(openWait, 3000)
+    const started = Date.now()
+    let read = { options: [], usable: [] }
+    let reclicked = false
 
-    const usable = options.filter(b => !/^(Batal|Tutup|Simpan|Tambah|Unduh|Download|Hapus|Pilih File|Cari)/i.test((b.textContent || '').trim()))
+    while (Date.now() - started < budget) {
+      await wait(100)
+      read = readUsable()
+      if (read.usable.length) break
+
+      if (!reclicked && Date.now() - started > 1200) {
+        reclicked = true
+        const fresh = findTrigger()
+
+        if (fresh && fresh !== trigger) { trigger = fresh; trigger.click() }
+      }
+    }
+
+    const { options, usable } = read
 
     /* 🔴 Test products (E2E…) carry NO per-product master data — measured
        2026-08-20: E2E8653809 has 0 ACTIVE workflows and 0 ACTIVE qualitative
@@ -4496,6 +4535,9 @@ async function v2AddFacilities(plan, openWait = 900) {
   /* Which product to try. Advanced — not reset — when one proves unsaveable,
      so the walk never revisits a dead product on a later row. */
   let attempt = 0
+  /* Every product abandoned on this row and why — carried on the final result
+     so a retry never reads as a silent success or an unexplained failure. */
+  const tried = []
 
   for (let n = 0; n < Math.max(0, Number(spec.count) || 0); n++) {
     if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
@@ -4534,7 +4576,7 @@ async function v2AddFacilities(plan, openWait = 900) {
     const product = await choose('Pilih produk kredit', null, false, productIndex)
 
     if (!product.ok) {
-      results.push({ ok: false, step: 'product', reason: `no product at index ${productIndex}` })
+      results.push({ ok: false, step: 'product', reason: `no product at index ${productIndex}`, tried: tried.slice() })
 
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
@@ -4570,6 +4612,7 @@ async function v2AddFacilities(plan, openWait = 900) {
       && Boolean(dialog()) && [...dialog().querySelectorAll('button')].some(b => /metode perhitungan/i.test(b.textContent || ''))
 
     if (methodDead) {
+      tried.push(`${product.chosen}: Metode Perhitungan kosong`)
       const cancel = [...dialog().querySelectorAll('button')].find(b => /^(Batal|Tutup)$/.test((b.textContent || '').trim()))
 
       cancel?.click()
@@ -4651,7 +4694,7 @@ async function v2AddFacilities(plan, openWait = 900) {
       continue
     }
 
-    results.push({ ok: true, total: (document.body.innerText.match(/Total Plafon[^\n]*/) || [null])[0], chosen })
+    results.push({ ok: true, total: (document.body.innerText.match(/Total Plafon[^\n]*/) || [null])[0], chosen, tried: tried.slice() })
   }
 
   return results

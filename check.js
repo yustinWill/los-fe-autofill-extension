@@ -1796,6 +1796,37 @@ if (!S) {
       try { fs.unlinkSync(tmp) } catch (_) { /* nothing to remove */ }
     }
 
+    /* placed before the freshness verdict so a stale bundle is the LAST line */
+    console.log('\nfacility modal: choose() polls for options instead of one blind read')
+
+    {
+      /**
+       * v1.0.97 run, 2026-09-06: `choose()` slept 900 ms once and read the option
+       * panel a single time. It read Metode Perhitungan EMPTY for 1001-2 (which
+       * has Flat/Anuitas/Efektif), abandoned the product, then read the product
+       * panel empty on the retry with 12 products present. No facility →
+       * no collateral link, no Data Kualitatif block, Ajukan refused.
+       */
+      const drvF = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+      const fac = drvF.slice(drvF.indexOf('async function v2AddFacilities('), drvF.indexOf('async function v2AddFacilities(') + 30000)
+      const ch = fac.slice(fac.indexOf('const choose = async'), fac.indexOf('const choose = async') + 4500)
+      const polls = /while \(Date\.now\(\) - started < budget\) \{[\s\S]*?read = readUsable\(\)[\s\S]*?if \(read\.usable\.length\) break/.test(ch)
+      const budgeted = /const budget = Math\.max\(openWait, 3000\)/.test(ch)
+      const refinds = /const fresh = findTrigger\(\)[\s\S]*?trigger = fresh; trigger\.click\(\)/.test(ch)
+
+      polls && budgeted && refinds
+        ? pass('choose() polls up to 3 s for options and re-finds a detached trigger once')
+        : fail(`choose() still reads the option panel once after a fixed sleep — polls:${polls} budget:${budgeted} refinds:${refinds}; a momentarily empty panel abandons the product`)
+
+      const triedOnFail = /reason: `no product at index \$\{productIndex\}`, tried: tried\.slice\(\)/.test(fac)
+      const triedOnOk = /results\.push\(\{ ok: true, total:[^\n]*chosen, tried: tried\.slice\(\) \}\)/.test(fac)
+      const triedRecorded = /tried\.push\(`\$\{product\.chosen\}: Metode Perhitungan kosong`\)/.test(fac)
+
+      triedOnFail && triedOnOk && triedRecorded
+        ? pass('every facility result carries the products it abandoned and why')
+        : fail(`a silent product retry is back — onFail:${triedOnFail} onOk:${triedOnOk} recorded:${triedRecorded}`)
+    }
+
     fresh === true
       ? pass('autofill-bundle.js matches a fresh build of its sources')
       : fail(fresh === null
