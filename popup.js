@@ -1187,6 +1187,11 @@ function simOverride(label) {
    live here too. */
 const NO_ROTATE = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE)$/
 
+/* Chooser options that are a catch-all rather than a value. Deliberately a
+   SHORT list: "Tidak ada" is a real answer on several selects (no collateral, no
+   dependants), so it does not belong here. */
+const WILDCARD = /^(lainnya|lain-lain|lain lain|other|others)$/i
+
 function smartDefault(name, label, type, options = []) {
   // Chooser kinds. v1: autocomplete / muiselect / select / radio.
   // v2: select (SearchableSelect), pills (PillGroup), multiselect.
@@ -1221,7 +1226,16 @@ function smartDefault(name, label, type, options = []) {
        empty field. */
     if (!live.length) return ''
 
-    return NO_ROTATE.test(name || '') ? live[0].value : _PICK(live.map(o => o.value))
+    /* 🔴 NEVER ROTATE ONTO A WILDCARD. "Lainnya" on Provinsi is a legal option
+       that maps to NO cities: the Kota below it gets an empty list, the step sits
+       at 36/37, and nothing on screen says why (user, 2026-09-06). A wildcard is
+       where a HUMAN goes when the real answer is missing — a fixture generator
+       always has a real answer, so it must never pick one. Kept only when it is
+       the sole option, because an empty select is worse than a wildcard. */
+    const real = live.filter(o => !WILDCARD.test(String(o.label ?? '').trim()) && !WILDCARD.test(String(o.value ?? '').trim()))
+    const pool = real.length ? real : live
+
+    return NO_ROTATE.test(name || '') ? pool[0].value : _PICK(pool.map(o => o.value))
   }
   // v2 renders a CHECKBOX descriptor as a two-segment Tidak/Ya toggle. False
   // picks the off segment — a create form starts blank, so the off state is the

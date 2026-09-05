@@ -1681,6 +1681,40 @@ if (!S) {
       : fail('the config header would read "terkunci" after the run has ended')
   }
 
+  console.log('\nchooser rotation never lands on a wildcard')
+
+  {
+    /**
+     * 🔴 "Lainnya" on Provinsi maps to NO cities: Kota gets an empty list and the
+     * step sits at 36/37 with nothing on screen saying why (user, 2026-09-06).
+     * The v1.0.86 rotation treated every option as equal. BEHAVIOURAL, in the
+     * sandbox: smartDefault is called over a Lainnya-bearing list enough times
+     * to walk it several times over; a source check would pass on the regex
+     * merely existing even if the filter were never applied.
+     */
+    const ev = expr => vm.runInContext(expr, sandbox)
+    const OPTS = JSON.stringify([{ value: 'Lainnya', label: 'Lainnya' }, { value: 'Aceh', label: 'Aceh' }, { value: 'Bali', label: 'Bali' }, { value: 'Banten', label: 'Banten' }])
+    const picks = Array.from({ length: 12 }, () => String(ev(`smartDefault("NOTARY_PROVINCE", "Provinsi Notaris Akta Pendirian", "select", ${OPTS})`)))
+    const landed = picks.filter(v => /^lainnya$/i.test(v)).length
+
+    !landed && new Set(picks).size >= 3
+      ? pass(`12 rotations over a Lainnya-bearing province list never picked it (${new Set(picks).size} distinct real values)`)
+      : fail(`the rotation picked "Lainnya" ${landed}/12 times — a wildcard province leaves the Kota below it with an empty list`)
+
+    /* The sole option is still taken: an empty select is worse than a wildcard. */
+    const sole = String(ev(`smartDefault("X", "Provinsi", "select", ${JSON.stringify([{ value: 'Lainnya', label: 'Lainnya' }])})`))
+    sole === 'Lainnya'
+      ? pass('a wildcard that is the only option is still chosen')
+      : fail(`with Lainnya as the sole option smartDefault returned ${JSON.stringify(sole)} — an empty select where a value was available`)
+
+    /* "Tidak ada" is a real answer on several selects and must NOT be filtered. */
+    const src8 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+    const wc = (src8.match(/const WILDCARD = (\/[^\n]+\/i)/) || [])[1] || ''
+    wc && !/tidak/i.test(wc)
+      ? pass('the wildcard list is narrow — "Tidak ada" stays a legitimate answer')
+      : fail(`WILDCARD is ${wc || 'missing'} — filtering "Tidak ada" would drop a real answer on collateral/dependant selects`)
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
