@@ -816,3 +816,29 @@ body.is-running #simPanel::before {
    A separate button would sit dead for the 99% of the time no run is going. */
 .btn.is-cancel { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 .btn.is-cancel:hover { background: #991b1b; border-color: #991b1b; }
+
+/* ── Running: strip the popup to stop + config ────────────────────────────────
+   Mid-run every other control is either inert or a way to corrupt the run, and
+   a panel full of dead buttons makes the user hunt for the one that works.
+   What survives is exactly what the user asked for: the STOP action, and the
+   configuration to peek at.
+
+   `display:none`, not removal — popup.js still reads #fieldsList, #resultStrip
+   and the progress nodes while filling, and a removed node would throw. Hidden
+   elements keep their properties. */
+body.is-running #stepExecute,
+body.is-running #stepCapture,
+body.is-running #fieldsPanel,
+body.is-running #detectBtn,
+body.is-running .bottom-bar,
+body.is-running .scan-opts { display: none !important; }
+
+/* The remaining row would otherwise read "1 · Detect Fields · Scan page for all
+   fillable fields" beside a Batal button — a description of something that is
+   not happening. Drop the ornament and let the stop control own the row. */
+body.is-running #stepDetect .step-num,
+body.is-running #stepDetect .step-meta { display: none; }
+
+body.is-running #stepDetect { border-top: none; }
+body.is-running #stepDetect .step-row { gap: 0; }
+body.is-running #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }

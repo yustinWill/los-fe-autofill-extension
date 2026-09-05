@@ -326,6 +326,17 @@ const persistRunLog = () => {
  */
 let runCancelled = false
 
+/** Wall-clock start of the current run, for the elapsed readout. */
+let runStartedAt = 0
+
+/** `2m 14s` / `47s`. Minutes only once there are any — "0m 47s" reads worse. */
+const fmtDuration = ms => {
+  const total = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(total / 60)
+
+  return m ? `${m}m ${total % 60}s` : `${total}s`
+}
+
 /** Thrown at a checkpoint so one `catch` unwinds the run. Carries a flag rather
  *  than being matched on message text, which would break the moment it is
  *  reworded or localised. */
@@ -2002,6 +2013,8 @@ async function runQuickFill() {
      first setStatus so the very first line is already visible in the live log. */
   setRunning(true)
 
+  runStartedAt = Date.now()
+
   setStatus('Starting…')
 
   /* Mounted only on the credit-application create route, so everywhere else
@@ -2085,7 +2098,22 @@ async function runQuickFill() {
 
       logEvent('navspy', navspy)
     } catch (e) { /* page gone — nothing to read */ }
-    logEvent('run-end', {})
+    /* 🔑 In `finally`, so the readout covers EVERY exit — done, failed and
+       cancelled alike. A duration that only appears on success is useless for
+       the thing it is for: comparing runs to find what got slower.
+
+       `elapsedMs` is logged raw ALONGSIDE the formatted string, because the
+       display rounds to whole seconds and a future comparison needs the number,
+       not the label. */
+    const elapsedMs = runStartedAt ? Date.now() - runStartedAt : 0
+
+    logEvent('run-end', { elapsedMs, elapsed: fmtDuration(elapsedMs) })
+
+    /* Appended to whatever the status already says rather than replacing it —
+       the outcome is the headline, the duration is a suffix. Appending also
+       keeps the is-done / is-error colour that setStatus already applied. */
+    if (statusText && elapsedMs) statusText.textContent += ` · ${fmtDuration(elapsedMs)}`
+
     persistRunLog()
 
     /* LAST, and in `finally`: whatever happened — done, failed, cancelled, or a

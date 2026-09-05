@@ -1299,6 +1299,62 @@ if (!S) {
       : fail('logEvent does not drive renderRunLog — the on-screen log could diverge from the exported one')
   }
 
+  {
+    /* Mid-run the only offered action must be STOP. Every other control is
+       either inert or a way to corrupt the run in progress. */
+    const css = fs.readFileSync(path.join(dir, 'popup.css'), 'utf8')
+    const html = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8')
+
+    const hidden = ['#stepExecute', '#stepCapture', '#fieldsPanel', '#detectBtn']
+    const hiddenClasses = ['.bottom-bar', '.scan-opts']
+    const missing = hidden.filter(sel => !new RegExp(`body\\.is-running[^{]*\\${sel}\\b`).test(css))
+
+    const missingC = hiddenClasses.filter(sel => !new RegExp(`body\\.is-running[^{]*\\${sel}\\b`).test(css))
+
+    !missing.length && !missingC.length
+      ? pass('a run hides every control except stop and the config')
+      : fail(`these stay clickable during a run: ${[...missing, ...missingC].join(', ')} — the popup offers actions that corrupt the run it is showing`)
+
+    /* The CSS targets ids, so the ids have to exist. A rename in popup.html
+       would otherwise silently stop hiding anything, with no error anywhere. */
+    const ids = ['stepDetect', 'stepExecute', 'stepCapture'].filter(i => !html.includes(`id="${i}"`))
+
+    !ids.length
+      ? pass('the section ids the running-state CSS targets all exist')
+      : fail(`popup.html is missing id(s) ${ids.join(', ')} — the is-running rules would match nothing`)
+
+    /* display:none, never removal: popup.js keeps reading these nodes mid-run. */
+    const usesDisplayNone = /display:\s*none\s*!important/.test(css.slice(css.indexOf('body.is-running #stepExecute')))
+
+    usesDisplayNone
+      ? pass('hidden sections are display:none, so popup.js can still read their nodes')
+      : fail('the running-state rules must use display:none — removing the nodes would throw in the fill loop')
+  }
+
+  {
+    /* The duration must cover a cancelled or failed run too — one that only
+       appears on success is useless for comparing runs to find a regression. */
+    const strip2 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src2 = strip2(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const qf2 = src2.slice(src2.indexOf('async function runQuickFill'))
+    const fin2 = qf2.slice(qf2.indexOf('} finally {'))
+
+    /* ⚠️ Assert the COMPUTATION, not the identifier. `/elapsedMs/` passed with the
+       `const elapsedMs = …` line deleted, because the logEvent call below still
+       mentions the name — measured 2026-09-06 by deleting it and watching
+       nothing go red. An assertion that cannot fail is not evidence. */
+    const timed = /const elapsedMs\s*=\s*runStartedAt/.test(fin2)
+    const raw = /logEvent\('run-end',\s*\{\s*elapsedMs/.test(fin2)
+
+    timed
+      ? pass('elapsed time is measured in finally, so a cancelled or failed run still reports it')
+      : fail('elapsed time is not computed in runQuickFill\'s finally — it would be missing on every non-success path')
+
+    raw
+      ? pass('run-end logs raw elapsedMs, not just the rounded label')
+      : fail('run-end must log raw elapsedMs — the formatted string rounds to whole seconds and cannot be compared later')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
