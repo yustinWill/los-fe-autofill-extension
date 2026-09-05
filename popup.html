@@ -35,6 +35,20 @@
        into a bug report can never disagree. -->
   <div id="runLogView" class="run-log hidden" aria-live="polite"></div>
 
+  <!-- Offered once a run ENDS, so a second fixture starts from a known-clean
+       state instead of on top of the last run's log and rotation cursor.
+       Declining leaves the log and the outcome on screen — that is the evidence,
+       and clearing it without being asked is how a failed run becomes
+       unexplainable. -->
+  <div id="runAgainBar" class="run-again hidden">
+    <span class="run-again-q">Isi formulir lain?</span>
+    <button id="runAgainNo" class="btn btn-secondary btn-sm">Nanti</button>
+    <!-- "Siapkan", not "Mulai": this RESETS, it does not start a run. Starting
+         one here would re-fill the form that was just completed — a second
+         application almost always needs a fresh create form first. -->
+    <button id="runAgainYes" class="btn btn-primary btn-sm">Ya, siapkan</button>
+  </div>
+
   <!-- Simulation options. Populated by simulation-ui.js and shown ONLY on the
        credit-application create route; everywhere else Quick Fill behaves as it
        always did. Empty in markup because it is entirely data-driven.

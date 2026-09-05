@@ -1355,6 +1355,52 @@ if (!S) {
       : fail('run-end must log raw elapsedMs — the formatted string rounds to whole seconds and cannot be compared later')
   }
 
+  {
+    /* After a run the popup offers a clean slate. The cosmetics are not the
+       point — the rotation cursor and the derived project name are. */
+    const strip3 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const src3 = strip3(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+    const html3 = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8')
+    const reset = src3.slice(src3.indexOf('const resetToInitial'), src3.indexOf('const resetToInitial') + 900)
+
+    /* 🔴 THE load-bearing line. Without it a second run continues the first
+       run's rotation cursor AND keeps its project-name timestamp, so two
+       applications can go in under one name. */
+    const reseeds = /_PICK_RESET\(\)/.test(reset)
+
+    reseeds
+      ? pass('reset re-seeds the rotation, so a second run produces different data')
+      : fail('resetToInitial does not call _PICK_RESET — the next run would reuse the last run\'s cursor and project name')
+
+    const rerenders = /SIMUI\.render\(\)/.test(reset)
+
+    rerenders
+      ? pass('reset re-renders the panel so Nama proyek gets a fresh timestamp')
+      : fail('resetToInitial must re-render the sim panel — the derived project name would keep the finished run\'s timestamp')
+
+    /* Offered on every ending. A failed or cancelled run is the one most likely
+       to be retried, and retrying on a dirty state is what this prevents. */
+    const qf3 = src3.slice(src3.indexOf('async function runQuickFill'))
+    const fin3 = qf3.slice(qf3.indexOf('} finally {'))
+
+    const offered = /runAgainBar/.test(fin3)
+
+    offered
+      ? pass('the run-again prompt is offered on every ending, not only success')
+      : fail('the run-again prompt is not shown from runQuickFill\'s finally — a failed or cancelled run would never offer it')
+
+    /* Declining must not destroy the evidence. */
+    const declines = /runAgainNo'\)\.addEventListener\('click',\s*\(\)\s*=>\s*runAgainBar\.classList\.add\('hidden'\)\)/.test(src3)
+
+    declines
+      ? pass('declining hides only the prompt, leaving the log and outcome intact')
+      : fail('the decline handler must only hide the prompt — clearing the log on decline destroys the evidence for the run just finished')
+
+    html3.includes('id="runAgainYes"') && html3.includes('id="runAgainNo"')
+      ? pass('both run-again controls exist in the markup')
+      : fail('popup.html is missing a run-again button — the listeners would throw at load')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

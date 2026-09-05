@@ -425,6 +425,53 @@ const setRunning = on => {
   }
 }
 
+const runAgainBar = document.getElementById('runAgainBar')
+
+/**
+ * Back to the state a freshly-opened popup is in.
+ *
+ * 🔴 `_PICK_RESET()` is the load-bearing line, not the cosmetics. Rotation state
+ * is per page-load, so a second run in the same popup would otherwise CONTINUE
+ * the first run's cursor — and, worse, the derived project name would still
+ * carry the FIRST run's timestamp, putting two applications in under one name.
+ * Re-seeding gives the next fixture genuinely different values.
+ *
+ * ⚠️ Order matters: `setStatus('')` LOGS, so the log has to be cleared after it
+ * or the "fresh" log opens with a status line from the reset itself.
+ */
+const resetToInitial = () => {
+  _PICK_RESET()
+
+  /* Names the next step rather than a bare "Ready": the form on screen is the
+     one that was just filled, so a second fixture needs a NEW create form. */
+  setStatus('Siap — buka formulir baru, lalu Quick Fill')
+  runLog = []
+  fieldDetail = {}
+  renderRunLog()
+
+  if (runLogView) runLogView.classList.add('hidden')
+  if (runAgainBar) runAgainBar.classList.add('hidden')
+
+  const copyBtn = document.getElementById('copyLogBtn')
+
+  /* Hidden with the log it copies — offering to copy a log that is gone is the
+     same defect as offering to copy an empty one. */
+  if (copyBtn) copyBtn.classList.add('hidden')
+
+  /* Re-render so the derived "Nama proyek" picks up a NEW timestamp. Without
+     this the panel keeps showing the finished run's name and the next fixture
+     silently reuses it. */
+  try { if (window.SIMUI && isSimulationMounted()) SIMUI.render() } catch (_) { /* panel not mounted */ }
+}
+
+if (runAgainBar) {
+  document.getElementById('runAgainYes').addEventListener('click', resetToInitial)
+
+  /* Declining hides ONLY the prompt. The log and the outcome stay — they are
+     the evidence, and a run worth asking about is often a run worth reading. */
+  document.getElementById('runAgainNo').addEventListener('click', () => runAgainBar.classList.add('hidden'))
+}
+
 /**
  * Read every user-gate control's CURRENT on-screen state.
  *
@@ -2120,6 +2167,12 @@ async function runQuickFill() {
        throw from the snapshot above — the popup must never be left with a locked
        config and a button reading "Batal" for a run that is no longer going. */
     setRunning(false)
+
+    /* Offer a clean slate on EVERY ending, not just success: a failed or
+       cancelled run is the one most likely to be retried, and retrying it on a
+       carried-over rotation cursor and a stale project name is exactly what this
+       prompt exists to prevent. Nothing is cleared until the user picks. */
+    if (runAgainBar) runAgainBar.classList.remove('hidden')
   }
 }
 

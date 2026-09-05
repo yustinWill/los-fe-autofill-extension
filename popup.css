@@ -842,3 +842,20 @@ body.is-running #stepDetect .step-meta { display: none; }
 body.is-running #stepDetect { border-top: none; }
 body.is-running #stepDetect .step-row { gap: 0; }
 body.is-running #quickFillBtn { width: 100%; padding: 9px 0; font-size: 13px; }
+
+/* ── "Run again?" ─────────────────────────────────────────────────────────────
+   Shown when a run ENDS — done, failed or cancelled alike. A second run on a
+   dirty state was the trap: the rotation cursor carried over, the old log was
+   still on screen, and the derived project name still carried the FIRST run's
+   timestamp, so two applications could go in under one name. */
+.run-again {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+  flex-shrink: 0;
+}
+
+.run-again-q { flex: 1; font-size: 11px; font-weight: 600; color: #92400e; }
