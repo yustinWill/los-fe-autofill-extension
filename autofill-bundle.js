@@ -2887,14 +2887,59 @@ async function v2AddMutations(plan, openWait = 900) {
     { bank: 'BANK CENTRAL ASIA', nomor: '1180457723', nama: 'Budi Santoso' },
     { bank: 'BANK MANDIRI', nomor: '1400089912345', nama: 'Budi Santoso' }
   ]
-  const MONTHS = ['Jun 2026', 'Jul 2026', 'Agu 2026']
+  /**
+   * 🔴 ALL TWELVE, because the panel offers up to 12 months (`max: 12`) and this
+   * list had THREE. Month 4 wrapped back to the first entry, so the same
+   * (bank, periode) pair was inserted twice and the save was rejected — the
+   * duplicate the user hit (2026-09-06).
+   *
+   * These are the app's own picker labels: `DateField.tsx` builds them as
+   * `MONTH_LABELS.map(m => m.slice(0, 3))`, which is why August is "Agu",
+   * October "Okt" and December "Des" — not the English three-letter forms. A
+   * label that misses makes `setPeriode` return null and the modal saves with an
+   * empty required field.
+   *
+   * ⚠️ The YEAR here is decorative. `setPeriode` splits on the space and clicks a
+   * MONTH button; it never navigates the picker's year. So exactly 12 distinct
+   * periods are reachable, which is why `spec.months` is capped at 12 below
+   * rather than allowed to wrap.
+   */
+  const YEAR = new Date().getFullYear()
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
+    .map(m => `${m} ${YEAR}`)
+
+  /* 🔑 The invariant the BE enforces: one row per (bank, periode). Tracked here
+     rather than trusted from the loop arithmetic, so a future change to
+     `spec.accounts`, to ACCOUNTS, or to the cap cannot silently reintroduce the
+     duplicate. Cheaper than rediscovering it from a rejected save. */
+  const seen = new Set()
   const results = []
+
+  /* Capped, not wrapped: asking for more than there are distinct periods used to
+     mean asking for a duplicate. Reported so a short run is visible rather than
+     looking like a silent success. */
+  const months = Math.min(spec.months, MONTHS.length)
+
+  if (spec.months > MONTHS.length) {
+    results.push({ account: '-', period: '-', ok: false, step: 'plan', reason: `asked for ${spec.months} months, only ${MONTHS.length} distinct periods exist — capped` })
+  }
 
   for (let a = 0; a < spec.accounts; a++) {
     const account = ACCOUNTS[a % ACCOUNTS.length]
 
-    for (let m = 0; m < spec.months; m++) {
+    for (let m = 0; m < months; m++) {
       const period = MONTHS[m % MONTHS.length]
+
+      /* Never insert the same bank twice for one period — the save is rejected
+         and the modal stays open, which strands the rest of the pass. */
+      const pairKey = `${account.bank}|${period}`
+
+      if (seen.has(pairKey)) {
+        results.push({ account: account.nomor, period, ok: false, step: 'duplicate', reason: `${account.bank} already has ${period} — skipped to avoid a rejected save` })
+        continue
+      }
+
+      seen.add(pairKey)
       const opener = [...document.querySelectorAll('button')].find(b => (b.textContent || '').trim() === 'Tambah Data Mutasi Rekening')
 
       if (!opener) { results.push({ account: account.nomor, period, ok: false, step: 'open', reason: 'no opener — is step 5 current?' }); break }

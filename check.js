@@ -1401,6 +1401,49 @@ if (!S) {
       : fail('popup.html is missing a run-again button — the listeners would throw at load')
   }
 
+  console.log('\nmutasi rekening: one row per (bank, periode)')
+
+  {
+    /* 🔴 The BE rejects a second row with the same bank AND period. MONTHS had
+       THREE entries against a panel offering up to 12, so month 4 wrapped and
+       the save was refused (user, 2026-09-06). Measured: at 12 months the old
+       list produced 18 duplicates out of 24 rows; the default of 3 was the last
+       value that happened to be safe, which is why it went unnoticed. */
+    const drv = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const mut = drv.slice(drv.indexOf('async function v2AddMutations'))
+    const mutBody = mut.slice(0, mut.indexOf('\n}\n'))
+
+    const months = (mutBody.match(/const MONTHS = \[([^\]]*)\]/) || [])[1] || ''
+    const count = (months.match(/'[^']*'/g) || []).length
+
+    count >= 12
+      ? pass(`the mutation period list covers all ${count} months the panel allows`)
+      : fail(`MONTHS has ${count} entries but the panel offers up to 12 — month ${count + 1} wraps and duplicates a (bank, periode) pair, which the save rejects`)
+
+    /* The app's own short forms, not the English ones: DateField builds them as
+       MONTH_LABELS.map(m => m.slice(0, 3)). A wrong label makes setPeriode
+       return null and the modal saves with an empty required field. */
+    const idn = ['Mei', 'Agu', 'Okt', 'Des'].filter(m => !new RegExp(`'${m}[' ]`).test(months))
+
+    !idn.length
+      ? pass('period labels use the app\'s Indonesian short months (Mei/Agu/Okt/Des)')
+      : fail(`period labels missing ${idn.join(', ')} — these are the app's picker labels; an English form matches no button and setPeriode returns null`)
+
+    /* A guard, not just a longer list: the loop arithmetic must not be the only
+       thing standing between us and a rejected save. */
+    const guarded = /seen\.has\(/.test(mutBody) && /seen\.add\(/.test(mutBody)
+
+    guarded
+      ? pass('a (bank, periode) pair is tracked, so the duplicate cannot come back')
+      : fail('v2AddMutations must track used (bank, periode) pairs — a change to spec.accounts or the cap would silently reintroduce the rejected duplicate')
+
+    const capped = /Math\.min\(spec\.months/.test(mutBody)
+
+    capped
+      ? pass('a months request beyond the distinct periods is capped, not wrapped')
+      : fail('spec.months must be capped to MONTHS.length — wrapping is what produced the duplicate in the first place')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
