@@ -396,6 +396,26 @@ const SMART_RULES = [
   [/\bnama\b/,                                           () => _PICK(_NAMES_DEBTOR), 'Ani S'],
   [/\btanggal\b/,                                        () => { const y = 2020 + Math.floor(Math.random() * 6); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y }],
   [/\b(nomor|number|no\.)\b/,                                       '000'],
+
+  /* 🔴 NUMERIC FIELDS WERE GETTING A DATE STRING.
+     With no rule, a label falls through to `${label} ${FALLBACK_DATE}` — so
+     "Berat" received "berat 06-09-2026". Measured 2026-09-06: NINE of thirteen
+     numeric-looking labels did this, including `Luas Tanah` / `Luas Bangunan`
+     (on every property collateral) and `Nilai Taksasi`. The field is numeric
+     with a hard ceiling, so the write is rejected and the modal will not save —
+     presenting as a broken control when the VALUE is the bug. Exactly the
+     failure already documented for `datepicker` in smartDefault.
+
+     Last in the list on purpose: `jumlah tanggungan`, `jumlah saudara` and the
+     amount rules above are more specific and must keep winning. */
+  [/\b(berat|weight)\b/,                                () => String(100 + Math.floor(Math.random() * 40) * 25), '250'],
+  [/\b(karat|carat)\b/,                                 () => _PICK(['24', '22', '18', '16']), '24'],
+  [/\b(luas|area)\b/,                                   () => String(60 + Math.floor(Math.random() * 45) * 10), '120'],
+  [/\b(volume|isi|kapasitas)\b/,                        () => String(10 + Math.floor(Math.random() * 50) * 5), '50'],
+  [/\b(kuantitas|quantity|qty|banyaknya)\b/,            () => String(1 + Math.floor(Math.random() * 5)), '2'],
+  /* Rupiah amounts, not counts — a taksasi of "3" would pass validation and be
+     nonsense to anyone reading the fixture. */
+  [/\b(nilai|taksasi|harga|biaya|premi)\b/,             () => _RAMT(50000000, 900000000, 10000000), '150000000'],
 ]
 
 // Returns smart default for a field.
@@ -4869,15 +4889,36 @@ async function v2FillDocuments(plan, openWait = 900) {
           return best
         }
 
-        const target = pencils.find(p => {
-          const text = rowTextOf(p)
+        const unattached = p => !/\d+\s*file/i.test(rowTextOf(p))
 
-          /* Wajib AND nothing attached yet. The attachment cell prints "N file"
-             once a document is on the row, so its absence is the tell. */
-          return /Wajib/.test(text) && !/\d+\s*file/i.test(text)
-        })
+        /* Wajib AND nothing attached yet. The attachment cell prints "N file"
+           once a document is on the row, so its absence is the tell. */
+        const strict = pencils.find(p => /Wajib/.test(rowTextOf(p)) && unattached(p))
+
+        /**
+         * 🔴 FALLS BACK RATHER THAN FAILING CLOSED.
+         *
+         * Both "Wajib" and "N file" are DataTable COLUMNS, and DataTable SHEDS
+         * columns into the expander drawer when the table is narrow. When the
+         * requirement column sheds, `/Wajib/` matches nothing, `target` is
+         * undefined and this loop used to `break` — attaching NOTHING and
+         * reporting no error. The submit then fails on missing mandatory
+         * documents, far from the cause.
+         *
+         * So when the strict filter finds nothing, retry on "no file attached"
+         * alone. An optional row that gains a document is harmless; a mandatory
+         * row that is silently skipped blocks the submit.
+         *
+         * ⚠️ This cannot change a case that already works: the fallback only
+         * runs where the old code had already given up. The enclosing
+         * `i < 12` cap still bounds it, and once every row shows a file both
+         * filters agree there is nothing left.
+         */
+        const target = strict || pencils.find(unattached)
 
         if (!target) break
+
+        if (!strict) report.required.push({ ok: true, block: target0.id, note: 'requirement column not visible (shed to drawer) — matched on missing attachment instead' })
 
         /* Same reasoning as the qualitative pass: work the table the way a
            person does, on screen, rather than clicking a row nobody has seen. */

@@ -4279,15 +4279,36 @@ async function v2FillDocuments(plan, openWait = 900) {
           return best
         }
 
-        const target = pencils.find(p => {
-          const text = rowTextOf(p)
+        const unattached = p => !/\d+\s*file/i.test(rowTextOf(p))
 
-          /* Wajib AND nothing attached yet. The attachment cell prints "N file"
-             once a document is on the row, so its absence is the tell. */
-          return /Wajib/.test(text) && !/\d+\s*file/i.test(text)
-        })
+        /* Wajib AND nothing attached yet. The attachment cell prints "N file"
+           once a document is on the row, so its absence is the tell. */
+        const strict = pencils.find(p => /Wajib/.test(rowTextOf(p)) && unattached(p))
+
+        /**
+         * 🔴 FALLS BACK RATHER THAN FAILING CLOSED.
+         *
+         * Both "Wajib" and "N file" are DataTable COLUMNS, and DataTable SHEDS
+         * columns into the expander drawer when the table is narrow. When the
+         * requirement column sheds, `/Wajib/` matches nothing, `target` is
+         * undefined and this loop used to `break` — attaching NOTHING and
+         * reporting no error. The submit then fails on missing mandatory
+         * documents, far from the cause.
+         *
+         * So when the strict filter finds nothing, retry on "no file attached"
+         * alone. An optional row that gains a document is harmless; a mandatory
+         * row that is silently skipped blocks the submit.
+         *
+         * ⚠️ This cannot change a case that already works: the fallback only
+         * runs where the old code had already given up. The enclosing
+         * `i < 12` cap still bounds it, and once every row shows a file both
+         * filters agree there is nothing left.
+         */
+        const target = strict || pencils.find(unattached)
 
         if (!target) break
+
+        if (!strict) report.required.push({ ok: true, block: target0.id, note: 'requirement column not visible (shed to drawer) — matched on missing attachment instead' })
 
         /* Same reasoning as the qualitative pass: work the table the way a
            person does, on screen, rather than clicking a row nobody has seen. */

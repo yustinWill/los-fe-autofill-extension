@@ -1007,6 +1007,26 @@ const SMART_RULES = [
   [/\bnama\b/,                                           () => _PICK(_NAMES_DEBTOR), 'Ani S'],
   [/\btanggal\b/,                                        () => { const y = 2020 + Math.floor(Math.random() * 6); const m = String(1+Math.floor(Math.random()*12)).padStart(2,'0'); const d = String(1+Math.floor(Math.random()*28)).padStart(2,'0'); return d+'-'+m+'-'+y }],
   [/\b(nomor|number|no\.)\b/,                                       '000'],
+
+  /* 🔴 NUMERIC FIELDS WERE GETTING A DATE STRING.
+     With no rule, a label falls through to `${label} ${FALLBACK_DATE}` — so
+     "Berat" received "berat 06-09-2026". Measured 2026-09-06: NINE of thirteen
+     numeric-looking labels did this, including `Luas Tanah` / `Luas Bangunan`
+     (on every property collateral) and `Nilai Taksasi`. The field is numeric
+     with a hard ceiling, so the write is rejected and the modal will not save —
+     presenting as a broken control when the VALUE is the bug. Exactly the
+     failure already documented for `datepicker` in smartDefault.
+
+     Last in the list on purpose: `jumlah tanggungan`, `jumlah saudara` and the
+     amount rules above are more specific and must keep winning. */
+  [/\b(berat|weight)\b/,                                () => String(100 + Math.floor(Math.random() * 40) * 25), '250'],
+  [/\b(karat|carat)\b/,                                 () => _PICK(['24', '22', '18', '16']), '24'],
+  [/\b(luas|area)\b/,                                   () => String(60 + Math.floor(Math.random() * 45) * 10), '120'],
+  [/\b(volume|isi|kapasitas)\b/,                        () => String(10 + Math.floor(Math.random() * 50) * 5), '50'],
+  [/\b(kuantitas|quantity|qty|banyaknya)\b/,            () => String(1 + Math.floor(Math.random() * 5)), '2'],
+  /* Rupiah amounts, not counts — a taksasi of "3" would pass validation and be
+     nonsense to anyone reading the fixture. */
+  [/\b(nilai|taksasi|harga|biaya|premi)\b/,             () => _RAMT(50000000, 900000000, 10000000), '150000000'],
 ]
 
 // Returns smart default for a field.

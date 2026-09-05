@@ -1444,6 +1444,54 @@ if (!S) {
       : fail('spec.months must be capped to MONTHS.length — wrapping is what produced the duplicate in the first place')
   }
 
+  console.log('\nnumeric fields get numbers, not a date string')
+
+  {
+    /**
+     * 🔴 With no matching rule a label falls through to `${label} ${FALLBACK_DATE}`,
+     * so "Berat" received "berat 06-09-2026" — a non-numeric write into a field
+     * with a hard ceiling, which the modal rejects. Measured 2026-09-06: NINE of
+     * thirteen numeric-looking labels did this, `Luas Tanah` and `Nilai Taksasi`
+     * among them.
+     *
+     * BEHAVIOURAL, in the sandbox: a source check would pass on the rule merely
+     * existing, even if a more general rule above it kept winning. Only calling
+     * smartDefault proves which rule actually answers.
+     */
+    const ev = expr => String(vm.runInContext(expr, sandbox))
+
+    const NUMERIC = ['Berat', 'Berat (gram)', 'Kuantitas', 'Karat', 'Luas Tanah', 'Luas Bangunan', 'Volume', 'Nilai Taksasi', 'Harga Satuan']
+    const dated = NUMERIC.filter(l => !/^[\d.,]+$/.test(ev(`smartDefault("F", ${JSON.stringify(l)}, "text")`)))
+
+    !dated.length
+      ? pass(`all ${NUMERIC.length} numeric labels answer with digits`)
+      : fail(`these numeric fields still get a date string and are rejected on save: ${dated.join(', ')}`)
+
+    /* The new catch-all rules sit LAST and must not have stolen the specific
+       ones above them. `jumlah tanggungan` is a count, `nama` a person. */
+    const tanggungan = ev('smartDefault("F", "Jumlah Tanggungan", "text")')
+    const nama = ev('smartDefault("F", "Nama Lengkap", "text")')
+
+    const specificsHeld = /^\d+$/.test(tanggungan) && Number(tanggungan) < 10 && /[A-Za-z]/.test(nama)
+
+    specificsHeld
+      ? pass('the numeric catch-alls did not shadow the specific rules above them')
+      : fail(`a catch-all stole a specific rule: Jumlah Tanggungan=${tanggungan}, Nama Lengkap=${nama}`)
+  }
+
+  {
+    /* Mandatory documents must FAIL OPEN. "Wajib" and "N file" are DataTable
+       columns that shed into the drawer at narrow widths; the strict filter then
+       matched nothing, the loop broke, and NOTHING was attached with no error —
+       the submit failed later on missing documents, far from the cause. */
+    const drv2 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const hasFallback = /const target = strict \|\| pencils\.find\(unattached\)/.test(drv2)
+
+    hasFallback
+      ? pass('the mandatory-document pass falls back when the Wajib column is shed')
+      : fail('v2FillDocuments must fall back to "no attachment" when /Wajib/ matches nothing — otherwise a narrow window silently attaches no required documents')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
