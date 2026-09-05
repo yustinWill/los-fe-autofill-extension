@@ -1791,6 +1791,7 @@ async function v2FillCollaterals(items, openWait = 900) {
     const tried = new Set()
 
     for (let i = 0; i < rounds; i++) {
+      if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
       const scope = dialog()
 
       if (!scope) return
@@ -2045,6 +2046,7 @@ async function v2FillCollaterals(items, openWait = 900) {
   const results = []
 
   for (const item of items || []) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const before = rowCount()
     const branch = BRANCHES[item.jenis] || { pills: [], text: {} }
 
@@ -2335,9 +2337,11 @@ async function v2AddMutations(plan, openWait = 900) {
   }
 
   for (let a = 0; a < spec.accounts; a++) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const account = ACCOUNTS[a % ACCOUNTS.length]
 
     for (let m = 0; m < months; m++) {
+      if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
       const period = MONTHS[m % MONTHS.length]
 
       /* Never insert the same bank twice for one period — the save is rejected
@@ -2599,6 +2603,7 @@ async function v2AssignCollateralFacilities(delayMs = 700) {
   let guard = 0
 
   while (pending().length && guard++ < 20) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const trigger = pending()[0]
 
     /**
@@ -2793,11 +2798,13 @@ async function v2AddRows(specs, openWait = 900) {
   const results = []
 
   for (const spec of specs || []) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const count = Math.max(0, Number(spec.count) || 0)
     let added = 0
     let lastError = null
 
     for (let n = 0; n < count; n++) {
+      if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
       const opener = [...document.querySelectorAll('button')]
         .find(b => (b.textContent || '').trim() === spec.opener)
 
@@ -3245,6 +3252,7 @@ async function v2AddFinancialReports(plan, openWait = 900) {
   const results = []
 
   for (const report of seq) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const opener = [...document.querySelectorAll('button')]
       .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
 
@@ -3841,6 +3849,7 @@ async function v2AddFacilities(plan, openWait = 900) {
   let attempt = 0
 
   for (let n = 0; n < Math.max(0, Number(spec.count) || 0); n++) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const opener = [...document.querySelectorAll('button')]
       .find(b => /Tambah Fasilitas/.test(b.textContent || ''))
 
@@ -4237,6 +4246,7 @@ async function v2FillDocuments(plan, openWait = 900) {
   ]
 
   for (const target0 of (spec.required ? REQUIRED_BLOCKS : [])) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const block = blockEl(target0.id, target0.heading)
 
     if (!block) {
@@ -4294,6 +4304,7 @@ async function v2FillDocuments(plan, openWait = 900) {
       const total = Math.min(rowsIn().length, 12)
 
       for (let i = 0; i < total; i++) {
+        if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
         /* Re-query every iteration: saving a row re-renders the table, so a row
            captured up front is detached by the time its turn comes. */
         const row = rowsIn()[i]
@@ -4344,6 +4355,7 @@ async function v2FillDocuments(plan, openWait = 900) {
 
   // ── 2. Optional rows on Dokumen Calon Debitur ─────────────────────────────
   for (let i = 0; i < Math.max(0, Number(spec.optional) || 0); i++) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const block = blockEl('v2PotentialDebtorDocumentBlock', 'DOKUMEN CALON DEBITUR')
 
     if (!block) { report.optional.push({ ok: false, reason: 'no Dokumen Calon Debitur block' }); break }
@@ -4493,6 +4505,7 @@ async function v2FillQualitative(plan, openWait = 900) {
     .slice(0, Math.max(0, Number(spec.limit) || 0))
 
   for (const label of labels) {
+    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
     const name = label.replace(/^Ubah analisa\s*/, '')
 
     const opener = document.querySelector(`button[aria-label="${label.replace(/"/g, '\\"')}"]`)

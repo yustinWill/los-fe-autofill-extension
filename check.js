@@ -1590,6 +1590,56 @@ if (!S) {
       : fail('popup.js still counts every outcome-less document entry as unsaved — a skipped Opsional row would read as a failed save')
   }
 
+  console.log('\ncancel lands within one record, not one pass')
+
+  {
+    /**
+     * 🔴 "why it cannot immediately stop? no harm right" (user, 2026-09-06).
+     * Right on both counts. The popup cannot INTERRUPT a function already
+     * injected into the page, but it can tell it to stop: Batal now sets
+     * `window.__autofillCancel` in the page and every per-record loop checks it
+     * before opening its next modal. Before this, a 391 s documents pass ran to
+     * completion after Batal, and "Menghentikan…" meant six minutes.
+     */
+    const strip6 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const drv6 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const src6 = strip6(fs.readFileSync(path.join(dir, 'popup.js'), 'utf8'))
+
+    const PASSES6 = ['v2FillCollaterals', 'v2AddMutations', 'v2AddFinancialReports', 'v2AssignCollateralFacilities', 'v2AddRows', 'v2AddFacilities', 'v2FillDocuments', 'v2FillQualitative']
+    const bodyOf = fn => { const st = drv6.indexOf(`async function ${fn}(`); const en = drv6.indexOf('\n}\n', st); return strip6(drv6.slice(st, en)) }
+    const unchecked = PASSES6.filter(fn => !/window\.__autofillCancel/.test(bodyOf(fn)))
+
+    !unchecked.length
+      ? pass(`all ${PASSES6.length} planned passes consult window.__autofillCancel between records`)
+      : fail(`these passes run to completion after Batal: ${unchecked.join(', ')} — a cancel there waits for the whole pass`)
+
+    /* Both halves of the protocol: set on Batal, cleared at run start — or the
+       NEXT run stops at its first record. */
+    const sets = /window\.__autofillCancel = true/.test(src6)
+    const clears = /window\.__autofillCancel = false/.test(src6)
+    sets && clears
+      ? pass('Batal sets the page flag and a new run clears it')
+      : fail(`page-side cancel flag incomplete — set:${sets} cleared:${clears}`)
+
+    /* The popup's own loops: per field in BOTH fill paths (Quick Fill takes the
+       all-steps one), per modal via onStep. */
+    const allSteps = /for \(let i = 0; i < stepFields\.length; i\+\+\) \{\s*throwIfCancelled\(\)/.test(src6)
+    const single = /for \(let i = 0; i < fieldOrder\.length; i\+\+\) \{\s*throwIfCancelled\(\)/.test(src6)
+    allSteps && single
+      ? pass('both per-field fill loops check for cancel before each field')
+      : fail(`per-field cancel check missing — all-steps:${allSteps} single-step:${single}; Quick Fill uses the all-steps path`)
+
+    /* A cancel throws OUT of the fill function before its own unlockUI(), so the
+       unlock has to live where a finally can reach it. */
+    const hoisted = /^const lockUI = \(\) => \{/m.test(src6) && /^const unlockUI = \(\) => \{/m.test(src6)
+    const qf6 = src6.slice(src6.indexOf('async function runQuickFill'))
+    const fin6 = qf6.slice(qf6.indexOf('} finally {'))
+    const unlocks = /unlockUI\(\)/.test(fin6)
+    hoisted && unlocks
+      ? pass('unlockUI is module-level and runs in runQuickFill\'s finally, so a cancel cannot strand the controls')
+      : fail(`after a cancel Scan/Run/delay/skip would stay disabled — hoisted:${hoisted} inFinally:${unlocks}`)
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

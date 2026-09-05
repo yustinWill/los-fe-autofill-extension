@@ -349,10 +349,12 @@ const cancelError = () => Object.assign(new Error('run cancelled by user'), { ca
  * 🔑 COOPERATIVE cancellation — the only kind available here.
  *
  * A run is a chain of `chrome.scripting.executeScript` calls, and an injected
- * function CANNOT be interrupted once it is in the page. So cancel takes effect
- * at the next CHECKPOINT, never mid-injection. That is why the button says
- * "Menghentikan…" after the click: pretending it stopped instantly would be a
- * lie the user could see through the moment one more field filled.
+ * function CANNOT be interrupted once it is in the page — but it CAN be told to
+ * stop. Batal sets `window.__autofillCancel` in the page, and every per-record
+ * loop in driver-v2.js checks it before opening the next modal; the popup's own
+ * loops call this before each field / modal / pass. So cancel lands within one
+ * record, never mid-modal — and never mid-injection, which is why the button
+ * says "Menghentikan…" rather than claiming an instant stop.
  */
 const throwIfCancelled = () => { if (runCancelled) throw cancelError() }
 
@@ -463,6 +465,43 @@ const setRunning = on => {
     quickFillBtn.classList.remove('is-cancel')
     quickFillBtn.disabled = false
   }
+}
+
+/**
+ * Lock / unlock the manual controls while a fill is going.
+ *
+ * MODULE scope, not inside the fill function where they were born: a cancel
+ * now throws out of the per-field loop, which skipped the `unlockUI()` at the
+ * end of that function and left Scan, Run, the delay and the skip boxes
+ * disabled after every Batal. runQuickFill's `finally` calls this, and a
+ * finally can only call what it can see. Both are idempotent, so the fill
+ * function's own late `unlockUI()` still runs harmlessly on the normal path.
+ */
+const lockUI = () => {
+  detectBtn.disabled = true
+  /* 🔴 NOT while a run is going. Quick Fill IS the cancel control then, and
+     locking it here left the user unable to stop a run during every fill pass —
+     only in the gaps between passes, which is where nobody is looking. Measured
+     on the live v1.0.91 popup: Batal rendered disabled through "Fill pass 2…".
+     setRunning owns that button for the run. */
+  if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = true
+  allStepsCb.disabled = true
+  executeBtn.disabled = true
+  buildJsonBtn.disabled = true
+  delayInput.disabled = true
+  skipFilledCb.disabled = true
+  skipOptionalCb.disabled = true
+}
+const unlockUI = () => {
+  detectBtn.disabled = false
+  /* Same guard: re-enabling here would undo a pressed "Menghentikan…". */
+  if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = false
+  allStepsCb.disabled = false
+  executeBtn.disabled = false
+  delayInput.disabled = false
+  skipFilledCb.disabled = false
+  skipOptionalCb.disabled = false
+  // buildJsonBtn is managed separately by the fill function
 }
 
 const runAgainBar = document.getElementById('runAgainBar')
@@ -1422,33 +1461,6 @@ executeBtn.addEventListener('click', async () => {
   const extra      = Object.entries(data).filter(([n]) => !detectedNames.includes(n)).map(([n, v]) => [n, v, true])
   const fieldOrder = [...inOrder, ...extra]
 
-  const lockUI = () => {
-    detectBtn.disabled = true
-    /* 🔴 NOT while a run is going. Quick Fill IS the cancel control then, and
-       locking it here left the user unable to stop a run during every fill
-       pass — only in the gaps between passes, which is where nobody is
-       looking. Measured on the live v1.0.91 popup: Batal rendered disabled
-       through "Fill pass 2…". setRunning owns that button for the run. */
-    if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = true
-    allStepsCb.disabled = true
-    executeBtn.disabled = true
-    buildJsonBtn.disabled = true
-    delayInput.disabled = true
-    skipFilledCb.disabled = true
-    skipOptionalCb.disabled = true
-  }
-  const unlockUI = () => {
-    detectBtn.disabled = false
-    /* Same guard: re-enabling here would undo a pressed "Menghentikan…". */
-    if (!document.body.classList.contains('is-running')) quickFillBtn.disabled = false
-    allStepsCb.disabled = false
-    executeBtn.disabled = false
-    delayInput.disabled = false
-    skipFilledCb.disabled = false
-    skipOptionalCb.disabled = false
-    // buildJsonBtn is managed separately below
-  }
-
   lockUI()
   executeBtn.textContent = '⏳…'
   resultStrip.classList.add('hidden')
@@ -1484,6 +1496,11 @@ executeBtn.addEventListener('click', async () => {
       const stepLabel = `Step ${stepIdx + 1}/${lastDetectedFieldsByStep[lastDetectedFieldsByStep.length - 1].stepIdx + 1}`
 
       for (let i = 0; i < stepFields.length; i++) {
+        /* Per field, so Batal lands within one field write during a fill pass,
+           not after the whole pass. Placed BEFORE the per-field try/catch below
+           so the throw is not swallowed as a field error. */
+        throwIfCancelled()
+
         const f = stepFields[i]
 
         /* 🔴 The checkbox filter had to be applied HERE too, and was not.
@@ -1579,6 +1596,11 @@ executeBtn.addEventListener('click', async () => {
   } else {
     // ── Single-step execute ────────────────────────────────────────────────
     for (let i = 0; i < fieldOrder.length; i++) {
+      /* Per field, so Batal lands within one field write during a fill pass
+         instead of after the whole pass. The throw unwinds to runQuickFill's
+         catch; setRunning(false) in its finally restores the button. */
+      throwIfCancelled()
+
       const [name, value, deliberate] = fieldOrder[i]
       const pct = Math.round((i / fieldOrder.length) * 100)
       progressFill.style.width = pct + '%'
@@ -2128,6 +2150,16 @@ async function runQuickFill() {
 
   runStartedAt = Date.now()
 
+  /* Clear the page-side cancel flag from any earlier Batal, or the new run
+     would stop at its very first record. Done here, not in setRunning, because
+     it needs the tab and can fail — a run must start even if the page cannot
+     be reached for this. */
+  try {
+    const tab = await getActiveTab()
+
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: () => { window.__autofillCancel = false } })
+  } catch (_) { /* not scriptable — the popup-side checkpoints still work */ }
+
   setStatus('Starting…')
 
   /* Mounted only on the credit-application create route, so everywhere else
@@ -2229,6 +2261,10 @@ async function runQuickFill() {
 
     persistRunLog()
 
+    /* A cancel throws out of the fill loop before that function's own
+       unlockUI() — so Scan / Run / delay / skip boxes would stay disabled. */
+    unlockUI()
+
     /* LAST, and in `finally`: whatever happened — done, failed, cancelled, or a
        throw from the snapshot above — the popup must never be left with a locked
        config and a button reading "Batal" for a run that is no longer going. */
@@ -2250,10 +2286,22 @@ quickFillBtn.addEventListener('click', async () => {
     runCancelled = true
     quickFillBtn.textContent = 'Menghentikan…'
     quickFillBtn.disabled = true
-    /* ⚠️ Honest wording. Cancellation is COOPERATIVE — an injected function
-       cannot be interrupted, so the run stops at its next checkpoint, not now.
-       "Dibatalkan" here would be a claim the next filled field contradicts. */
-    setStatus('Menghentikan setelah langkah ini…')
+
+    /* 🔑 Tell the PAGE too. The popup cannot interrupt a function already
+       injected into the page — but that function can be told to stop: every
+       per-record loop in driver-v2.js checks `window.__autofillCancel` before
+       opening its next modal. Without this, a pass that takes minutes (the
+       documents pass did 391 s) ran to completion after Batal, and "stop"
+       meant "stop in six minutes" (user, 2026-09-06: "why it cannot
+       immediately stop?"). Stop granularity is now ONE record, and never an
+       open modal — each save is atomic, so nothing half-built is left behind. */
+    try {
+      const tab = await getActiveTab()
+
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: () => { window.__autofillCancel = true } })
+    } catch (_) { /* page gone — the popup-side checkpoints still stop the run */ }
+
+    setStatus('Menghentikan…')
 
     return
   }
