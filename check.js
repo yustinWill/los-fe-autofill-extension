@@ -1776,6 +1776,33 @@ if (!S) {
       : fail(`addresses still in lockstep — diagonal:${lockstep}/12 distinct:${distinctA} seed-varies:${differs}`)
   }
 
+  console.log('\nbundle freshness')
+
+  {
+    /* autofill-bundle.js is GENERATED and once shipped a full release behind its
+       sources (v1.0.82 content under a v1.0.83 manifest) with nothing going red.
+       Build to a temp path with the SAME script and compare bytes. */
+    const os = require('os')
+    const { execFileSync } = require('child_process')
+    const tmp = path.join(os.tmpdir(), `autofill-bundle-check-${process.pid}.js`)
+    let fresh = null
+
+    try {
+      execFileSync('sh', ['build-bundle.sh', tmp], { cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
+      fresh = fs.readFileSync(tmp, 'utf8') === fs.readFileSync(path.join(dir, 'autofill-bundle.js'), 'utf8')
+    } catch (e) {
+      fresh = null
+    } finally {
+      try { fs.unlinkSync(tmp) } catch (_) { /* nothing to remove */ }
+    }
+
+    fresh === true
+      ? pass('autofill-bundle.js matches a fresh build of its sources')
+      : fail(fresh === null
+        ? 'could not rebuild the bundle to compare — is build-bundle.sh runnable and does it accept an output path?'
+        : 'autofill-bundle.js is STALE — run ./build-bundle.sh (release.sh does) before committing, or the pasted logic drifts from the extension')
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()

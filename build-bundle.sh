@@ -11,7 +11,10 @@
 set -e
 cd "$(dirname "$0")"
 
-OUT=autofill-bundle.js
+# Optional first argument: where to write. check.js builds to a temp path and
+# compares it with the committed bundle, so a stale bundle fails the gate — it
+# once shipped a full release behind its sources with nothing going red.
+OUT="${1:-autofill-bundle.js}"
 
 extract() {   # extract <file> <start-marker> <end-marker>
   awk -v s="$2" -v e="$3" '
