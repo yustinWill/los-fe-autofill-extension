@@ -2105,6 +2105,8 @@ async function runAllWizardSteps({ onStep } = {}) {
   // (with skipFilled forced on so already-filled fields are left alone).
   // Repeat until no new fields appear, or after 5 extra passes as a safety cap.
   if (ALWAYS_DOUBLE_CHECK) {
+    let prevUnfilled = Infinity
+
     for (let pass = 1; pass <= 5; pass++) {
       const prevNames = new Set(lastDetectedFields.map(f => f.name))
 
@@ -2114,7 +2116,29 @@ async function runAllWizardSteps({ onStep } = {}) {
       await waitEnabled(executeBtn, 60000)
 
       const newFields = lastDetectedFields.filter(f => !prevNames.has(f.name))
-      if (!newFields.length) break
+
+      /* 🔴 Also keep going while the LAST fill pass left fields not_found that
+         are STILL in the detect — a section that re-rendered UNDER the fill.
+         Measured 2026-09-06: the step-2 "Jenis Calon Debitur" select gates the
+         company section, and setting it to Badan Usaha swaps BANKING_DATA_* out
+         for COMPANY_DATA_* (30 fields). The swap lags the fill, so the fields
+         detected pre-swap fill as not_found and the replacements arrive a beat
+         later. Breaking on "no NEW names" alone lost that race in the 9m41s run
+         (v1.0.97): 36 of 45 step-2 fields left empty, and the whole company
+         section never filled.
+
+         `prevUnfilled` guards against a field that is genuinely absent for this
+         scenario (e.g. the Perorangan singular SLIK on a Badan Usaha form,
+         which detect keeps surfacing and fill can never satisfy): we continue
+         only while the unfilled count is DROPPING, so a stable residue of
+         permanent not_founds converges to a break rather than burning all five
+         passes. The 5-cap is the backstop. */
+      const unfilled = lastDetectedFields.filter(f => lastResults[f.name] === 'not_found').length
+      const progressing = unfilled < prevUnfilled
+
+      if (!newFields.length && !progressing) break
+
+      prevUnfilled = unfilled
 
       if (onStep) onStep(`Fill pass ${pass + 1}…`)
       const wasSkipFilled = skipFilledCb.checked

@@ -1827,6 +1827,29 @@ if (!S) {
         : fail(`a silent product retry is back — onFail:${triedOnFail} onOk:${triedOnOk} recorded:${triedRecorded}`)
     }
 
+    {
+      /**
+       * 🔴 The step-2 re-scan race. "Jenis Calon Debitur" = Badan Usaha swaps
+       * the section from BANKING_DATA_* to COMPANY_DATA_* (30 fields), a beat
+       * AFTER the fill. Breaking the re-scan on "no NEW field names" alone lost
+       * that race (v1.0.97, 2026-09-06): 36/45 step-2 fields left empty. The
+       * loop must also continue while the last fill pass left detected fields
+       * not_found AND the count is still dropping (progress guard against
+       * permanently-absent fields). This is popup ORCHESTRATION, not the page
+       * bundle — asserted at source, live convergence owed to a real run.
+       */
+      const src = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      const loop = src.slice(src.indexOf('for (let pass = 1; pass <= 5'), src.indexOf('for (let pass = 1; pass <= 5') + 900)
+
+      const countsUnfilled = /const unfilled = lastDetectedFields\.filter\(f => lastResults\[f\.name\] === 'not_found'\)\.length/.test(loop)
+      const guardsProgress = /const progressing = unfilled < prevUnfilled/.test(loop)
+      const breaksOnBoth = /if \(!newFields\.length && !progressing\) break/.test(loop)
+
+      countsUnfilled && guardsProgress && breaksOnBoth
+        ? pass('the re-scan continues while a re-rendered section is still resolving, with a progress guard')
+        : fail(`the re-scan can break before a section swap settles — unfilled:${countsUnfilled} progress:${guardsProgress} break:${breaksOnBoth} (step-2 COMPANY_DATA would be left empty)`)
+    }
+
     fresh === true
       ? pass('autofill-bundle.js matches a fresh build of its sources')
       : fail(fresh === null
