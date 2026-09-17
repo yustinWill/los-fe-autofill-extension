@@ -3770,19 +3770,47 @@ function v2AdvanceStep() {
 }
 
 /**
- * Fill the Laporan Keuangan modal — its OWN capability, like agunan, mutations
- * and facilities, because the generic row-adder cannot satisfy it: the Neraca
- * grid must BALANCE ("Neraca Tidak Seimbang — Rp 300" blocks the save), the
- * period is a year select behind a pill, and every nominal is a Cleave mask.
- * Measured 2026-08-20 from the user's run: the generic pass saved one all-zero
- * report and blocked on the rest.
+ * Laporan Keuangan — TWO paths now, dispatched on what the page offers.
  *
- * The YEAR LADDER (user, 2026-08-20). For a configured count n:
- *   neraca   = ceil(n/2) reports: YTD at the current year, then Full 1 Tahun
- *              at Y-1, Y-2, …
- *   labaRugi = floor(n/2) reports: same year sequence.
- * So 1 → 1 Neraca YTD · 2 → + 1 Laba Rugi YTD · 3 → 2 Neraca (YTD, Y-1) +
- * 1 Laba Rugi YTD · 4 → 2 + 2 — and onward.
+ * 🔴 MANUAL ENTRY WAS REMOVED FROM THE CREDIT-APPLICATION FORM on 2026-09-16,
+ * and this capability hunted a button reading exactly "Tambah Laporan
+ * Keuangan". That button no longer renders there, so the pass reported "no
+ * opener" and moved on: `run-case` produced an application with NO financial
+ * data while every other phase reported ok. The modal still exists on
+ * `debtor/create`, so the old path is KEPT rather than deleted — it is still
+ * correct where the modal is still mounted. Dispatch on the DOM, never on a
+ * guess about which form this is.
+ *
+ * THE IMPORT PATH, measured against the app's own parser 2026-09-17:
+ *   1. read the template from the two endpoints the card itself uses —
+ *      `financial-report-items/templates/find-all?debtor_type=…` for the
+ *      template id, `…/find-one?item_type=NERACA&template_id=…` for the rows.
+ *      Same-origin `fetch` with `credentials: 'include'` is authenticated; auth
+ *      rides the cookie.
+ *   2. BUILD the workbook here. 🔴 The driver cannot reach the app's own
+ *      `buildTemplateWorkbook` (a hashed chunk in a built bundle) and cannot
+ *      read back a file it downloads, so it writes its own .xlsx: a STORE-ONLY
+ *      zip, which needs no compression library, with INLINE STRINGS, which need
+ *      no `sharedStrings.xml`. ~90 lines and no dependency.
+ *   3. drop every workbook in ONE change event — the input is `multiple`, which
+ *      is how six files become three periods in a single parse — then poll for
+ *      "Masukkan Angka" to enable and press it.
+ *
+ * 🔴 CAPTURING THE CARD'S OWN DOWNLOAD IS NOT ENOUGH, which is why this builds
+ * a workbook instead: `parseTemplateWorkbook` refuses `filled === 0` as
+ * `empty`, so an untouched template cannot be re-uploaded. Figures have to be
+ * written into it, and writing into a downloaded xlsx means reading a zip.
+ *
+ * 🔴 PROVEN BEFORE IT WAS WRITTEN, against the real reader and the real parser
+ * rather than by reasoning: `exceljs` loads the store-only zip, and
+ * `parseTemplateWorkbook` returns `filled: 2, unknownCodes: [],
+ * ignoredComputed: 0` with the period read back out of `_META` — while a
+ * mismatched id still raises `wrong-template`.
+ *
+ * ⚠️ `_META.template_id` is validated against what the app resolves for the
+ * FORM's debtor type, so a COMPANY workbook on a Perorangan application is
+ * refused as `wrong-template`. That is why `plan.debtorType` is passed in from
+ * the panel rather than guessed here.
  */
 async function v2AddFinancialReports(plan, openWait = 900) {
   const wait = ms => new Promise(r => setTimeout(r, ms))
@@ -3893,128 +3921,488 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
   const currentYear = new Date().getFullYear()
   const n = Math.max(0, Number(spec.count) || 0)
+
+  /* The YEAR LADDER is unchanged, so a plan of 4 still means the same four
+     reports on either path: neraca = ceil(n/2) (YTD at the current year, then
+     Y-1, Y-2 …), labaRugi = floor(n/2) over the same years.
+     ⚠️ `type` is new and `jenis` is kept: the import keys on the report TYPE the
+     API and `_META` speak (`NERACA`), the manual modal keys on the Indonesian
+     label its select shows ("Neraca Keuangan"). One file is one statement, so a
+     year carrying both produces two workbooks. */
   const seq = []
 
-  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0 })
-  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0 })
+  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0 })
+  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0 })
+  /* 🔴 THE TILE IS A DIV, NOT A BUTTON, so `goToOpener`'s button sweep cannot
+     see it and neither can a `querySelector('button')` hunt. A synthetic
+     `.click()` does open it. `children.length <= 3` keeps this off the ancestor
+     containers that also contain the text; `.pop()` takes the innermost. */
+  const UPLOAD_TILE = 'Unggah Template (Excel)'
 
-  const results = []
+  const tile = () => {
+    const wanted = new RegExp('^' + UPLOAD_TILE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 
-  for (const report of seq) {
-    if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
-    const opener = [...document.querySelectorAll('button')]
-      .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
+    return [...document.querySelectorAll('div')]
+      .filter(d => d.children.length <= 3 && wanted.test((d.textContent || '').trim()))
+      .pop() || null
+  }
 
-    if (!opener) { results.push({ ...report, ok: false, reason: 'no opener on this step' }); break }
+  /**
+   * Build a workbook the app's parser accepts, and import every report in one
+   * drop. See the header for why this writes its own .xlsx.
+   */
+  const importViaTemplate = async () => {
+    /* ── A minimal .xlsx writer: STORED zip entries + inline strings ──────── */
+    const CRC_T = (() => {
+      const table = new Int32Array(256)
+
+      for (let i = 0; i < 256; i++) {
+        let c = i
+
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1
+        table[i] = c
+      }
+
+      return table
+    })()
+
+    const crc32 = bytes => {
+      let c = -1
+
+      for (let i = 0; i < bytes.length; i++) c = CRC_T[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8)
+
+      return (c ^ -1) >>> 0
+    }
+
+    const u16 = v => [v & 0xFF, (v >>> 8) & 0xFF]
+    const u32 = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF]
+
+    /* Method 0 (STORED) throughout — xlsx readers accept it, and it is the
+       whole reason no deflate implementation is needed here. */
+    const zipStore = files => {
+      const enc = new TextEncoder()
+      const chunks = []
+      const dir = []
+      let at = 0
+
+      for (const file of files) {
+        const name = enc.encode(file.name)
+        const data = enc.encode(file.data)
+        const crc = crc32(data)
+        const head = [...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+          ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(name.length), ...u16(0)]
+
+        chunks.push(new Uint8Array(head), name, data)
+        dir.push(...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+          ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(name.length),
+          ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(at), ...name)
+        at += head.length + name.length + data.length
+      }
+
+      const eocd = [...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length),
+        ...u32(dir.length), ...u32(at), ...u16(0)]
+      const all = [...chunks, new Uint8Array(dir), new Uint8Array(eocd)]
+      const out = new Uint8Array(all.reduce((total, chunk) => total + chunk.length, 0))
+      let cursor = 0
+
+      for (const chunk of all) { out.set(chunk, cursor); cursor += chunk.length }
+
+      return out
+    }
+
+    const esc = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+    const colName = index => {
+      let name = ''
+      let v = index + 1
+
+      while (v > 0) { name = String.fromCharCode(65 + ((v - 1) % 26)) + name; v = Math.floor((v - 1) / 26) }
+
+      return name
+    }
+
+    /* A number writes as `<v>`; a string writes INLINE, so the workbook needs
+       no `sharedStrings.xml` part at all. An empty cell is omitted entirely —
+       which is what the parser reads as blank, and blank is not zero. */
+    const sheetXml = rows => {
+      const body = rows.map((cells, r) => {
+        const painted = cells.map((value, c) => {
+          if (value === null || value === undefined || value === '') return ''
+          const ref = colName(c) + (r + 1)
+
+          return typeof value === 'number'
+            ? '<c r="' + ref + '"><v>' + value + '</v></c>'
+            : '<c r="' + ref + '" t="inlineStr"><is><t>' + esc(value) + '</t></is></c>'
+        }).join('')
+
+        return '<row r="' + (r + 1) + '">' + painted + '</row>'
+      }).join('')
+
+      return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+        + body + '</sheetData></worksheet>'
+    }
+
+    const buildWorkbook = sheets => {
+      const parts = sheets.map((sheet, i) => ({ name: sheet.name, rows: sheet.rows, id: i + 1, file: 'sheet' + (i + 1) + '.xml' }))
+      const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+      const PKG = 'http://schemas.openxmlformats.org/package/2006/relationships'
+      const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+
+      return zipStore([
+        {
+          name: '[Content_Types].xml',
+          data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            + '<Default Extension="xml" ContentType="application/xml"/>'
+            + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            + parts.map(p => '<Override PartName="/xl/worksheets/' + p.file + '" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')
+            + '</Types>'
+        },
+        {
+          name: '_rels/.rels',
+          data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="' + PKG + '">'
+            + '<Relationship Id="rId1" Type="' + REL + '/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+        },
+        {
+          name: 'xl/workbook.xml',
+          data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="' + MAIN + '" xmlns:r="' + REL + '"><sheets>'
+            + parts.map(p => '<sheet name="' + esc(p.name) + '" sheetId="' + p.id + '" r:id="rId' + p.id + '"/>').join('')
+            + '</sheets></workbook>'
+        },
+        {
+          name: 'xl/_rels/workbook.xml.rels',
+          data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="' + PKG + '">'
+            + parts.map(p => '<Relationship Id="rId' + p.id + '" Type="' + REL + '/worksheet" Target="worksheets/' + p.file + '"/>').join('')
+            + '</Relationships>'
+        },
+        ...parts.map(p => ({ name: 'xl/worksheets/' + p.file, data: sheetXml(p.rows) }))
+      ])
+    }
+
+    /* ── The template, from the same endpoints the card reads ─────────────── */
+    const api = async (path, params) => {
+      const url = '/api/' + path + '?' + new URLSearchParams(params).toString()
+      const response = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } })
+
+      if (!response.ok) throw new Error(path + ' → HTTP ' + response.status)
+
+      return (await response.json()).data
+    }
+
+    const debtorType = /perorangan|individual/i.test(String(spec.debtorType || '')) ? 'INDIVIDUAL' : 'COMPANY'
+    const rowsByType = {}
+    let templateId = ''
+
+    try {
+      const templates = await api('financial-report-items/templates/find-all', { debtor_type: debtorType })
+
+      templateId = (templates || []).map(t => t.p_financial_report_template_id).find(Boolean) || ''
+
+      /* ⚠️ Measured 2026-09-17: staging holds exactly ONE template for COMPANY,
+         one for INDIVIDUAL and NONE for BANK. A Bank application therefore has
+         nothing to import against, and that is seeded data, not a defect. */
+      if (!templateId) return { ok: false, saved: 0, wanted: seq.length, reason: 'no financial-report template for debtor_type ' + debtorType }
+
+      for (const type of [...new Set(seq.map(r => r.type))]) {
+        rowsByType[type] = await api('financial-report-items/find-one', { item_type: type, template_id: templateId })
+      }
+    } catch (e) {
+      return { ok: false, saved: 0, wanted: seq.length, reason: 'template read failed: ' + (e && e.message ? e.message : String(e)) }
+    }
+
+    /* An INPUT LEAF by the app's OWN rule (`mapItemsToRows` + the parser's
+       `isInput`): typeable, not a formula, not a collapsible heading. A figure
+       written anywhere else is discarded and counted as `ignoredComputed`, so
+       filling one would look like it worked and change nothing. */
+    const inputLeaves = type => [...new Map((rowsByType[type] || []).map(i => [i.item_code, i])).values()]
+      .filter(i => i.allow_user_input === 1 && !i.item_formula && String(i.display_type || '').trim().toUpperCase() !== 'COLLAPSIBLE')
+      .sort((a, b) => a.display_order - b.display_order)
+
+  /* 🔴 NERACA MUST BALANCE or the confirm stays disabled ("Neraca Tidak
+     Seimbang — Rp …"). `balanceSideOf`: a code starting `1` is aktiva, `2` or
+     `3` is pasiva — so ONE leaf on each side carrying the SAME figure balances
+     whatever the computed rows derive. */
+    const amountsFor = report => {
+      const leaves = inputLeaves(report.type)
+      const amounts = new Map()
+
+      if (report.type === 'NERACA') {
+        const aktiva = leaves.find(i => String(i.item_code).startsWith('1'))
+        const pasiva = leaves.find(i => String(i.item_code).startsWith('2') || String(i.item_code).startsWith('3'))
+
+        if (!aktiva || !pasiva) return null
+        amounts.set(aktiva.item_code, spec.amount)
+        amounts.set(pasiva.item_code, spec.amount)
+      } else {
+        const [revenue, cost] = leaves
+
+        if (!revenue) return null
+        amounts.set(revenue.item_code, spec.amount)
+        if (cost) amounts.set(cost.item_code, Math.round(spec.amount * 0.6))
+      }
+
+      return { leaves, amounts }
+    }
+
+    /* Header at row 1. The parser skips row 1 AND any row whose KODE cell reads
+       `KODE`, and it LOCATES the value column by finding `NILAI` in that row
+       rather than assuming a position — so the four columns must be spelled
+       exactly like this and `NILAI` must be present. */
+    const HEADER = ['KODE', 'URAIAN', 'ISI?', 'NILAI']
+    const today = new Date().toISOString().slice(0, 10)
+    const files = []
+    const planned = []
+
+    for (const report of seq) {
+      const picked = amountsFor(report)
+
+      if (!picked) {
+        planned.push({ ...report, ok: false, reason: 'no input rows in the ' + report.type + ' template' })
+        continue
+      }
+
+      const rows = [HEADER].concat(picked.leaves.map(item => [
+        String(item.item_code),
+        String(item.item_name || '').trim(),
+        'Isi',
+        picked.amounts.has(item.item_code) ? picked.amounts.get(item.item_code) : null
+      ]))
+
+      const periodType = report.ytd ? 'YTD' : 'ANNUAL'
+
+      /* 🔴 `period_type`, `period_year` and `period_end` are all REQUIRED — the
+         parser refuses `no-period` without them, deliberately, rather than
+         guessing a period for real figures. */
+      const meta = [
+        ['schema', '1'],
+        ['template_id', templateId],
+        ['debtor_type', debtorType],
+        ['report_types', report.type],
+        ['period_type', periodType],
+        ['period_year', String(report.year)],
+        ['period_start', report.year + '-01-01'],
+        ['period_end', report.ytd ? today : report.year + '-12-31'],
+        ['audit_type', 'INHOUSE'],
+        ['generated_at', new Date().toISOString()]
+      ]
+
+      const bytes = buildWorkbook([{ name: report.type, rows }, { name: '_META', rows: meta }])
+      const name = 'autofill_' + report.type + '_' + periodType + '_' + report.year + '.xlsx'
+
+      files.push(new File([bytes], name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      planned.push({ ...report, ok: true, periodType, filled: picked.amounts.size, of: picked.leaves.length })
+    }
+
+    if (!files.length) return { ok: false, saved: 0, wanted: seq.length, results: planned, reason: 'no workbook could be built' }
+
+    const opener = tile()
+
+    if (!opener) return { ok: false, saved: 0, wanted: seq.length, results: planned, reason: 'the "' + UPLOAD_TILE + '" tile vanished' }
     opener.click()
     await wait(1100)
 
     const box = dialog()
 
-    if (!box) { results.push({ ...report, ok: false, reason: 'modal did not open' }); continue }
+    if (!box) return { ok: false, saved: 0, wanted: seq.length, results: planned, reason: 'the upload modal did not open' }
 
-    /* Jenis — a select whose panel renders inline in the dialog. This choice
-       decides which GRID renders below, so it must land before any nominal. */
-    const jenisTrigger = [...box.querySelectorAll('button')]
-      .find(b => /^(Pilih|Neraca|Laporan)/.test((b.textContent || '').trim()) && !/Periode|Tahun|Referensi/.test(b.textContent || ''))
-
-    if (jenisTrigger && jenisTrigger.textContent.trim() !== report.jenis) {
-      const before = new Set([...box.querySelectorAll('button')])
-
-      jenisTrigger.click()
-      await wait(openWait)
-
-      const opt = [...(dialog() || box).querySelectorAll('button')]
-        .filter(b => !before.has(b))
-        .find(b => (b.textContent || '').trim() === report.jenis)
-
-      if (opt) { opt.click(); await wait(600) }
-    }
-
-    /* Periode: YTD for the current year, Full 1 Tahun for prior years.
-       Captured, not discarded — a pass whose result reaches no report line
-       has already failed silently once in this repo. */
-    const periodeSet = await clickButton(report.ytd ? 'Year to Date (YTD)' : 'Full 1 Tahun')
-
-    await wait(300)
-    const yearSet = await pickYear(report.year)
-
-    /* Nominals. Neraca must BALANCE: one aktiva row and one pasiva row with the
-       SAME figure keeps Total Aktiva == Total Pasiva whatever the fx rows
-       compute. Laba Rugi has no balance rule. */
-    const wrote = []
-
-    if (/Neraca/.test(report.jenis)) {
-      wrote.push(await fillRow('Kas dan Setara Kas', spec.amount))
-      wrote.push(await fillRow('Hutang Bank Jangka Pendek', spec.amount))
-    } else {
-      wrote.push(await fillRow('Penjualan', spec.amount))
-      wrote.push(await fillRow('Harga Pokok Penjualan', Math.round(spec.amount * 0.6)))
-    }
-
-    /* Lampiran — the dropzone is a plain file input. */
     const fileInput = [...box.querySelectorAll('input[type=file]')].pop()
 
-    if (fileInput) {
-      const dt = new DataTransfer()
+    if (!fileInput) return { ok: false, saved: 0, wanted: seq.length, results: planned, reason: 'no file input in the upload modal' }
 
-      dt.items.add(new File(
-        [new Blob(['%PDF-1.4\n% laporan keuangan autofill\nendobj\n%%EOF'], { type: 'application/pdf' })],
-        'autofill-fr-' + report.year + '.pdf', { type: 'application/pdf' }
-      ))
-      fileInput.files = dt.files
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-      await wait(3200)
+    /* The input is `multiple`, so every workbook goes in ONE change event. */
+    const dt = new DataTransfer()
+
+    for (const file of files) dt.items.add(file)
+    fileInput.files = dt.files
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+
+    /* exceljs is ~1MB and loaded lazily on the FIRST upload, then each workbook
+       is parsed in turn — measured at roughly a second per file. Poll for the
+       confirm to enable rather than guessing a delay; a fixed wait either fails
+       on a cold load or costs 25s every run. */
+    let confirm = null
+
+    for (let i = 0; i < 60; i++) {
+      await wait(400)
+
+      const live = dialog()
+
+      confirm = live && [...live.querySelectorAll('button')]
+        .find(b => (b.textContent || '').trim() === 'Masukkan Angka' && !b.disabled)
+
+      if (confirm) break
     }
 
-    await clickButton('Simpan')
-    await wait(800)
-
-    /* The save may raise its own confirm — dialog-scoped, per the B55 rule. */
-    const confirmBox = dialog()
-    const ya = confirmBox && confirmBox !== box
-      && [...confirmBox.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
-
-    if (ya) { ya.click(); await wait(800) }
-
-    let closed = false
-
-    for (let i = 0; i < 30; i++) {
-      if (!dialog()) { closed = true; break }
-      await wait(150)
-    }
-
-    if (!closed) {
-      /* Capture the refusal before dismissing — a driver that must cancel to
-         reach the next report destroys its own evidence. */
-      const box2 = dialog()
-      const reds = box2
-        ? [...box2.querySelectorAll('*')].filter(e => {
-          const c = getComputedStyle(e).color
-
-          return /rgb\((223|200|210), (42|30|31)/.test(c) && (e.textContent || '').trim().length < 120 && !e.children.length
-        }).map(e => e.textContent.trim())
+    if (!confirm) {
+      /* Capture the refusal BEFORE dismissing. The modal states it in words —
+         `wrong-template`, an imbalance with its figure, `empty` — and a pass
+         that cancels to get out otherwise destroys its own evidence. */
+      const live = dialog()
+      const said = live
+        ? [...live.querySelectorAll('*')]
+          .filter(e => !e.children.length && (e.textContent || '').trim().length > 3 && (e.textContent || '').trim().length < 160)
+          .map(e => e.textContent.trim())
         : []
 
-      results.push({ ...report, ok: false, periodeSet, yearSet, reason: 'save blocked', errors: reds })
-
-      const cancelBox = dialog()
-      const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
-        .find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
-
-      if (cancel) { cancel.click(); await wait(600) }
-      const c2 = dialog()
-      const ya2 = c2 && [...c2.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
-
-      if (ya2) { ya2.click(); await wait(600) }
-    } else {
-      results.push({ ...report, ok: true, periodeSet, yearSet, wrote: wrote.filter(Boolean).length })
+      return {
+        ok: false, saved: 0, wanted: seq.length, via: 'excel-import', templateId, debtorType,
+        results: planned, reason: 'confirm never enabled', errors: said.slice(-12)
+      }
     }
 
-    await wait(400)
+    confirm.click()
+    await wait(1200)
+
+    for (let i = 0; i < 30; i++) {
+      if (!dialog()) break
+      await wait(200)
+    }
+
+    return {
+      saved: planned.filter(r => r.ok).length, wanted: seq.length,
+      via: 'excel-import', templateId, debtorType, results: planned
+    }
+  }
+  /**
+   * The ORIGINAL manual modal, unchanged. Still the right path on
+   * `debtor/create`, which still hosts `FinancialReportModal`.
+   */
+  const fillManualModal = async () => {
+    const results = []
+
+    for (const report of seq) {
+      if (window.__autofillCancel) break /* cooperative cancel: the popup sets this page flag on Batal; checked before each record so no modal is left open */
+      const opener = [...document.querySelectorAll('button')]
+        .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
+
+      if (!opener) { results.push({ ...report, ok: false, reason: 'no opener on this step' }); break }
+      opener.click()
+      await wait(1100)
+
+      const box = dialog()
+
+      if (!box) { results.push({ ...report, ok: false, reason: 'modal did not open' }); continue }
+
+      /* Jenis — a select whose panel renders inline in the dialog. This choice
+         decides which GRID renders below, so it must land before any nominal. */
+      const jenisTrigger = [...box.querySelectorAll('button')]
+        .find(b => /^(Pilih|Neraca|Laporan)/.test((b.textContent || '').trim()) && !/Periode|Tahun|Referensi/.test(b.textContent || ''))
+
+      if (jenisTrigger && jenisTrigger.textContent.trim() !== report.jenis) {
+        const before = new Set([...box.querySelectorAll('button')])
+
+        jenisTrigger.click()
+        await wait(openWait)
+
+        const opt = [...(dialog() || box).querySelectorAll('button')]
+          .filter(b => !before.has(b))
+          .find(b => (b.textContent || '').trim() === report.jenis)
+
+        if (opt) { opt.click(); await wait(600) }
+      }
+
+      /* Periode: YTD for the current year, Full 1 Tahun for prior years.
+         Captured, not discarded — a pass whose result reaches no report line
+         has already failed silently once in this repo. */
+      const periodeSet = await clickButton(report.ytd ? 'Year to Date (YTD)' : 'Full 1 Tahun')
+
+      await wait(300)
+      const yearSet = await pickYear(report.year)
+
+      /* Nominals. Neraca must BALANCE: one aktiva row and one pasiva row with the
+         SAME figure keeps Total Aktiva == Total Pasiva whatever the fx rows
+         compute. Laba Rugi has no balance rule. */
+      const wrote = []
+
+      if (/Neraca/.test(report.jenis)) {
+        wrote.push(await fillRow('Kas dan Setara Kas', spec.amount))
+        wrote.push(await fillRow('Hutang Bank Jangka Pendek', spec.amount))
+      } else {
+        wrote.push(await fillRow('Penjualan', spec.amount))
+        wrote.push(await fillRow('Harga Pokok Penjualan', Math.round(spec.amount * 0.6)))
+      }
+
+      /* Lampiran — the dropzone is a plain file input. */
+      const fileInput = [...box.querySelectorAll('input[type=file]')].pop()
+
+      if (fileInput) {
+        const dt = new DataTransfer()
+
+        dt.items.add(new File(
+          [new Blob(['%PDF-1.4\n% laporan keuangan autofill\nendobj\n%%EOF'], { type: 'application/pdf' })],
+          'autofill-fr-' + report.year + '.pdf', { type: 'application/pdf' }
+        ))
+        fileInput.files = dt.files
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+        await wait(3200)
+      }
+
+      await clickButton('Simpan')
+      await wait(800)
+
+      /* The save may raise its own confirm — dialog-scoped, per the B55 rule. */
+      const confirmBox = dialog()
+      const ya = confirmBox && confirmBox !== box
+        && [...confirmBox.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+      if (ya) { ya.click(); await wait(800) }
+
+      let closed = false
+
+      for (let i = 0; i < 30; i++) {
+        if (!dialog()) { closed = true; break }
+        await wait(150)
+      }
+
+      if (!closed) {
+        /* Capture the refusal before dismissing — a driver that must cancel to
+           reach the next report destroys its own evidence. */
+        const box2 = dialog()
+        const reds = box2
+          ? [...box2.querySelectorAll('*')].filter(e => {
+            const c = getComputedStyle(e).color
+
+            return /rgb\((223|200|210), (42|30|31)/.test(c) && (e.textContent || '').trim().length < 120 && !e.children.length
+          }).map(e => e.textContent.trim())
+          : []
+
+        results.push({ ...report, ok: false, periodeSet, yearSet, reason: 'save blocked', errors: reds })
+
+        const cancelBox = dialog()
+        const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
+          .find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+
+        if (cancel) { cancel.click(); await wait(600) }
+        const c2 = dialog()
+        const ya2 = c2 && [...c2.querySelectorAll('button')].find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+        if (ya2) { ya2.click(); await wait(600) }
+      } else {
+        results.push({ ...report, ok: true, periodeSet, yearSet, wrote: wrote.filter(Boolean).length })
+      }
+
+      await wait(400)
+    }
+
+    return { saved: results.filter(r => r.ok).length, wanted: seq.length, results }
   }
 
-  return { saved: results.filter(r => r.ok).length, wanted: seq.length, results }
+  if (tile()) return importViaTemplate()
+
+  const manualOpener = [...document.querySelectorAll('button')]
+    .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
+
+  if (manualOpener) return fillManualModal()
+
+  /* 🔴 NEITHER entry point is on this step, and that has to be LOUD.
+     Answering "no opener" and moving on is exactly how an application with
+     no financial data came to pass every other check in the run. */
+  return {
+    ok: false, saved: 0, wanted: seq.length,
+    reason: 'neither the "' + UPLOAD_TILE + '" tile nor a "Tambah Laporan Keuangan" button is on this step'
+  }
 }
 
 // ─── Record modals ────────────────────────────────────────────────────────────

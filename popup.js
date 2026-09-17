@@ -2443,12 +2443,19 @@ document.querySelectorAll('input[name="onOpen"]').forEach(r => {
  * "is it already here?", so it costs one probe on the common path.
  */
 async function goToOpener(driver, tabId, opener, maxSteps = 10) {
-  const hasOpener = label =>
-    [...document.querySelectorAll('button')].some(b => (b.textContent || '').trim() === label)
+  /* `opener` is a label, or a LIST of them when a pass has more than one entry
+     point. A label written `div:TEXT` is matched against a NON-button element
+     instead: Data Keuangan's Excel import tile is a DIV, and a button-only
+     sweep answered "not on any step" for a step that plainly had it.
+     `children.length <= 3` keeps the loose match off the ancestor containers
+     that also contain the text. */
+  const hasOpener = labels => labels.some(label => label.startsWith('div:')
+    ? [...document.querySelectorAll('div')].some(d => d.children.length <= 3 && (d.textContent || '').trim().startsWith(label.slice(4)))
+    : [...document.querySelectorAll('button')].some(b => (b.textContent || '').trim() === label))
 
   const present = async () => {
     const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId }, world: 'MAIN', func: hasOpener, args: [opener]
+      target: { tabId }, world: 'MAIN', func: hasOpener, args: [Array.isArray(opener) ? opener : [opener]]
     })
 
     return Boolean(result)
@@ -2810,14 +2817,26 @@ async function fillPlannedFinancialReports() {
 
   setStatus(`Laporan keuangan (${wanted.count})…`)
 
-  if ((await goToOpener(driver, tab.id, 'Tambah Laporan Keuangan')) === null) {
-    return { ok: false, step: 'open', reason: 'no "Tambah Laporan Keuangan" on any step' }
+  /* 🔴 TWO entry points since 2026-09-16. Manual entry was removed from the
+     credit-application form, where Data Keuangan now imports from a template —
+     so the Excel TILE is the one to navigate to there, and the old button only
+     still exists on `debtor/create`. Looking for the button alone is what made
+     this pass report "no opener" and move on, leaving an application with no
+     financial data and every other phase green. */
+  const LAPKEU_OPENERS = ['div:Unggah Template (Excel)', 'Tambah Laporan Keuangan']
+
+  if ((await goToOpener(driver, tab.id, LAPKEU_OPENERS)) === null) {
+    return { ok: false, step: 'open', reason: 'no "Unggah Template (Excel)" tile and no "Tambah Laporan Keuangan" button on any step' }
   }
 
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id }, world: 'MAIN', func: driver.financialReports,
-      args: [{ count: wanted.count }, 900]
+      /* ⚠️ `debtorType` is load-bearing on the import path, not decoration: the
+         workbook carries a `template_id` the app validates against the one IT
+         resolves for the form's debtor type, so a COMPANY sheet on a Perorangan
+         application is refused outright as `wrong-template`. */
+      args: [{ count: wanted.count, debtorType: activePlan.debtorType }, 900]
     })
 
     return result || null

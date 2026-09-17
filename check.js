@@ -58,6 +58,13 @@ const stubEl = () => {
       return kid
     },
     setAttribute() {},
+
+    /* ⚠️ A real element HAS a `dataset`, and leaving it off was a latent crash
+       rather than a harmless gap: popup's auto-run IIFE settles asynchronously,
+       so it only reached `setRunning`'s `quickFillBtn.dataset.idleLabel` once a
+       later section made the gate run long enough to get there. The gate was
+       passing because it exited first. */
+    dataset: {},
     getAttribute: () => null,
     addEventListener() {},
     querySelector: () => null,
@@ -1857,6 +1864,140 @@ if (!S) {
         : 'autofill-bundle.js is STALE — run ./build-bundle.sh (release.sh does) before committing, or the pasted logic drifts from the extension')
   }
 
+  /* ── Laporan Keuangan: the Excel import path (2026-09-17) ──────────────────
+   *
+   * 🔴 The defect these exist for: manual entry was removed from the
+   * credit-application form, this capability hunted the removed button, and the
+   * pass answered "no opener" and moved on — so a run produced an application
+   * with NO financial data while every other phase reported ok.
+   *
+   * Run the SHIPPED function the way `executeScript` sends it — serialized on
+   * its own, so a helper borrowed from another function would throw here the
+   * way it would in the page. Entries in the workbook are STORED, so the sheet
+   * XML is readable straight out of the bytes with no zip library.
+   */
+  {
+    console.log('\nlaporan keuangan: the Excel import')
+
+    const ITEMS = {
+      NERACA: [
+        { item_code: '1AA', item_name: 'Kas dan Setara Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '1AB', item_name: 'Piutang Usaha', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '1ZZ', item_name: 'TOTAL AKTIVA', display_order: 3, display_type: 'TOTAL', allow_user_input: 0, item_formula: '1AA+1AB' },
+        { item_code: '2AA', item_name: 'Hutang Bank', display_order: 4, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: 'GRP', item_name: 'Aktiva Lancar', display_order: 5, display_type: 'COLLAPSIBLE', allow_user_input: 1, item_formula: null }
+      ],
+      LABA_RUGI: [
+        { item_code: '4A', item_name: 'Penjualan', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '4B', item_name: 'Harga Pokok Penjualan', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ]
+    }
+
+    const driverSrc = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    /* 🔴 Injected as PARAMETERS, never assigned to globals. check.js evaluates
+       popup.js in its own stubbed DOM earlier and popup's auto-run IIFE settles
+       ASYNCHRONOUSLY — assigning `globalThis.document` here reached into that
+       and crashed the gate inside `setRunning` on a stub it never asked for. */
+    const makeDriver = (doc, fetchStub, DataTransferStub) =>
+      new Function('document', 'fetch', 'DataTransfer', driverSrc + '; return v2AddFinancialReports')(doc, fetchStub, DataTransferStub)
+
+    const run = async (mode, plan) => {
+      const files = []
+      let modalOpen = true
+
+      const DataTransferStub = class {
+        constructor() { this.items = { add: f => files.push(f) } }
+        get files() { return files }
+      }
+
+      const fetchStub = async url => ({
+        ok: true,
+        json: async () => {
+          const params = new URL(url, 'http://x').searchParams
+
+          return url.includes('templates/find-all')
+            ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+            : { data: ITEMS[params.get('item_type')] }
+        }
+      })
+
+      const confirmBtn = { textContent: 'Masukkan Angka', disabled: false, click: () => { modalOpen = false } }
+      const box = {
+        getAttribute: () => null,
+        querySelectorAll: sel => (sel.includes('file')
+          ? [{ files: null, dispatchEvent: () => true }]
+          : sel === 'button' ? [confirmBtn] : [])
+      }
+
+      const doc = {
+        querySelectorAll: sel => {
+          if (sel === 'div') return mode === 'tile' ? [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => {} }] : []
+          if (sel === '[role="dialog"]') return modalOpen && mode === 'tile' ? [box] : []
+
+          return []
+        }
+      }
+
+      const result = await makeDriver(doc, fetchStub, DataTransferStub)(plan, 20)
+
+      return { result, files }
+    }
+
+    const imported = await run('tile', { count: 4, debtorType: 'Badan Usaha', amount: 5000000 })
+
+    imported.result.via === 'excel-import' && imported.result.saved === 4 && imported.files.length === 4
+      ? pass('the DIV tile is found and four workbooks are dropped in one change event')
+      : fail('the import path did not run: ' + JSON.stringify(imported.result).slice(0, 220))
+
+    const neraca = imported.files.find(f => /NERACA/.test(f.name))
+    const xml = neraca ? Buffer.from(await neraca.arrayBuffer()).toString('utf8') : ''
+
+    /* 🔴 NERACA must BALANCE or the app's confirm never enables. One aktiva
+       leaf (code 1…) and one pasiva leaf (2… or 3…) carrying the SAME figure. */
+    const figures = (xml.match(/<v>(\d+)<\/v>/g) || []).map(m => Number(m.replace(/\D/g, '')))
+
+    figures.length === 2 && figures[0] === 5000000 && figures[1] === 5000000
+      ? pass('the NERACA workbook balances — one aktiva and one pasiva leaf, same figure')
+      : fail('NERACA would be refused as unbalanced — figures written: ' + JSON.stringify(figures))
+
+    /* 🔴 A figure on a COMPUTED or COLLAPSIBLE row is discarded by the parser
+       and counted as `ignoredComputed`, so filling one looks like it worked and
+       changes nothing. Neither code may appear in the sheet at all. */
+    !/1ZZ/.test(xml) && !/GRP/.test(xml) && /1AA/.test(xml) && /2AA/.test(xml)
+      ? pass('only INPUT leaves reach the sheet — the computed total and the collapsible heading are left out')
+      : fail('a computed or collapsible row reached the sheet; the parser would ignore the figure silently')
+
+    /* The parser refuses `no-period` without all three, deliberately. */
+    const metaComplete = /period_type/.test(xml) && /period_year/.test(xml) && /period_end/.test(xml) && /template_id/.test(xml)
+
+    metaComplete
+      ? pass('_META carries template_id and the period trio the parser requires')
+      : fail('_META is missing template_id or part of the period trio — the upload would be refused')
+
+    /* 🔴 THE ORIGINAL DEFECT. Neither entry point present must be LOUD. */
+    const nowhere = await run('none', { count: 2, debtorType: 'Badan Usaha' })
+
+    nowhere.result.ok === false && /Unggah Template/.test(nowhere.result.reason || '') && /Tambah Laporan Keuangan/.test(nowhere.result.reason || '')
+      ? pass('with neither entry point the pass FAILS and names both, instead of skipping quietly')
+      : fail('a missing entry point is still silent — this is the defect that shipped an application with no financial data')
+
+    /* `debtorType` produced and never consumed is a defect class this repo has
+       paid for twice, and here it decides whether the upload is accepted at
+       all — a COMPANY workbook on a Perorangan application is `wrong-template`. */
+    const popupSrc = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+
+    const passesDebtorType = /financialReports[\s\S]{0,400}debtorType: activePlan\.debtorType/.test(popupSrc)
+
+    passesDebtorType
+      ? pass('the popup passes the plan\'s debtorType into the capability')
+      : fail('the capability is called without debtorType — every workbook would be built for COMPANY')
+
+    const navFindsTile = /div:Unggah Template \(Excel\)/.test(popupSrc) && /label\.startsWith\('div:'\)/.test(popupSrc)
+
+    navFindsTile
+      ? pass('navigation looks for the tile as a DIV as well as the old button')
+      : fail('goToOpener still sweeps buttons only, so it cannot find the Excel tile')
+  }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
