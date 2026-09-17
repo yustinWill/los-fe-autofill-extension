@@ -107,7 +107,14 @@ const sandbox = {
     runtime: { lastError: null }
   },
   navigator: { clipboard: { writeText: async () => {} } },
-  location: { href: 'chrome-extension://x/popup.html' }
+  location: { href: 'chrome-extension://x/popup.html' },
+
+  /* ⚠️ Second stub the popup's DEFERRED auto-run needed, found the same way as
+     `dataset`: by a later section making the gate run long enough to reach it.
+     A real popup window has `close`, so this is the faithful stub rather than a
+     workaround — and the auto-run calling it is the documented behaviour
+     ("the popup stays OPEN on failure": `if (ok) window.close()`). */
+  close() {}
 }
 
 sandbox.window = sandbox
@@ -1997,6 +2004,94 @@ if (!S) {
     navFindsTile
       ? pass('navigation looks for the tile as a DIV as well as the old button')
       : fail('goToOpener still sweeps buttons only, so it cannot find the Excel tile')
+  }
+  /* ── The card that ALREADY holds an import (2026-09-17) ───────────────────
+   *
+   * 🔴 Found by running the pass TWICE against the live app. Once the card holds
+   * figures the tiles are not rendered at all, so the first version answered
+   * "neither entry point is on this step" — which reads as a navigation fault
+   * when the truth is the opposite: the card is full.
+   *
+   * 🔴 And the only way back is DESTRUCTIVE. "Pilih Ulang Sumber" raises a
+   * confirm reading *"Seluruh laporan keuangan yang sudah diimpor akan
+   * dihapus"*, so answering it by default would delete an analyst's real figures
+   * on any form opened in Mode Ubah in order to plant a fixture. Refusing is the
+   * correct outcome; `replaceExisting: true` is the explicit opt-in.
+   *
+   * ⚠️ The opt-in branch is asserted HERE ONLY. Driving it live was refused by
+   * the action classifier as a shared-resource change, correctly, so it has
+   * never been exercised against the real app.
+   */
+  {
+    console.log('\nlaporan keuangan: a card that already holds an import')
+
+    const driverSrc2 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const runPopulated = async plan => {
+      const clicks = { repick: 0, yes: 0, tile: 0, confirm: 0 }
+      const files = []
+      let stage = 'populated'
+
+      const DataTransferStub = class {
+        constructor() { this.items = { add: f => files.push(f) } }
+        get files() { return files }
+      }
+
+      const fetchStub = async url => ({
+        ok: true,
+        json: async () => (url.includes('templates/find-all')
+          ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+          : { data: [
+            { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+            { item_code: '2AA', item_name: 'Hutang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+          ] })
+      })
+
+      const repick = { textContent: 'Pilih Ulang Sumber', click: () => { clicks.repick += 1; stage = 'confirming' } }
+      const tidak = { textContent: 'Tidak', click: () => {} }
+      const ya = { textContent: 'Ya', click: () => { clicks.yes += 1; stage = 'tiles' } }
+      const tileEl = { children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { clicks.tile += 1; stage = 'uploading' } }
+      const confirmBtn = { textContent: 'Masukkan Angka', disabled: false, click: () => { clicks.confirm += 1; stage = 'done' } }
+
+      const confirmBox = { getAttribute: () => null, querySelectorAll: () => [tidak, ya] }
+      const uploadBox = {
+        getAttribute: () => null,
+        querySelectorAll: sel => (sel.includes('file') ? [{ files: null, dispatchEvent: () => true }] : sel === 'button' ? [confirmBtn] : [])
+      }
+
+      const doc = {
+        querySelectorAll: sel => {
+          if (sel === 'button') return stage === 'populated' ? [repick] : stage === 'confirming' ? [tidak, ya] : []
+          if (sel === 'div') return stage === 'tiles' || stage === 'uploading' ? [tileEl] : []
+          if (sel === '[role="dialog"]') return stage === 'confirming' ? [confirmBox] : stage === 'uploading' ? [uploadBox] : []
+
+          return []
+        }
+      }
+
+      const fn = new Function('document', 'fetch', 'DataTransfer', driverSrc2 + '; return v2AddFinancialReports')(doc, fetchStub, DataTransferStub)
+      const result = await fn(plan, 20)
+
+      return { result, clicks, files }
+    }
+
+    const refused = await runPopulated({ count: 2, debtorType: 'Badan Usaha' })
+
+    refused.result.ok === false && refused.result.alreadyImported === true && refused.clicks.repick === 0
+      ? pass('a populated card is REFUSED with an accurate reason, and the destructive confirm is never touched')
+      : fail(`the pass touched "Pilih Ulang Sumber" without being asked, or mis-reported: repickClicks=${refused.clicks.repick} ${JSON.stringify(refused.result).slice(0, 200)}`)
+
+    const namesTheCause = /Pilih Ulang Sumber|already holds/.test(refused.result.reason || '')
+
+    namesTheCause
+      ? pass('the refusal names the real cause instead of blaming navigation')
+      : fail(`the refusal is misleading — a reader would hunt a navigation fault: "${refused.result.reason}"`)
+
+    const replaced = await runPopulated({ count: 2, debtorType: 'Badan Usaha', replaceExisting: true })
+
+    replaced.result.via === 'excel-import' && replaced.clicks.repick === 1 && replaced.clicks.yes === 1 && replaced.clicks.confirm === 1
+      ? pass('replaceExisting: true clears the card through its confirm and then imports (source-asserted; never run live)')
+      : fail(`the opt-in path does not complete: ${JSON.stringify(replaced.clicks)} ${JSON.stringify(replaced.result).slice(0, 200)}`)
   }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)

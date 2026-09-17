@@ -3751,6 +3751,63 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
   if (tile()) return importViaTemplate()
 
+  /*
+   * 🔴 THE CARD HIDES ITS TILES ONCE IT HOLDS FIGURES, and the only way back is
+   * a DESTRUCTIVE confirm.
+   *
+   * Measured 2026-09-17 by running this pass twice: the second run answered
+   * "neither entry point is on this step", which reads as a navigation fault
+   * when the truth is the opposite — the card is already full. The populated
+   * state offers "Pilih Ulang Sumber", whose confirm says *"Seluruh laporan
+   * keuangan yang sudah diimpor akan dihapus, dan angkanya hanya dapat
+   * dikembalikan dengan mengunggah ulang templatenya."*
+   *
+   * ⚠️ That button is NOT dead — an earlier note recorded it as one, from back
+   * when no call site supplied `onRepick`. It is wired now.
+   *
+   * 🔴 Do NOT answer that confirm by default. On a form opened in Mode Ubah, or
+   * on a draft someone else filled, clicking through would DELETE an analyst's
+   * real figures in order to plant a fixture. Refusing with an accurate reason
+   * is the correct outcome; `replaceExisting: true` is the explicit opt-in.
+   */
+  const repick = () => [...document.querySelectorAll('button')]
+    .find(b => (b.textContent || '').trim() === 'Pilih Ulang Sumber') || null
+
+  if (repick()) {
+    if (!spec.replaceExisting) {
+      return {
+        ok: false,
+        saved: 0,
+        wanted: seq.length,
+        alreadyImported: true,
+        reason: 'this Data Keuangan card already holds imported figures, so the import tiles are hidden — and the only way back ("Pilih Ulang Sumber") DELETES them. Pass replaceExisting: true to overwrite deliberately'
+      }
+    }
+
+    repick().click()
+    await wait(900)
+
+    const confirmBox = dialog()
+    const yes = confirmBox && [...confirmBox.querySelectorAll('button')]
+      .find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+    if (!yes) {
+      return { ok: false, saved: 0, wanted: seq.length, reason: 'the "Pilih Ulang Sumber" confirm never appeared, so the existing import was left alone' }
+    }
+
+    yes.click()
+
+    /* The tiles return on a later render; poll rather than guess at a delay. */
+    for (let i = 0; i < 25; i++) {
+      await wait(300)
+      if (tile()) break
+    }
+
+    if (tile()) return importViaTemplate()
+
+    return { ok: false, saved: 0, wanted: seq.length, reason: 'cleared the existing import but the tiles never came back' }
+  }
+
   const manualOpener = [...document.querySelectorAll('button')]
     .find(b => (b.textContent || '').trim() === 'Tambah Laporan Keuangan')
 
