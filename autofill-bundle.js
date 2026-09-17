@@ -4224,8 +4224,14 @@ async function v2AddFinancialReports(plan, openWait = 900) {
        on a cold load or costs 25s every run. */
     let confirm = null
 
-    for (let i = 0; i < 60; i++) {
-      await wait(400)
+    /* ⚠️ The tick scales with `openWait` so the REFUSAL path is testable. At the
+       default 900 this is 55 × 450ms ≈ 25s, which is what a cold exceljs load
+       plus one parse per workbook needs; at the 20 the gate passes it is ≈ 1.1s.
+       A hardcoded 400ms tick made every negative assertion cost 24 seconds. */
+    const tick = Math.max(50, Math.round(openWait / 2))
+
+    for (let i = 0; i < 55; i++) {
+      await wait(tick)
 
       const live = dialog()
 
@@ -4246,9 +4252,45 @@ async function v2AddFinancialReports(plan, openWait = 900) {
           .map(e => e.textContent.trim())
         : []
 
+      /*
+       * 🔴 CLOSE IT. Capturing the refusal and then WALKING AWAY leaves the
+       * upload modal open over the form, and `runPlannedExtras` carries on to
+       * documents and qualitative afterwards — every one of which looks for
+       * controls on the page and would find a modal in front of them. Measured
+       * 2026-09-17 on a deliberate debtor-type mismatch: openDialogs stayed 1
+       * after the pass returned.
+       *
+       * ⚠️ Dialog-scoped, per the standing rule: a click target may never
+       * resolve against `document` as a fallback. Skip, never widen.
+       */
+      const cancelBox = dialog()
+      const cancel = cancelBox && [...cancelBox.querySelectorAll('button')]
+        .find(b => /^(Batal|Tutup|Kembali)$/i.test((b.textContent || '').trim()))
+
+      if (cancel) {
+        cancel.click()
+        await wait(700)
+
+        /* Cancelling may raise its own confirm, exactly as the manual path does. */
+        const after = dialog()
+        const yes = after && after !== cancelBox && [...after.querySelectorAll('button')]
+          .find(b => /^Ya$/i.test((b.textContent || '').trim()))
+
+        if (yes) { yes.click(); await wait(600) }
+      }
+
       return {
         ok: false, saved: 0, wanted: seq.length, via: 'excel-import', templateId, debtorType,
-        results: planned, reason: 'confirm never enabled', errors: said.slice(-12)
+        results: planned, reason: 'confirm never enabled', errors: said.slice(-12),
+        dismissed: !dialog(),
+
+        /* ⚠️ The app's PRECISE reason (`wrong-template`, `no-period`, …) lives in
+           a hover-only Kairos Tooltip on the status pill, so it is never in the
+           DOM for a scrape to find. `errors` therefore carries the generic group
+           heading plus the counts — "N berkas · 0 laporan akan dibuat" is the
+           decisive line. The most common real cause is a debtor-type mismatch,
+           which is why templateId and debtorType are returned beside it. */
+        hint: 'if every file is Bermasalah, compare debtorType against the form\'s Jenis Calon Debitur — a COMPANY workbook on a Perorangan application is refused'
       }
     }
 

@@ -2093,6 +2093,77 @@ if (!S) {
       ? pass('replaceExisting: true clears the card through its confirm and then imports (source-asserted; never run live)')
       : fail(`the opt-in path does not complete: ${JSON.stringify(replaced.clicks)} ${JSON.stringify(replaced.result).slice(0, 200)}`)
   }
+  /* ── A refused upload must not leave its modal open (2026-09-17) ──────────
+   *
+   * 🔴 Measured live with a deliberate debtor-type mismatch: the pass captured
+   * the refusal and RETURNED with the upload modal still open (openDialogs 1).
+   * `runPlannedExtras` carries on to documents and qualitative afterwards, and
+   * each of those looks for controls on the page — behind a modal none of them
+   * can reach. A failed lapkeu pass would have taken the rest of the run with it.
+   */
+  {
+    console.log('\nlaporan keuangan: a refused upload closes its own modal')
+
+    const driverSrc3 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const clicks = { cancel: 0 }
+    let modalOpen = false
+
+    const DataTransferStub = class {
+      constructor() { this.items = { add: () => {} } }
+      get files() { return [] }
+    }
+
+    const fetchStub = async url => ({
+      ok: true,
+      json: async () => (url.includes('templates/find-all')
+        ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+        : { data: [
+          { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+          { item_code: '2AA', item_name: 'Hutang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+        ] })
+    })
+
+    /* 🔴 The confirm is present but PERMANENTLY DISABLED — exactly what a
+       wrong-template upload produces. The driver must give up and clean up. */
+    const deadConfirm = { textContent: 'Masukkan Angka', disabled: true, click: () => {} }
+    const batal = { textContent: 'Batal', click: () => { clicks.cancel += 1; modalOpen = false } }
+    const status = { children: { length: 0 }, textContent: 'Bermasalah' }
+
+    const box = {
+      getAttribute: () => null,
+      querySelectorAll: sel => {
+        if (sel.includes('file')) return [{ files: null, dispatchEvent: () => true }]
+        if (sel === 'button') return [batal, deadConfirm]
+        if (sel === '*') return [status]
+
+        return []
+      }
+    }
+
+    const doc = {
+      querySelectorAll: sel => {
+        if (sel === 'div') return [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { modalOpen = true } }]
+        if (sel === '[role="dialog"]') return modalOpen ? [box] : []
+
+        return []
+      }
+    }
+
+    const fn3 = new Function('document', 'fetch', 'DataTransfer', driverSrc3 + '; return v2AddFinancialReports')(doc, fetchStub, DataTransferStub)
+    const refusedUpload = await fn3({ count: 2, debtorType: 'Badan Usaha' }, 20)
+
+    refusedUpload.ok === false && refusedUpload.reason === 'confirm never enabled'
+      ? pass('a permanently disabled confirm is reported as a refusal, not waited on forever')
+      : fail(`the refusal was not reported: ${JSON.stringify(refusedUpload).slice(0, 200)}`)
+
+    clicks.cancel === 1 && refusedUpload.dismissed === true && modalOpen === false
+      ? pass('the refused upload modal is CLOSED before the pass returns, so later passes are not blocked')
+      : fail(`the modal was left open — documents and qualitative would run behind it (cancelClicks=${clicks.cancel} dismissed=${refusedUpload.dismissed})`)
+
+    Array.isArray(refusedUpload.errors) && refusedUpload.templateId && refusedUpload.debtorType
+      ? pass('the refusal still carries the captured evidence, the templateId and the debtorType')
+      : fail('the refusal closes the modal but reports nothing to diagnose it with')
+  }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
