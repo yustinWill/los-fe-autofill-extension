@@ -1966,13 +1966,20 @@ if (!S) {
     const neraca = imported.files.find(f => /NERACA/.test(f.name))
     const xml = neraca ? Buffer.from(await neraca.arrayBuffer()).toString('utf8') : ''
 
-    /* 🔴 NERACA must BALANCE or the app's confirm never enables. One aktiva
-       leaf (code 1…) and one pasiva leaf (2… or 3…) carrying the SAME figure. */
-    const figures = (xml.match(/<v>(\d+)<\/v>/g) || []).map(m => Number(m.replace(/\D/g, '')))
+    /* 🔴 NERACA must BALANCE or the app's confirm never enables.
+       ⚠️ Asserted as the INVARIANT — aktiva sum === pasiva sum — not as two
+       specific figures. It WAS written as `[5000000, 5000000]`, which pinned the
+       one-leaf-per-side construction rather than the rule, and it failed the
+       moment the figures started differing per period to produce trend arrows.
+       A sum survives a change of construction; a pair of literals does not. */
+    const rowFigures = [...xml.matchAll(/<t>([0-9][^<]*)<\/t>[\s\S]*?<v>(\d+)<\/v>/g)]
+      .map(m => ({ code: m[1], value: Number(m[2]) }))
+    const aktivaSum = rowFigures.filter(r => r.code.startsWith('1')).reduce((s, r) => s + r.value, 0)
+    const pasivaSum = rowFigures.filter(r => /^[23]/.test(r.code)).reduce((s, r) => s + r.value, 0)
 
-    figures.length === 2 && figures[0] === 5000000 && figures[1] === 5000000
-      ? pass('the NERACA workbook balances — one aktiva and one pasiva leaf, same figure')
-      : fail('NERACA would be refused as unbalanced — figures written: ' + JSON.stringify(figures))
+    aktivaSum > 0 && aktivaSum === pasivaSum
+      ? pass(`the NERACA workbook balances — aktiva ${aktivaSum} === pasiva ${pasivaSum}`)
+      : fail(`NERACA would be refused as unbalanced — aktiva ${aktivaSum} vs pasiva ${pasivaSum}, rows ${JSON.stringify(rowFigures)}`)
 
     /* 🔴 A figure on a COMPUTED or COLLAPSIBLE row is discarded by the parser
        and counted as `ignoredComputed`, so filling one looks like it worked and
@@ -2284,6 +2291,137 @@ if (!S) {
     templatePinned
       ? pass('the financial-report template select is pinned against rotation')
       : fail('rotating the template select makes the app expect one template while the workbook declares another — every file refused wrong-template')
+  }
+  /* ── The figures must DIFFER between periods (2026-09-17) ──────────────────
+   *
+   * 🔴 `trendOf` (los-fe `FinancialTable.tsx:261`) returns null when
+   * `currentValue === previousValue`, so writing the same amount into every
+   * period produced a card with no trend arrow anywhere — which reads as a
+   * broken feature rather than flat data. User: *"it needs the laporan laba rugi
+   * and neraca number to be different between each period so that some row can
+   * shows the up and down trend arrow"*.
+   *
+   * Asserted on the BYTES the driver actually writes, per period.
+   */
+  {
+    console.log('\nlaporan keuangan: the periods differ, and in both directions')
+
+    const driverSrc5 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const ITEMS5 = {
+      NERACA: [
+        { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '1AB', item_name: 'Piutang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '1ZZ', item_name: 'TOTAL AKTIVA', display_order: 3, display_type: 'TOTAL', allow_user_input: 0, item_formula: '1AA+1AB' },
+        { item_code: '2AA', item_name: 'Hutang', display_order: 4, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '3AA', item_name: 'Modal', display_order: 5, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ],
+      LABA_RUGI: [
+        { item_code: '4A', item_name: 'Penjualan', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '4B', item_name: 'HPP', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '4C', item_name: 'Beban', display_order: 3, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ]
+    }
+
+    const files5 = []
+    let open5 = false
+    let gone5 = false
+
+    const DT5 = class {
+      constructor() { this.items = { add: f => files5.push(f) } }
+      get files() { return files5 }
+    }
+
+    const fetch5 = async url => ({
+      ok: true,
+      json: async () => (url.includes('templates/find-all')
+        ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+        : { data: ITEMS5[new URL(url, 'http://x').searchParams.get('item_type')] })
+    })
+
+    const ok5 = { textContent: 'Masukkan Angka', disabled: false, click: () => { open5 = false; gone5 = true } }
+    const box5 = {
+      getAttribute: () => null,
+      querySelectorAll: s => (s.includes('file') ? [{ files: null, dispatchEvent: () => true }] : s === 'button' ? [ok5] : [])
+    }
+    const doc5 = {
+      querySelectorAll: s => {
+        if (s === 'div') return gone5 ? [] : [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { open5 = true } }]
+        if (s === '[role="dialog"]') return open5 ? [box5] : []
+
+        return []
+      }
+    }
+
+    const fn5 = new Function('document', 'fetch', 'DataTransfer', driverSrc5 + '; return v2AddFinancialReports')(doc5, fetch5, DT5)
+    const trend = await fn5({ count: 4, debtorType: 'Badan Usaha', amount: 5000000 }, 20)
+
+    /* STORED zip entries, so the sheet XML reads straight out of the bytes. */
+    const cellsOf = xml => {
+      const out = {}
+
+      for (const row of xml.match(/<row[^>]*>[\s\S]*?<\/row>/g) || []) {
+        const code = (row.match(/<t>([^<]*)<\/t>/) || [])[1]
+        const value = (row.match(/<v>([\d.]+)<\/v>/) || [])[1]
+
+        if (code && value !== undefined && /^[0-9]/.test(code)) out[code] = Number(value)
+      }
+
+      return out
+    }
+
+    const sheets = {}
+
+    for (const f of files5) sheets[f.name] = cellsOf(Buffer.from(await f.arrayBuffer()).toString('utf8'))
+
+    trend.periods === 2 && trend.trendable === true
+      ? pass('a plan of 4 makes TWO periods, which is the minimum an arrow can compare')
+      : fail(`one period cannot show a trend: periods=${trend.periods} trendable=${trend.trendable}`)
+
+    /* 🔴 Each period must balance on its OWN. A 1-rupiah gap disables the
+       confirm exactly as a 5,000,000 one does. */
+    const imbalances = Object.entries(sheets)
+      .filter(([name]) => /NERACA/.test(name))
+      .map(([name, c]) => {
+        const aktiva = Object.entries(c).filter(([k]) => k.startsWith('1')).reduce((s, [, v]) => s + v, 0)
+        const pasiva = Object.entries(c).filter(([k]) => /^[23]/.test(k)).reduce((s, [, v]) => s + v, 0)
+
+        return { name, gap: aktiva - pasiva }
+      })
+      .filter(entry => entry.gap !== 0)
+
+    imbalances.length === 0
+      ? pass('every NERACA period balances exactly, despite each row carrying a different figure')
+      : fail(`a period does not balance and its confirm would never enable: ${JSON.stringify(imbalances)}`)
+
+    const pick5 = re => Object.entries(sheets).find(([n]) => re.test(n))[1]
+
+    const directions = (older, newer) => {
+      const out = {}
+
+      for (const k of new Set([...Object.keys(older), ...Object.keys(newer)])) {
+        const from = older[k] || 0
+        const to = newer[k] || 0
+
+        out[k] = to === from ? 'flat' : to > from ? 'up' : 'down'
+      }
+
+      return out
+    }
+
+    const moved = {
+      ...directions(pick5(/NERACA_ANNUAL/), pick5(/NERACA_YTD/)),
+      ...directions(pick5(/LABA_RUGI_ANNUAL/), pick5(/LABA_RUGI_YTD/))
+    }
+    const shifts = Object.values(moved)
+
+    shifts.includes('up') && shifts.includes('down')
+      ? pass(`both arrow directions are produced (${shifts.filter(d => d === 'up').length} up, ${shifts.filter(d => d === 'down').length} down)`)
+      : fail(`every row moves the same way, so only one kind of arrow draws: ${JSON.stringify(moved)}`)
+
+    !shifts.includes('flat')
+      ? pass('no filled row repeats its figure between periods — a flat row draws nothing')
+      : fail(`a row carries the same figure in both periods and will show no arrow: ${JSON.stringify(moved)}`)
   }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)

@@ -3291,8 +3291,10 @@ async function v2AddFinancialReports(plan, openWait = 900) {
      year carrying both produces two workbooks. */
   const seq = []
 
-  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0 })
-  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0 })
+  /* `step` is the period's distance from the NEWEST (0 = this year). The figures
+     are derived from it so they differ between periods — see `amountsFor`. */
+  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0, step: i })
+  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0, step: i })
   /* 🔴 THE TILE IS A DIV, NOT A BUTTON, so `goToOpener`'s button sweep cannot
      see it and neither can a `querySelector('button')` hunt. A synthetic
      `.click()` does open it. `children.length <= 3` keeps this off the ancestor
@@ -3480,27 +3482,72 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       .filter(i => i.allow_user_input === 1 && !i.item_formula && String(i.display_type || '').trim().toUpperCase() !== 'COLLAPSIBLE')
       .sort((a, b) => a.display_order - b.display_order)
 
-  /* 🔴 NERACA MUST BALANCE or the confirm stays disabled ("Neraca Tidak
-     Seimbang — Rp …"). `balanceSideOf`: a code starting `1` is aktiva, `2` or
-     `3` is pasiva — so ONE leaf on each side carrying the SAME figure balances
-     whatever the computed rows derive. */
+    /*
+     * 🔴 THE FIGURES MUST DIFFER BETWEEN PERIODS, OR NO TREND ARROW DRAWS AT ALL.
+     *
+     * `trendOf` (los-fe `FinancialTable.tsx:261`) returns null when
+     * `currentValue === previousValue`, and null for the FIRST column
+     * (`index < 1`). This wrote the SAME `spec.amount` into every period until
+     * 2026-09-17, so a run produced a card whose arrows were all absent — and
+     * absent arrows look like a broken feature rather than flat data.
+     *
+     * The construction, per period `step` (0 = the NEWEST period):
+     *   total  grows toward the newest (0.85^step), so every TOTAL trends up
+     *   split  ALTERNATES with `step`, so individual rows move in OPPOSITE
+     *          directions between adjacent periods — which is what puts an UP
+     *          and a DOWN arrow on one screen instead of a column of one kind
+     *   pasiva takes the MIRRORED split, so its rows move against aktiva's
+     *          while both sides still sum to the same total
+     *
+     * 🔴 The second leaf is `total - first`, NEVER a second `Math.round`. Two
+     * independent roundings can disagree by a rupiah, and a 1-rupiah imbalance
+     * disables the confirm exactly as a 5,000,000 one does.
+     *
+     * ⚠️ Deterministic on purpose — no randomness. A fixture a tester can
+     * compare against yesterday's run is worth more than a varied one, and this
+     * repo has already recorded a rotation that silently changed a run's shape.
+     *
+     * ⚠️ Arrows need TWO periods, so `count` must be >= 4 (the ladder makes
+     * ceil(count/2) periods). At count 1-2 there is one period and the card is
+     * correctly arrow-free; the result reports `periods` so a run log says which.
+     */
+    const periodTotal = step => Math.round(spec.amount * Math.pow(0.85, step))
+    const splitOf = step => (step % 2 === 0 ? 0.7 : 0.45)
+
     const amountsFor = report => {
       const leaves = inputLeaves(report.type)
       const amounts = new Map()
+      const total = periodTotal(report.step || 0)
+      const share = splitOf(report.step || 0)
+
+      /* Give `pair` the whole total when there is only one leaf to give it to,
+         and otherwise split it so the remainder is EXACT. */
+      const spread = (pair, weight) => {
+        const head = Math.round(total * weight)
+
+        amounts.set(pair[0].item_code, pair[1] ? head : total)
+        if (pair[1]) amounts.set(pair[1].item_code, total - head)
+      }
 
       if (report.type === 'NERACA') {
-        const aktiva = leaves.find(i => String(i.item_code).startsWith('1'))
-        const pasiva = leaves.find(i => String(i.item_code).startsWith('2') || String(i.item_code).startsWith('3'))
+        /* `balanceSideOf`: a code starting `1` is aktiva, `2` or `3` is pasiva. */
+        const aktiva = leaves.filter(i => String(i.item_code).startsWith('1'))
+        const pasiva = leaves.filter(i => /^[23]/.test(String(i.item_code)))
 
-        if (!aktiva || !pasiva) return null
-        amounts.set(aktiva.item_code, spec.amount)
-        amounts.set(pasiva.item_code, spec.amount)
+        if (!aktiva.length || !pasiva.length) return null
+
+        spread(aktiva, share)
+        spread(pasiva, 1 - share)
       } else {
-        const [revenue, cost] = leaves
+        /* No balance rule here, so the only requirement is that each row moves.
+           Revenue follows the total (up), the cost SHARE alternates so the cost
+           row moves the other way, and a third leaf moves with the share. */
+        const [revenue, cost, other] = leaves
 
         if (!revenue) return null
-        amounts.set(revenue.item_code, spec.amount)
-        if (cost) amounts.set(cost.item_code, Math.round(spec.amount * 0.6))
+        amounts.set(revenue.item_code, total)
+        if (cost) amounts.set(cost.item_code, Math.round(total * (share > 0.5 ? 0.6 : 0.72)))
+        if (other) amounts.set(other.item_code, Math.round(total * (share > 0.5 ? 0.08 : 0.05)))
       }
 
       return { leaves, amounts }
@@ -3694,6 +3741,11 @@ async function v2AddFinancialReports(plan, openWait = 900) {
     return {
       saved: landed ? planned.filter(r => r.ok).length : 0,
       wanted: seq.length,
+
+      /* ⚠️ Arrows compare adjacent period columns, so ONE period can never show
+         one. Reported rather than left for someone to wonder about. */
+      periods: Math.ceil(n / 2),
+      trendable: Math.ceil(n / 2) >= 2,
       landed,
       ok: landed,
       via: 'excel-import',
