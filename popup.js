@@ -1210,7 +1210,14 @@ function simOverride(label) {
    On the wizard they never reach here at all — `simOverride` answers them first
    — but `walkRecordModals` calls smartDefault with NO plan, so the pin has to
    live here too. */
-const NO_ROTATE = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE)$/
+/* 🔴 FINANCIAL_DATA_TEMPLATE_ID joined these on 2026-09-17, for exactly the
+   reason the comment above gives. The app prefers that field's value over the
+   first template it can find (`templateFieldValue || types?.[0]?.…`, los-fe
+   useFinancialImport.ts:169), while the lapkeu driver builds its workbooks
+   against `types[0]`. Rotating the select therefore makes the app expect one
+   template and the workbook declare another, and every file is refused
+   `wrong-template` — a whole import lost to a "varied" value. */
+const NO_ROTATE = /(APPLICATION_DATA_CREDIT_TYPE|APPLICATION_DATA_APPLICATION_TYPE|GENERAL_DATA_DEBTOR_TYPE|FINANCIAL_DATA_TEMPLATE_ID)$/
 
 /* Chooser options that are a catch-all rather than a value. Deliberately a
    SHORT list: "Tidak ada" is a real answer on several selects (no collateral, no
@@ -2823,10 +2830,25 @@ async function fillPlannedFinancialReports() {
      still exists on `debtor/create`. Looking for the button alone is what made
      this pass report "no opener" and move on, leaving an application with no
      financial data and every other phase green. */
-  const LAPKEU_OPENERS = ['div:Unggah Template (Excel)', 'Tambah Laporan Keuangan']
+  /*
+   * 🔴 'Pilih Ulang Sumber' IS AN ENTRY POINT, and leaving it out made the
+   * driver's own "already imported" branch DEAD CODE on the extension path.
+   *
+   * Once the card holds reports the tiles are not rendered at all
+   * (`actions: … financialReportList.length > 0 ? [] : [...]`), and the manual
+   * button is commented out on this surface — so `goToOpener` matched nothing,
+   * clicked its way through all ten rail steps at 700ms each, parked the form on
+   * the LAST step, and returned a NAVIGATION reason for a card that is simply
+   * full. The accurate `alreadyImported` refusal the driver gained in v1.0.101
+   * could never run, because this gate returns before `executeScript`.
+   *
+   * ⚠️ It is safe to navigate to: the driver refuses a populated card unless
+   * `replaceExisting` is set, and this pass does not set it.
+   */
+  const LAPKEU_OPENERS = ['div:Unggah Template (Excel)', 'Pilih Ulang Sumber', 'Tambah Laporan Keuangan']
 
   if ((await goToOpener(driver, tab.id, LAPKEU_OPENERS)) === null) {
-    return { ok: false, step: 'open', reason: 'no "Unggah Template (Excel)" tile and no "Tambah Laporan Keuangan" button on any step' }
+    return { ok: false, step: 'open', reason: 'Data Keuangan has no import tile, no "Pilih Ulang Sumber" and no "Tambah Laporan Keuangan" on any step — so this is a navigation or credit-type problem, not a full card' }
   }
 
   try {

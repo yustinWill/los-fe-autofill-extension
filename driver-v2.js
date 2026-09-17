@@ -3511,7 +3511,20 @@ async function v2AddFinancialReports(plan, openWait = 900) {
        rather than assuming a position — so the four columns must be spelled
        exactly like this and `NILAI` must be present. */
     const HEADER = ['KODE', 'URAIAN', 'ISI?', 'NILAI']
-    const today = new Date().toISOString().slice(0, 10)
+
+    /*
+     * 🔴 `.toISOString().slice(0, 10)` IS THE UTC DAY, and `currentYear` above is
+     * the LOCAL year — so between 00:00 and 07:00 WIB a YTD workbook declared
+     * `period_year` 2026 with a `period_end` still in 2025. §8 carries this exact
+     * trap ("Template dibuat 2026-09-14" for an instant that was 15 Sep 03:13
+     * WIB) and I shipped it anyway.
+     *
+     * Local parts, from ONE Date, so the year and the end date cannot come from
+     * different days.
+     */
+    const pad = n => String(n).padStart(2, '0')
+    const now = new Date()
+    const today = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate())
     const files = []
     const planned = []
 
@@ -3662,9 +3675,32 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       await wait(200)
     }
 
+    /*
+     * 🔴 A CLOSED DIALOG IS NOT AN IMPORT. `saved` counted the workbooks this
+     * function BUILT, and the modal closes on the click — before the figures
+     * reach the card — so a confirm that landed nothing still reported 4/4.
+     *
+     * Measure the APP instead of the button press: the card drops its import
+     * tiles the moment it holds a report, so the tiles disappearing IS the
+     * import landing. Poll for it; a render takes a moment.
+     */
+    let landed = false
+
+    for (let i = 0; i < 20; i++) {
+      if (!tile()) { landed = true; break }
+      await wait(250)
+    }
+
     return {
-      saved: planned.filter(r => r.ok).length, wanted: seq.length,
-      via: 'excel-import', templateId, debtorType, results: planned
+      saved: landed ? planned.filter(r => r.ok).length : 0,
+      wanted: seq.length,
+      landed,
+      ok: landed,
+      via: 'excel-import',
+      templateId,
+      debtorType,
+      results: planned,
+      reason: landed ? undefined : 'the confirm was pressed but the card still offers its import tiles, so nothing landed'
     }
   }
   /**

@@ -1912,6 +1912,13 @@ if (!S) {
       const files = []
       let modalOpen = true
 
+      /* ⚠️ The card DROPS its import tiles once it holds a report, and since
+         2026-09-17 the pass measures exactly that to decide whether anything
+         landed — so a stub whose tiles never disappear models an import that
+         silently did nothing, and asserting success against it would be
+         asserting the bug. */
+      let tilesGone = false
+
       const DataTransferStub = class {
         constructor() { this.items = { add: f => files.push(f) } }
         get files() { return files }
@@ -1928,7 +1935,7 @@ if (!S) {
         }
       })
 
-      const confirmBtn = { textContent: 'Masukkan Angka', disabled: false, click: () => { modalOpen = false } }
+      const confirmBtn = { textContent: 'Masukkan Angka', disabled: false, click: () => { modalOpen = false; tilesGone = true } }
       const box = {
         getAttribute: () => null,
         querySelectorAll: sel => (sel.includes('file')
@@ -1938,7 +1945,7 @@ if (!S) {
 
       const doc = {
         querySelectorAll: sel => {
-          if (sel === 'div') return mode === 'tile' ? [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => {} }] : []
+          if (sel === 'div') return mode === 'tile' && !tilesGone ? [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => {} }] : []
           if (sel === '[role="dialog"]') return modalOpen && mode === 'tile' ? [box] : []
 
           return []
@@ -2163,6 +2170,120 @@ if (!S) {
     Array.isArray(refusedUpload.errors) && refusedUpload.templateId && refusedUpload.debtorType
       ? pass('the refusal still carries the captured evidence, the templateId and the debtorType')
       : fail('the refusal closes the modal but reports nothing to diagnose it with')
+  }
+  /* ── What the adversarial audit confirmed, 2026-09-17 ──────────────────────
+   *
+   * Four findings that survived three-lens verification, all in code shipped
+   * earlier the same day. Each assertion below is the one that would have caught
+   * its finding.
+   */
+  {
+    console.log('\nlaporan keuangan: the audit findings')
+
+    const driverSrc4 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+    const popupSrc4 = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+
+    const ITEMS4 = [
+      { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+      { item_code: '2AA', item_name: 'Hutang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+    ]
+
+    /*
+     * 🔴 A FAKE Date, injected as a PARAMETER.
+     *
+     * Without it the UTC-vs-local assertion is UNFALSIFIABLE: a gate running in
+     * UTC sees the same string either way, so the buggy code passes. This clock
+     * reads 17 Sep locally while its UTC instant is still 16 Sep — the WIB
+     * 00:00-07:00 window where the two disagree.
+     */
+    const FakeDate = class {
+      getFullYear() { return 2026 }
+      getMonth() { return 8 }
+      getDate() { return 17 }
+      toISOString() { return '2026-09-16T17:00:00.000Z' }
+    }
+
+    const runWith = async (opts = {}) => {
+      const files = []
+      let modalOpen = false
+      let tilesGone = false
+
+      const DataTransferStub = class {
+        constructor() { this.items = { add: f => files.push(f) } }
+        get files() { return files }
+      }
+
+      const fetchStub = async url => ({
+        ok: true,
+        json: async () => (url.includes('templates/find-all')
+          ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+          : { data: ITEMS4 })
+      })
+
+      const confirmBtn = {
+        textContent: 'Masukkan Angka',
+        disabled: false,
+        click: () => { modalOpen = false; if (!opts.tilesStay) tilesGone = true }
+      }
+
+      const box = {
+        getAttribute: () => null,
+        querySelectorAll: sel => (sel.includes('file')
+          ? [{ files: null, dispatchEvent: () => true }]
+          : sel === 'button' ? [confirmBtn] : [])
+      }
+
+      const doc = {
+        querySelectorAll: sel => {
+          if (sel === 'div') return tilesGone ? [] : [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { modalOpen = true } }]
+          if (sel === '[role="dialog"]') return modalOpen ? [box] : []
+
+          return []
+        }
+      }
+
+      const fn = new Function('document', 'fetch', 'DataTransfer', 'Date', driverSrc4 + '; return v2AddFinancialReports')(doc, fetchStub, DataTransferStub, FakeDate)
+      const result = await fn({ count: 1, debtorType: 'Badan Usaha', amount: 1000 }, 20)
+
+      return { result, files }
+    }
+
+    /* FINDING: period_end was the UTC day while period_year was the LOCAL year. */
+    const dated = await runWith()
+    const metaXml = dated.files.length ? Buffer.from(await dated.files[0].arrayBuffer()).toString('utf8') : ''
+
+    metaXml.includes('<t>2026-09-17</t>')
+      ? pass('a YTD period_end is the LOCAL day, so it cannot disagree with period_year')
+      : fail('period_end is the UTC day — between 00:00 and 07:00 WIB it lands in the wrong year from period_year')
+
+    /* FINDING: `saved` counted workbooks BUILT; the modal closes on the click,
+       before the figures reach the card. */
+    const stuck = await runWith({ tilesStay: true })
+
+    stuck.result.saved === 0 && stuck.result.landed === false && stuck.result.ok === false
+      ? pass('a confirm that lands nothing reports saved 0, not the count it built')
+      : fail(`the pass reported success without the figures landing: ${JSON.stringify(stuck.result).slice(0, 180)}`)
+
+    const landedOk = await runWith()
+
+    landedOk.result.saved === 1 && landedOk.result.landed === true
+      ? pass('an import that DOES land still reports its count (the check is not simply always-zero)')
+      : fail(`the landed case regressed: ${JSON.stringify(landedOk.result).slice(0, 180)}`)
+
+    /* FINDING: the popup gate shadowed the driver's own entry-point detection,
+       making the alreadyImported branch unreachable through the extension. */
+    const openersIncludeRepick = /LAPKEU_OPENERS = \[[^\]]*'Pilih Ulang Sumber'/.test(popupSrc4)
+
+    openersIncludeRepick
+      ? pass('navigation treats "Pilih Ulang Sumber" as an entry point, so a full card reaches the driver')
+      : fail('a populated card still matches no opener, so the driver is never injected and its accurate refusal is dead code')
+
+    /* FINDING: the app prefers the template FIELD's value, which autofill rotates. */
+    const templatePinned = /NO_ROTATE = [^\n]*FINANCIAL_DATA_TEMPLATE_ID/.test(popupSrc4)
+
+    templatePinned
+      ? pass('the financial-report template select is pinned against rotation')
+      : fail('rotating the template select makes the app expect one template while the workbook declares another — every file refused wrong-template')
   }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
