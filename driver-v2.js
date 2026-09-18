@@ -3704,15 +3704,30 @@ async function v2AddFinancialReports(plan, openWait = 900) {
         results: planned, reason: 'confirm never enabled', errors: said.slice(-12),
         dismissed: !dialog(),
 
-        /* ⚠️ The app's PRECISE reason (`wrong-template`, `no-period`, …) lives in
-           a hover-only Kairos Tooltip on the status pill, so it is never in the
-           DOM for a scrape to find. `errors` therefore carries the generic group
-           heading plus the counts — "N berkas · 0 laporan akan dibuat" is the
-           decisive line. The most common real cause is a debtor-type mismatch,
+        /* ⚠️ CORRECTED 2026-09-18: the per-row reason still lives in a hover-only
+           Kairos Tooltip on the status pill, but los-fe `f510d523` now renders the
+           BLOCKING reason as a danger Alert above the button row, so `errors`
+           does reach real words rather than only counts. "N berkas · 0 laporan
+           akan dibuat" remains the decisive line. The most common real cause is a debtor-type mismatch,
            which is why templateId and debtorType are returned beside it. */
         hint: 'if every file is Bermasalah, compare debtorType against the form\'s Jenis Calon Debitur — a COMPANY workbook on a Perorangan application is refused'
       }
     }
+
+    /* 🔴 THE APP'S OWN COUNT, READ BEFORE THE CLICK. `planned` records what this
+       function BUILT, and since los-fe `4f706599` a refused file no longer blocks
+       the ones that PARSED -- so the card can drop its tiles holding 5 of 6
+       reports while `landed` is still true, and the built count would overstate
+       by one. The modal states what it will create, and `{reports}` there is
+       `keptRows`, the same list the confirm acts on. This is the line the
+       refusal branch above already calls decisive; the success path was simply
+       not reading it. Falls back to the built count and SAYS SO. */
+    const willCreate = (() => {
+      const live = dialog()
+      const said = live ? (live.textContent || '') : ''
+      const hit = said.match(/(\d+)\s+laporan akan dibuat/)
+      return hit ? Number(hit[1]) : null
+    })()
 
     confirm.click()
     await wait(1200)
@@ -3738,8 +3753,18 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       await wait(250)
     }
 
+    const built = planned.filter(r => r.ok).length
+
     return {
-      saved: landed ? planned.filter(r => r.ok).length : 0,
+      saved: landed ? (willCreate === null ? built : willCreate) : 0,
+
+      /* ⚠️ `built` is what this driver made; `saved` is what the APP said it
+         would create. They differ when the app refused a workbook we built,
+         which is a finding rather than noise -- surface both, never just one. */
+      built,
+      willCreate,
+      countedBy: willCreate === null ? 'built (the app\'s count line could not be read)' : 'app',
+      partial: willCreate !== null && willCreate < built,
       wanted: seq.length,
 
       /* ⚠️ Arrows compare adjacent period columns, so ONE period can never show

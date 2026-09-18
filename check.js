@@ -2423,6 +2423,93 @@ if (!S) {
       ? pass('no filled row repeats its figure between periods — a flat row draws nothing')
       : fail(`a row carries the same figure in both periods and will show no arrow: ${JSON.stringify(moved)}`)
   }
+
+  /* 🔴 THE COUNT IS THE APP'S, NOT OURS. los-fe `4f706599` (2026-09-17) made a
+     refused file stop blocking the ones that parsed, so the card can drop its
+     import tiles holding FIVE of six reports while `landed` is true -- and the
+     built count would report six. The modal states what it will create; read it.
+     Two shapes, because the fallback is where a silent overstatement would hide
+     again if the copy ever changes. */
+  {
+    console.log('\nthe import reports what the APP said it would create')
+
+    const driverSrc6 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const ITEMS6 = {
+      NERACA: [
+        { item_code: '1A', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '2A', item_name: 'Utang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ],
+      LABA_RUGI: [
+        { item_code: '4A', item_name: 'Penjualan', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ]
+    }
+
+    const fetch6 = async url => ({
+      ok: true,
+      json: async () => (url.includes('templates/find-all')
+        ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+        : { data: ITEMS6[new URL(url, 'http://x').searchParams.get('item_type')] })
+    })
+
+    const DT6 = class {
+      constructor() { this.items = { add: () => {} } }
+      get files() { return [] }
+    }
+
+    /* `says` is the modal's own summary line, or '' for the fallback shape. */
+    const runWith = async says => {
+      let open6 = false
+      let gone6 = false
+      const ok6 = { textContent: 'Masukkan Angka', disabled: false, click: () => { open6 = false; gone6 = true } }
+      const box6 = {
+        getAttribute: () => null,
+        textContent: says,
+        querySelectorAll: sel => (sel.includes('file') ? [{ files: null, dispatchEvent: () => true }] : sel === 'button' ? [ok6] : [])
+      }
+      const doc6 = {
+        querySelectorAll: sel => {
+          if (sel === 'div') return gone6 ? [] : [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { open6 = true } }]
+          if (sel === '[role="dialog"]') return open6 ? [box6] : []
+
+          return []
+        }
+      }
+      const fn6 = new Function('document', 'fetch', 'DataTransfer', driverSrc6 + '; return v2AddFinancialReports')(doc6, fetch6, DT6)
+
+      return fn6({ count: 4, debtorType: 'Badan Usaha', amount: 5000000 }, 20)
+    }
+
+    const partial = await runWith('4 berkas \u00b7 3 laporan akan dibuat')
+
+    partial.saved === 3
+      ? pass(`a partial import reports the app's 3, not the ${partial.built} workbooks built`)
+      : fail(`saved is ${partial.saved}, but the modal said 3 laporan akan dibuat`)
+
+    partial.countedBy === 'app'
+      ? pass('and says the count came from the app')
+      : fail(`countedBy is ${JSON.stringify(partial.countedBy)}`)
+
+    partial.partial === true
+      ? pass('and flags the drop as partial, so a caller cannot read 3 as complete')
+      : fail('a partial import is not flagged')
+
+    /* The fallback must not pretend. If the line cannot be read, the built count
+       is all there is -- but the report has to SAY that is what it is. */
+    const blind = await runWith('tidak ada ringkasan di sini')
+
+    blind.saved === blind.built && blind.built > 0
+      ? pass(`with no count line it falls back to the ${blind.built} it built`)
+      : fail(`fallback reported ${blind.saved} against ${blind.built} built`)
+
+    /* ⚠️ Bound to a const: a statement STARTING with a regex literal is parsed as
+       division, and this is the fifth time it has been written that way here. */
+    const saysBuilt = /^built/.test(String(blind.countedBy))
+
+    saysBuilt && blind.partial === false
+      ? pass('and marks that count as unverified rather than claiming the app agreed')
+      : fail(`countedBy is ${JSON.stringify(blind.countedBy)}, partial ${blind.partial}`)
+  }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
