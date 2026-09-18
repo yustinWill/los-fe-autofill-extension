@@ -4377,11 +4377,16 @@ async function v2AddFinancialReports(plan, openWait = 900) {
     })()
 
     confirm.click()
-    await wait(1200)
 
+    /* The modal closes SYNCHRONOUSLY on the click — `confirm()` calls
+       `onConfirm(...)` without awaiting it and then `close()`
+       (TemplateUploadModal.tsx:556-569) — so this loop almost always exits on
+       its first check. It stays because a dismissal animation is not a
+       guarantee, and a still-open dialog would make `tile()` below read the
+       card rendered BEHIND it. */
     for (let i = 0; i < 30; i++) {
       if (!dialog()) break
-      await wait(200)
+      await wait(tick)
     }
 
     /*
@@ -4391,13 +4396,46 @@ async function v2AddFinancialReports(plan, openWait = 900) {
      *
      * Measure the APP instead of the button press: the card drops its import
      * tiles the moment it holds a report, so the tiles disappearing IS the
-     * import landing. Poll for it; a render takes a moment.
+     * import landing.
+     *
+     * 🔴 AND THE BUDGET MUST COVER AN UPLOAD PER WORKBOOK, NOT A RENDER. This
+     * waited a fixed ~4.75s, which is a render's worth of time — but
+     * `confirmUpload` awaits `Promise.all` over one `postDocumentTempUpload`
+     * per file (useFinancialImport.ts:317-352) and only THEN calls
+     * `onImported`, and the tiles drop only once reports exist
+     * (page.tsx:3329). So the old poll was racing the backend, and on a slow
+     * one it reported `nothing landed` for an import that succeeded a moment
+     * later — a false negative on a run that actually worked. This workspace
+     * documents 18-36s hangs in local dev (`DB-POOL-500s-LOCAL.md`), which is
+     * the very environment an autofill run uses.
+     *
+     * 🔑 A POLL'S BUDGET IS A CEILING, NOT A COST. It exits the moment the
+     * tiles go, so raising it is free on the happy path and is the entire fix
+     * on the slow one. The old number was chosen as though it were a cost.
+     *
+     * Scales with the file count AND with `openWait`, exactly as the confirm
+     * poll above does, so the gate stays fast: at the default 900 a four-file
+     * drop may wait up to ~30s; at the 20 the gate passes, ~3s.
+     *
+     * ⚠️ There is NO positive "still working" signal to watch instead. The
+     * card's importing state is not driven by this path, so while the uploads
+     * are in flight the DOM is indistinguishable from "nothing happened" —
+     * which is why this is a budget rather than a condition.
      */
     let landed = false
 
-    for (let i = 0; i < 20; i++) {
+    const landTicks = 20 + files.length * 12
+    let landWaitedMs = 0
+
+    /* ⚠️ Counted in TICKS, not off the clock. An existing gate injects a fake
+       `Date` to pin the UTC-vs-local trap and it carries no `Date.now`, so
+       reading the clock here breaks a test that is about something else
+       entirely. The tick count is also deterministic, which a wall clock in a
+       throttled background tab is not. */
+    for (let i = 0; i < landTicks; i++) {
       if (!tile()) { landed = true; break }
-      await wait(250)
+      await wait(tick)
+      landWaitedMs = (i + 1) * tick
     }
 
     const built = planned.filter(r => r.ok).length
@@ -4424,7 +4462,14 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       templateId,
       debtorType,
       results: planned,
-      reason: landed ? undefined : 'the confirm was pressed but the card still offers its import tiles, so nothing landed'
+      /* Says how long it waited, because the two readings of this failure need
+         different answers: a FAST one means the import was refused or did
+         nothing, a slow one means the uploads are probably still in flight. */
+      landWaitedMs,
+      reason: landed
+        ? undefined
+        : 'the confirm was pressed but the card still offered its import tiles after '
+          + Math.round(landWaitedMs / 1000) + 's, so nothing landed'
     }
   }
   /**

@@ -2510,6 +2510,86 @@ if (!S) {
       ? pass('and marks that count as unverified rather than claiming the app agreed')
       : fail(`countedBy is ${JSON.stringify(blind.countedBy)}, partial ${blind.partial}`)
   }
+  /* 🔴 THE LANDING BUDGET SCALES WITH THE WORKBOOK COUNT. It was a fixed ~4.75s
+     -- a render's worth of time -- while the app awaits one DMS upload PER FILE
+     before any report exists and the tiles drop. On a slow backend that reported
+     `nothing landed` for an import that succeeded, which is a false negative on
+     a run that worked. Asserted by measuring how long the driver is willing to
+     wait, with a card whose tiles NEVER vanish. */
+  {
+    console.log('\nthe landing poll waits for uploads, not for a render')
+
+    const driverSrc7 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const ITEMS7 = {
+      NERACA: [
+        { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '2AA', item_name: 'Utang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ],
+      LABA_RUGI: [
+        { item_code: '4AA', item_name: 'Penjualan', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ]
+    }
+
+    const fetch7 = async url => ({
+      ok: true,
+      json: async () => (url.includes('templates/find-all')
+        ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+        : { data: ITEMS7[new URL(url, 'http://x').searchParams.get('item_type')] })
+    })
+
+    const DT7 = class {
+      constructor() { this.items = { add: () => {} } }
+      get files() { return [] }
+    }
+
+    /* Tiles NEVER vanish, so the driver spends its whole budget and we can read
+       what that budget was. */
+    const runStuck = async count => {
+      let open7 = false
+      const ok7 = { textContent: 'Masukkan Angka', disabled: false, click: () => { open7 = false } }
+      const box7 = {
+        getAttribute: () => null,
+        textContent: '9 berkas \u00b7 9 laporan akan dibuat',
+        querySelectorAll: sel => (sel.includes('file') ? [{ files: null, dispatchEvent: () => true }] : sel === 'button' ? [ok7] : [])
+      }
+      const doc7 = {
+        querySelectorAll: sel => {
+          if (sel === 'div') return [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { open7 = true } }]
+          if (sel === '[role="dialog"]') return open7 ? [box7] : []
+
+          return []
+        }
+      }
+      const fn7 = new Function('document', 'fetch', 'DataTransfer', driverSrc7 + '; return v2AddFinancialReports')(doc7, fetch7, DT7)
+
+      return fn7({ count, debtorType: 'Badan Usaha', amount: 5000000 }, 20)
+    }
+
+    const small = await runStuck(2)   // 1 period  -> 2 workbooks
+    const large = await runStuck(6)   // 3 periods -> 6 workbooks
+
+    small.landed === false && large.landed === false
+      ? pass('a card that never drops its tiles is still reported as NOT landed')
+      : fail(`landed should be false in both: ${small.landed} / ${large.landed}`)
+
+    large.landWaitedMs > small.landWaitedMs
+      ? pass(`the budget SCALES with the workbooks: ${small.results.length} files waited ${small.landWaitedMs}ms, ${large.results.length} waited ${large.landWaitedMs}ms`)
+      : fail(`a 6-file drop waited ${large.landWaitedMs}ms, no longer than a 2-file drop's ${small.landWaitedMs}ms — the budget is still fixed`)
+
+    /* The ratio is the real claim: 20 + files*12 ticks, so 6 files must buy
+       meaningfully more than 2. Asserted loosely because the tick floor (50ms)
+       and scheduler jitter both move the wall clock. */
+    large.landWaitedMs > small.landWaitedMs * 1.4
+      ? pass('and it scales by enough to matter, not by a rounding error')
+      : fail(`${large.landWaitedMs}ms vs ${small.landWaitedMs}ms is under the 1.4x the file count implies`)
+
+    const saysSeconds = /still offered its import tiles after \d+s/.test(String(large.reason))
+
+    saysSeconds
+      ? pass('and the failure says how long it waited, so a fast failure reads differently from a slow one')
+      : fail(`the reason does not carry the elapsed seconds: ${JSON.stringify(large.reason)}`)
+  }
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
