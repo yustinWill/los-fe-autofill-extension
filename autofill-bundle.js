@@ -4163,9 +4163,11 @@ async function v2AddFinancialReports(plan, openWait = 900) {
      * compare against yesterday's run is worth more than a varied one, and this
      * repo has already recorded a rotation that silently changed a run's shape.
      *
-     * ⚠️ Arrows need TWO periods, so `count` must be >= 4 (the ladder makes
-     * ceil(count/2) periods). At count 1-2 there is one period and the card is
-     * correctly arrow-free; the result reports `periods` so a run log says which.
+     * ⚠️ Arrows need TWO periods, and with independent counts that means
+     * `max(neraca, labaRugi) >= 2` — NOT a threshold on the total. 0 + 2 spans
+     * two years and IS trendable; 1 + 1 spans one and is correctly arrow-free.
+     * ⚠️ This said "`count` must be >= 4 (the ladder makes ceil(count/2)
+     * periods)" until 2026-09-21, which was true only of the old single count.
      */
     const periodTotal = step => Math.round(spec.amount * Math.pow(0.85, step))
     const splitOf = step => (step % 2 === 0 ? 0.7 : 0.45)
@@ -4462,9 +4464,21 @@ async function v2AddFinancialReports(plan, openWait = 900) {
       wanted: seq.length,
 
       /* ⚠️ Arrows compare adjacent period columns, so ONE period can never show
-         one. Reported rather than left for someone to wonder about. */
-      periods: Math.ceil(n / 2),
-      trendable: Math.ceil(n / 2) >= 2,
+         one. Reported rather than left for someone to wonder about.
+
+         🔴 `Math.max`, NOT `Math.ceil(n / 2)` — corrected 2026-09-21 from a live
+         run. Both ladders walk BACK from the current year independently, so the
+         span is the longer of the two, and the old form was only ever right
+         because `ceil(n/2)` happens to equal `max` when the split is even. A
+         plan of 0 Neraca + 2 Laba Rugi reported `periods: 1, trendable: false`
+         over a card that was plainly showing 2025 beside YTD SEP 2026 WITH
+         arrows. The loops were updated for the pair and this was not.
+
+         🔑 The reason it shipped: the new assertions counted WORKBOOKS and never
+         the REPORT. A pass can build the right files and describe them wrongly,
+         and the run log is the only thing anyone reads afterwards. */
+      periods: Math.max(nNeraca, nLabaRugi),
+      trendable: Math.max(nNeraca, nLabaRugi) >= 2,
       landed,
       ok: landed,
       via: 'excel-import',

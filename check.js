@@ -2529,11 +2529,17 @@ if (!S) {
 
       const fn = new Function('document', 'fetch', 'DataTransfer', src6 + '; return v2AddFinancialReports')(doc, fetchIt, DT)
 
-      await fn({ debtorType: 'Badan Usaha', amount: 5000000, ...spec }, 20)
+      const res = await fn({ debtorType: 'Badan Usaha', amount: 5000000, ...spec }, 20)
 
       return {
         neraca: files.filter(f => /NERACA/.test(f.name)).length,
-        labaRugi: files.filter(f => /LABA_RUGI/.test(f.name)).length
+        labaRugi: files.filter(f => /LABA_RUGI/.test(f.name)).length,
+        /* 🔴 The REPORT, not just the files. A pass can build the right
+           workbooks and describe them wrongly, and the run log is the only
+           thing anyone reads afterwards — which is exactly how `periods`
+           stayed on the old total-based formula through a green check. */
+        periods: res && res.periods,
+        trendable: res && res.trendable
       }
     }
 
@@ -2561,6 +2567,30 @@ if (!S) {
     oddLegacy.neraca === 3 && oddLegacy.labaRugi === 2
       ? pass('and an odd bare count still rounds toward Neraca, exactly as before')
       : fail(`odd count fallback changed: neraca=${oddLegacy.neraca} labaRugi=${oddLegacy.labaRugi}, wanted 3 and 2`)
+
+    /* ── What the pass SAYS about itself ──────────────────────────────────
+     *
+     * 🔴 Caught on a live run 2026-09-21, AFTER the workbook assertions above
+     * were green: `periods` and `trendable` were still `Math.ceil(n / 2)`, so a
+     * plan of 0 Neraca + 2 Laba Rugi reported `periods: 1, trendable: false`
+     * over a card visibly showing 2025 beside YTD SEP 2026 with arrows on it.
+     * Both ladders walk back from the current year independently, so the span
+     * is `max(neraca, labaRugi)`; the old form matched only when the split was
+     * even, which is why the symmetric cases never caught it.
+     */
+    asym.periods === 3 && asym.trendable === true
+      ? pass('an asymmetric plan reports the span of the LONGER ladder')
+      : fail(`1+3 reported periods=${asym.periods} trendable=${asym.trendable}, wanted 3 and true`)
+
+    noneraca.periods === 2 && noneraca.trendable === true
+      ? pass('0 Neraca + 2 Laba Rugi is TWO periods and trendable — the live case')
+      : fail(`0+2 reported periods=${noneraca.periods} trendable=${noneraca.trendable}, wanted 2 and true — this is the defect that shipped`)
+
+    const single = await runPlan({ neraca: 1, labaRugi: 1 })
+
+    single.periods === 1 && single.trendable === false
+      ? pass('and 1 + 1 is ONE period, correctly arrow-free')
+      : fail(`1+1 reported periods=${single.periods} trendable=${single.trendable}, wanted 1 and false`)
   }
 
   /* 🔴 THE COUNT IS THE APP'S, NOT OURS. los-fe `4f706599` (2026-09-17) made a
