@@ -673,6 +673,12 @@ textarea:focus { outline: none; border-color: #4f46e5; background: #fff; }
 .sim-preview-input.is-custom { border-color: #a5b4fc; background: #fff; }
 
 .sim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+
+/* 🔴 An ODD last cell would sit beside a hole, which is what splitting Laporan
+   Keuangan into Neraca + Laba Rugi produced: six tables became seven and the
+   grid grew an empty bottom-right. Letting the odd one take the row is generic —
+   it holds at any count, for the "lainnya" grid too, and needs no JS. */
+.sim-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 .sim-count { display: flex; align-items: center; gap: 6px; }
 .sim-count-label {
   flex: 1;

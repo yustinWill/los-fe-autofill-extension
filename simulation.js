@@ -92,9 +92,35 @@ window.SIM = (() => {
        ZERO of either. Zero matters: the card draws a block per TYPE and hides
        the one with no figures, and nothing could produce that state to test it.
        Defaults 2 + 2 reproduce the old default of 4 exactly. */
-    { key: 'financialReportNeraca', label: 'Laporan keuangan — Neraca', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
-    { key: 'financialReportLabaRugi', label: 'Laporan keuangan — Laba Rugi', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
+    /* 🔴 UNDERLYING SITS HERE FOR THE PANEL'S SAKE, not the wizard's — it is a
+       step-4 table listed above two step-3 ones, which is the one place this
+       list departs from "the order the wizard meets them".
+
+       Why: the panel is a TWO-COLUMN grid filled row-wise, and with an odd
+       number of entries before them the Neraca / Laba Rugi pair straddled a row
+       boundary — Neraca bottom-right, Laba Rugi next row left. One concept, two
+       rows, out of order. Moving one entry up puts the pair on a row together.
+
+       🔑 Behaviourally inert, and that is checked rather than assumed: the
+       generic row-adder is `.filter(t => !t.isOwnCapability)` (popup.js:2522)
+       and BOTH lapkeu entries are own-capability, so they are not in that pass
+       at all — while underlying's order RELATIVE to the other generic tables
+       (shareholder, boardMember, slik …) is unchanged. `fillPlannedFinancialReports`
+       looks its two up by KEY, never by position. */
     { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
+
+    /* 🔴 "Neraca" and "Laba Rugi", NOT "Laporan keuangan — …". A cell is 170px
+       (body 380 − panel padding 28 − column gap 12, halved) and the input plus
+       its gap takes 46, so a label gets **124px**. Measured at 11px in the
+       popup's own font stack: the qualified forms are 150px and 164px, so BOTH
+       shipped ELLIPSISED in v1.0.107 — the panel showed "Laporan keuangan —
+       Nerac…". The short forms are 37px and 52px.
+       ⚠️ They are also the panel's own convention: every other label here is the
+       FORM's name for the table, and the modal's select calls these two "Neraca
+       Keuangan" and "Laporan Laba Rugi". The widest label that fits is
+       `Mutasi (bulan × 2 akun)` at exactly 124 — there is no slack to spend. */
+    { key: 'financialReportNeraca', label: 'Neraca', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
+    { key: 'financialReportLabaRugi', label: 'Laba Rugi', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
     { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
     { key: 'emergencyContact', label: 'Kontak darurat', opener: 'Tambah Kontak Darurat', def: 1, max: 10, more: true },
