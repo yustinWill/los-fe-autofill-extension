@@ -2816,13 +2816,24 @@ async function fillPlannedFinancialReports() {
 
   if (!driver || typeof driver.financialReports !== 'function') return null
 
-  const wanted = (activePlan.tables || []).find(t => t.key === 'financialReport')
+  /* Two independent counts since 2026-09-20 — see `simulation.js`. A table
+     with a zero count is dropped from the plan entirely, so an absent key IS a
+     zero and needs no separate case. */
+  const countOf = key => {
+    const table = (activePlan.tables || []).find(t => t.key === key)
 
-  if (!wanted || !wanted.count) return null
+    return table && table.count ? table.count : 0
+  }
+
+  const neraca = countOf('financialReportNeraca')
+  const labaRugi = countOf('financialReportLabaRugi')
+  const total = neraca + labaRugi
+
+  if (!total) return null
 
   const tab = await getActiveTab()
 
-  setStatus(`Laporan keuangan (${wanted.count})…`)
+  setStatus(`Laporan keuangan (${neraca} neraca + ${labaRugi} laba rugi)…`)
 
   /* 🔴 TWO entry points since 2026-09-16. Manual entry was removed from the
      credit-application form, where Data Keuangan now imports from a template —
@@ -2858,7 +2869,7 @@ async function fillPlannedFinancialReports() {
          workbook carries a `template_id` the app validates against the one IT
          resolves for the form's debtor type, so a COMPANY sheet on a Perorangan
          application is refused outright as `wrong-template`. */
-      args: [{ count: wanted.count, debtorType: activePlan.debtorType }, 900]
+      args: [{ count: total, neraca, labaRugi, debtorType: activePlan.debtorType }, 900]
     })
 
     return result || null

@@ -3929,6 +3929,15 @@ async function v2AddFinancialReports(plan, openWait = 900) {
   const currentYear = new Date().getFullYear()
   const n = Math.max(0, Number(spec.count) || 0)
 
+  /* 🔴 The PAIR wins when the caller supplies it, and the old `ceil/floor` split
+     of `count` remains the fallback — the bundle is consumed outside this
+     extension (los-fe's `check:autofill`, a devtools paste), and a caller that
+     predates 2026-09-20 sends `count` alone. `!= null` rather than a truthy
+     test, because ZERO is a legitimate request: one statement type and not the
+     other is exactly the state that makes the card hide a block. */
+  const nNeraca = spec.neraca != null ? Math.max(0, Number(spec.neraca) || 0) : Math.ceil(n / 2)
+  const nLabaRugi = spec.labaRugi != null ? Math.max(0, Number(spec.labaRugi) || 0) : Math.floor(n / 2)
+
   /* The YEAR LADDER is unchanged, so a plan of 4 still means the same four
      reports on either path: neraca = ceil(n/2) (YTD at the current year, then
      Y-1, Y-2 …), labaRugi = floor(n/2) over the same years.
@@ -3940,8 +3949,8 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
   /* `step` is the period's distance from the NEWEST (0 = this year). The figures
      are derived from it so they differ between periods — see `amountsFor`. */
-  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0, step: i })
-  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0, step: i })
+  for (let i = 0; i < nNeraca; i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0, step: i })
+  for (let i = 0; i < nLabaRugi; i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0, step: i })
   /* 🔴 THE TILE IS A DIV, NOT A BUTTON, so `goToOpener`'s button sweep cannot
      see it and neither can a `querySelector('button')` hunt. A synthetic
      `.click()` does open it. `children.length <= 3` keeps this off the ancestor
@@ -6029,7 +6038,15 @@ window.SIM = (() => {
        the three-way table in credit-assessment/create/form.tsx:319. BU is
        always Produktif here (BU+K is the blocked pill), so `sifat === 'P'`
        covers exactly the forms that mount the reports list. */
-    { key: 'financialReport', label: 'Laporan keuangan', opener: 'Tambah Laporan Keuangan', def: 4, max: 8, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
+    /* 🔴 TWO counts, not one (user, 2026-09-20). This was a single 'Laporan
+       keuangan' number and the driver split it `ceil(n/2)` Neraca /
+       `floor(n/2)` Laba Rugi, so the two statements could never be asked for
+       independently — 3 Laba Rugi against 1 Neraca was unreachable, and so was
+       ZERO of either. Zero matters: the card draws a block per TYPE and hides
+       the one with no figures, and nothing could produce that state to test it.
+       Defaults 2 + 2 reproduce the old default of 4 exactly. */
+    { key: 'financialReportNeraca', label: 'Laporan keuangan — Neraca', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
+    { key: 'financialReportLabaRugi', label: 'Laporan keuangan — Laba Rugi', opener: 'Tambah Laporan Keuangan', def: 2, max: 4, isOwnCapability: true, appliesTo: s => s.sifat === 'P' },
     { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
     { key: 'slik', label: 'Data pinjaman (SLIK)', opener: 'Tambah Data Pinjaman', def: 1, max: 10 },
     { key: 'ubo', label: 'Pemilik manfaat', opener: 'Tambah Pemilik Manfaat Utama', def: 1, max: 10, more: true },
@@ -6279,6 +6296,20 @@ window.SIM = (() => {
 
           if (saved) {
             Object.assign(state, saved, { rows: { ...state.rows, ...(saved.rows || {}) } })
+
+            /* 🔴 A plan stored before the Neraca / Laba Rugi split carries the
+               old single `financialReport` count and NEITHER new key, so the
+               merge above would silently hand it the 2 + 2 defaults — a run
+               configured for 8 would quietly become 4. Split it the way the
+               driver used to, which is the only reading that preserves what the
+               user actually asked for. Same shape as the collaterals prune
+               below: repair stale state on load rather than carry it. */
+            const legacyLk = (saved.rows || {}).financialReport
+
+            if (legacyLk > 0 && saved.rows.financialReportNeraca == null && saved.rows.financialReportLabaRugi == null) {
+              state.rows.financialReportNeraca = Math.ceil(legacyLk / 2)
+              state.rows.financialReportLabaRugi = Math.floor(legacyLk / 2)
+            }
 
             /* A stored type that no longer exists would render a blank select
                and fill nothing, so drop it rather than carry it forward. */

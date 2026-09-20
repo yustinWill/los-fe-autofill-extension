@@ -3282,6 +3282,15 @@ async function v2AddFinancialReports(plan, openWait = 900) {
   const currentYear = new Date().getFullYear()
   const n = Math.max(0, Number(spec.count) || 0)
 
+  /* 🔴 The PAIR wins when the caller supplies it, and the old `ceil/floor` split
+     of `count` remains the fallback — the bundle is consumed outside this
+     extension (los-fe's `check:autofill`, a devtools paste), and a caller that
+     predates 2026-09-20 sends `count` alone. `!= null` rather than a truthy
+     test, because ZERO is a legitimate request: one statement type and not the
+     other is exactly the state that makes the card hide a block. */
+  const nNeraca = spec.neraca != null ? Math.max(0, Number(spec.neraca) || 0) : Math.ceil(n / 2)
+  const nLabaRugi = spec.labaRugi != null ? Math.max(0, Number(spec.labaRugi) || 0) : Math.floor(n / 2)
+
   /* The YEAR LADDER is unchanged, so a plan of 4 still means the same four
      reports on either path: neraca = ceil(n/2) (YTD at the current year, then
      Y-1, Y-2 …), labaRugi = floor(n/2) over the same years.
@@ -3293,8 +3302,8 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
   /* `step` is the period's distance from the NEWEST (0 = this year). The figures
      are derived from it so they differ between periods — see `amountsFor`. */
-  for (let i = 0; i < Math.ceil(n / 2); i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0, step: i })
-  for (let i = 0; i < Math.floor(n / 2); i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0, step: i })
+  for (let i = 0; i < nNeraca; i++) seq.push({ type: 'NERACA', jenis: 'Neraca Keuangan', year: currentYear - i, ytd: i === 0, step: i })
+  for (let i = 0; i < nLabaRugi; i++) seq.push({ type: 'LABA_RUGI', jenis: 'Laporan Laba Rugi', year: currentYear - i, ytd: i === 0, step: i })
   /* 🔴 THE TILE IS A DIV, NOT A BUTTON, so `goToOpener`'s button sweep cannot
      see it and neither can a `querySelector('button')` hunt. A synthetic
      `.click()` does open it. `children.length <= 3` keeps this off the ancestor

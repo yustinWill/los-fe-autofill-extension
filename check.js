@@ -797,9 +797,15 @@ if (!S) {
     at('I', 'P')
     const ipKeys = S.plan().tables.map(t => t.key)
 
-    const buHasAll = ['shareholder', 'boardMember', 'financialReport'].every(k => buKeys.includes(k))
-    const ikHasNone = ['shareholder', 'boardMember', 'financialReport'].every(k => !ikKeys.includes(k))
-    const ipSplit = !ipKeys.includes('shareholder') && !ipKeys.includes('boardMember') && ipKeys.includes('financialReport')
+    /* Both halves of the Laporan Keuangan split carry the same `appliesTo`, so
+       the scenario branch must hold for EACH of them, not for whichever one a
+       rename happened to leave behind. */
+    const LK_KEYS = ['financialReportNeraca', 'financialReportLabaRugi']
+
+    const buHasAll = ['shareholder', 'boardMember', ...LK_KEYS].every(k => buKeys.includes(k))
+    const ikHasNone = ['shareholder', 'boardMember', ...LK_KEYS].every(k => !ikKeys.includes(k))
+    const ipSplit =
+      !ipKeys.includes('shareholder') && !ipKeys.includes('boardMember') && LK_KEYS.every(k => ipKeys.includes(k))
 
     buHasAll && ikHasNone && ipSplit
       ? pass('plan tables branch by scenario: BU-P all three, I-K none, I-P reports only')
@@ -2422,6 +2428,104 @@ if (!S) {
     !shifts.includes('flat')
       ? pass('no filled row repeats its figure between periods — a flat row draws nothing')
       : fail(`a row carries the same figure in both periods and will show no arrow: ${JSON.stringify(moved)}`)
+  }
+
+  /* ── Neraca and Laba Rugi are counted INDEPENDENTLY (2026-09-20) ───────────
+   *
+   * 🔴 The panel carried ONE "Laporan keuangan" number and the driver split it
+   * `ceil(n/2)` Neraca / `floor(n/2)` Laba Rugi, so an asymmetric fixture was
+   * unreachable — 3 Laba Rugi against 1 Neraca could not be asked for, and
+   * neither could ZERO of either. Zero is the interesting one: the card draws a
+   * block per TYPE and hides the one with no figures, so until now nothing
+   * could produce the state that rule exists for.
+   *
+   * ⚠️ `count` ALONE MUST KEEP WORKING. The bundle is consumed outside this
+   * extension — los-fe's `check:autofill` and any devtools paste send the total
+   * and no pair — so the old derivation stays as the fallback and is asserted
+   * here, not assumed.
+   */
+  {
+    console.log('\nlaporan keuangan: the two statements are counted separately')
+
+    const src6 = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const ITEMS6 = {
+      NERACA: [
+        { item_code: '1AA', item_name: 'Kas', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null },
+        { item_code: '2AA', item_name: 'Hutang', display_order: 2, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ],
+      LABA_RUGI: [
+        { item_code: '4A', item_name: 'Penjualan', display_order: 1, display_type: 'ITEM', allow_user_input: 1, item_formula: null }
+      ]
+    }
+
+    /* A fresh set of mocks per run — the tile's open/closed state is a closure,
+       so reusing one harness would have the second run find no entry point. */
+    const runPlan = async spec => {
+      const files = []
+      let open = false
+      let gone = false
+
+      const DT = class {
+        constructor() { this.items = { add: f => files.push(f) } }
+        get files() { return files }
+      }
+
+      const fetchIt = async url => ({
+        ok: true,
+        json: async () => (url.includes('templates/find-all')
+          ? { data: [{ p_financial_report_template_id: 'tpl-1' }] }
+          : { data: ITEMS6[new URL(url, 'http://x').searchParams.get('item_type')] })
+      })
+
+      const okBtn = { textContent: 'Masukkan Angka', disabled: false, click: () => { open = false; gone = true } }
+      const box = {
+        getAttribute: () => null,
+        querySelectorAll: s => (s.includes('file') ? [{ files: null, dispatchEvent: () => true }] : s === 'button' ? [okBtn] : [])
+      }
+      const doc = {
+        querySelectorAll: s => {
+          if (s === 'div') return gone ? [] : [{ children: { length: 0 }, textContent: 'Unggah Template (Excel)', click: () => { open = true } }]
+          if (s === '[role="dialog"]') return open ? [box] : []
+
+          return []
+        }
+      }
+
+      const fn = new Function('document', 'fetch', 'DataTransfer', src6 + '; return v2AddFinancialReports')(doc, fetchIt, DT)
+
+      await fn({ debtorType: 'Badan Usaha', amount: 5000000, ...spec }, 20)
+
+      return {
+        neraca: files.filter(f => /NERACA/.test(f.name)).length,
+        labaRugi: files.filter(f => /LABA_RUGI/.test(f.name)).length
+      }
+    }
+
+    const asym = await runPlan({ neraca: 1, labaRugi: 3 })
+
+    asym.neraca === 1 && asym.labaRugi === 3
+      ? pass('an asymmetric plan is built as asked — 1 Neraca, 3 Laba Rugi')
+      : fail(`the split was derived, not obeyed: neraca=${asym.neraca} labaRugi=${asym.labaRugi}, wanted 1 and 3`)
+
+    const noneraca = await runPlan({ neraca: 0, labaRugi: 2 })
+
+    noneraca.neraca === 0 && noneraca.labaRugi === 2
+      ? pass('ZERO of one statement is honoured, so the card can be driven into hiding a block')
+      : fail(`zero was treated as absent: neraca=${noneraca.neraca} labaRugi=${noneraca.labaRugi}, wanted 0 and 2`)
+
+    /* The pre-split contract, still live for every caller of the bundle. */
+    const legacy = await runPlan({ count: 4 })
+
+    legacy.neraca === 2 && legacy.labaRugi === 2
+      ? pass('a bare count still splits ceil/floor, so a caller that predates the pair is unaffected')
+      : fail(`the count-only fallback changed: neraca=${legacy.neraca} labaRugi=${legacy.labaRugi}, wanted 2 and 2`)
+
+    const oddLegacy = await runPlan({ count: 5 })
+
+    oddLegacy.neraca === 3 && oddLegacy.labaRugi === 2
+      ? pass('and an odd bare count still rounds toward Neraca, exactly as before')
+      : fail(`odd count fallback changed: neraca=${oddLegacy.neraca} labaRugi=${oddLegacy.labaRugi}, wanted 3 and 2`)
   }
 
   /* 🔴 THE COUNT IS THE APP'S, NOT OURS. los-fe `4f706599` (2026-09-17) made a
