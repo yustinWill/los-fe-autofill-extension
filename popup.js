@@ -2484,6 +2484,68 @@ async function goToOpener(driver, tabId, opener, maxSteps = 10) {
 }
 
 /**
+ * Turn a section's own GATE on, wherever in the rail it lives.
+ *
+ * 🔴 A GATED SECTION IS ABSENT FROM THE DOM, NOT HIDDEN, so its opener cannot
+ * be found until the gate is set — and the gate is a FIELD, which the fill
+ * passes only ever see on the step they are standing on. Step 4's
+ * `HAS_COLLATERAL` therefore came back `not_found` on all three passes of a run
+ * that starts on step 1, and `fillPlannedCollaterals` then walked all ten steps
+ * hunting a button that could not exist. Measured on a real run 2026-09-21:
+ * 3/3 agunan lost, and the run ended `state: "error"` for that reason alone —
+ * which is worse than the lost rows, because it makes the run-level error
+ * signal worthless.
+ *
+ * ⚠️ NOT every gate. `v2FillField` refuses `USE_REFERENCE` / `USING_REFERENCE` /
+ * `HAS_AVALIST` outright (`skipped_user_gate`, `driver-v2.js:1053`) and that
+ * refusal is deliberate — B55, where the reference gate arrived ON after a run.
+ * This opens only a gate whose OWN pass is about to run, on a plan that already
+ * asked for that section's rows. Do not widen it to the refused three.
+ *
+ * ⚠️ `skipFilled` is FALSE deliberately: an already-open gate must answer `ok`
+ * rather than `skipped_filled`, or the caller cannot tell "already on" from
+ * "not on this step". Re-selecting the segment a toggle already shows is
+ * idempotent, so the write costs nothing.
+ *
+ * 🔑 `true`, not `'Ya'`: the boolean path is the documented CHECKBOX one
+ * (`driver-v2.js:1422` — index 0 is off, the last segment is on) and does not
+ * depend on the app's wording.
+ */
+async function openGate(driver, tabId, name, maxSteps = 10) {
+  if (typeof driver.fill !== 'function') return 'no_driver'
+
+  const set = async () => {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN', func: driver.fill,
+        args: [name, true, 120, true, false, false, false]
+      })
+
+      return result || 'error'
+    } catch (e) {
+      return 'error'
+    }
+  }
+
+  const done = outcome => outcome === 'ok' || outcome === 'skipped_filled'
+
+  let outcome = await set()
+
+  if (done(outcome) || typeof driver.goTo !== 'function') return outcome
+
+  for (let i = 0; i < maxSteps; i++) {
+    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: driver.goTo, args: [i] })
+    await sleep(700)
+
+    outcome = await set()
+
+    if (done(outcome)) return outcome
+  }
+
+  return outcome
+}
+
+/**
  * Add the planned extra rows to each repeatable table.
  *
  * ⚠️ Runs BEFORE the collateral pass and AFTER the wizard fill: the wizard fill
@@ -2620,10 +2682,28 @@ async function fillPlannedCollaterals() {
 
   setStatus(`Agunan (${activePlan.collaterals.length})…`)
 
+  /* 🔴 THE GATE BEFORE THE OPENER. "Tambah Agunan" does not render until
+     `Pengajuan Kredit dengan Agunan` is Ya (`step.collateralData.tsx:230` gates
+     the whole block on it), and that toggle is a FIELD on step 4 that the fill
+     passes never reach. Without this the walk below is guaranteed to fail. */
+  const gate = await openGate(driver, tab.id, 'CREDIT_APPLICATION_COLLATERAL_DATA_HAS_COLLATERAL')
+  const gateOpen = gate === 'ok' || gate === 'skipped_filled'
+
   /* Step 4's opener — same ordering fault as the facility pass above. */
   if ((await goToOpener(driver, tab.id, 'Tambah Agunan')) === null) {
+    /* 🔑 WHICH HALF FAILED. One reason for two causes is what made the original
+       run unreadable: the popup answered "no opener on any step" while the
+       driver's own far better message — "is the Agunan toggle Ya, and is a
+       debtor set on step 2?" (`driver-v2.js:2066`) — can never fire, because
+       this returns before the driver is ever injected. */
     return activePlan.collaterals.map(item => ({
-      name: item.name, ok: false, step: 'open', reason: 'no "Tambah Agunan" on any step'
+      name: item.name,
+      ok: false,
+      step: 'open',
+      gate,
+      reason: gateOpen
+        ? 'the Agunan gate is ON, but no "Tambah Agunan" on any step — is a debtor set on step 2?'
+        : `the Agunan gate could not be set (${gate}), so "Tambah Agunan" can never render`
     }))
   }
 

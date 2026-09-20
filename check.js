@@ -2019,6 +2019,41 @@ if (!S) {
       ? pass('the popup passes the plan\'s debtorType into the capability')
       : fail('the capability is called without debtorType — every workbook would be built for COMPANY')
 
+    /**
+     * 🔴 A GATED SECTION'S OPENER CANNOT BE FOUND UNTIL ITS GATE IS ON, and the
+     * gate is a FIELD the fill passes only see on the step they stand on. A real
+     * run on 2026-09-21 lost 3/3 agunan to exactly this: `HAS_COLLATERAL`
+     * `not_found` on all three passes, then a ten-step walk for a button that
+     * could not exist — and the run ended `state: "error"` for that alone.
+     *
+     * 🔑 Asserted by INDEX, not by a windowed regex. `:2010` above uses a
+     * 400-character window and a comment added beside the args once pushed it
+     * out and turned the guard red; the lesson was to move the prose, but a
+     * guard that cannot be broken by prose in the first place is better.
+     */
+    const collBody = popupSrc.slice(popupSrc.indexOf('async function fillPlannedCollaterals'))
+    const iGate = collBody.indexOf('openGate(')
+    const iOpener = collBody.indexOf("goToOpener(driver, tab.id, 'Tambah Agunan')")
+
+    iGate > -1 && iOpener > -1 && iGate < iOpener
+      ? pass('the Agunan pass opens its own gate BEFORE hunting "Tambah Agunan"')
+      : fail(`the Agunan gate is not opened first (openGate at ${iGate}, opener at ${iOpener}) — every collateral is lost on a run that starts on step 1`)
+
+    const gateFn = popupSrc.slice(popupSrc.indexOf('async function openGate'), popupSrc.indexOf('async function fillPlannedRows'))
+
+    /* Without the walk it can only ever set a gate that is already on screen —
+       which is the bug, not the fix. */
+    gateFn.includes('driver.goTo')
+      ? pass('the gate opener WALKS the rail rather than only trying the current step')
+      : fail('openGate does not walk steps, so it cannot reach a gate on step 4')
+
+    /* `skipFilled: false` is what makes an already-open gate answer `ok`. If it
+       answered `skipped_filled` and the caller treated that as failure, a form
+       whose gate was already on would report the section missing. */
+    gateFn.includes('skipped_filled')
+      ? pass('an already-open gate counts as open, not as a failure')
+      : fail('openGate does not accept skipped_filled, so a gate already on reads as unreachable')
+
     const navFindsTile = /div:Unggah Template \(Excel\)/.test(popupSrc) && /label\.startsWith\('div:'\)/.test(popupSrc)
 
     navFindsTile
