@@ -1206,10 +1206,25 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
   /**
    * @param exact refuse to substitute — see BRANCH_SELECTS below.
    */
+  /**
+   * 🔴 RETURNS A REASON, NOT A BARE `false`.
+   *
+   * Every failure here used to collapse into one word at the caller —
+   * `return picked ? 'ok' : 'not_found'` — so a DISABLED control, a panel that
+   * never opened and an empty option list all reported `not_found`, which is
+   * also what a field ABSENT FROM THE PAGE reports. Three different problems and
+   * one word: settling which had happened meant reading the source, and it cost
+   * a real investigation on 2026-09-21 (Kode Kantor, a disabled Select on the
+   * debtor form's step 4).
+   *
+   * The words come from this file's own vocabulary where one already fits
+   * (`skipped_disabled`, `:1000`); only `no_panel` / `no_options` / `no_box` are
+   * new. Callers must treat a truthy STRING as failure — see both of them below.
+   */
   async function fillPanel(opener, want, exact) {
-    if (!opener || opener.disabled) return false
+    if (!opener || opener.disabled) return 'skipped_disabled'
     const box = opener.parentElement
-    if (!box) return false
+    if (!box) return 'no_box'
     const findPanel = () => Array.from(box.children)
       .find(c => c !== opener && getComputedStyle(c).position === 'fixed') || null
 
@@ -1217,7 +1232,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     else { opener.focus(); opener.dispatchEvent(new Event('focus', { bubbles: true })) }
 
     const panel = await waitFor(findPanel, 1200)
-    if (!panel) { await closePanels(); return false }
+    if (!panel) { await closePanels(); return 'no_panel' }
 
     const opts = Array.from(panel.querySelectorAll('button')).filter(b => b.textContent.trim())
     const str = String(want == null ? '' : want)
@@ -1261,7 +1276,7 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const WILDCARD = /^(lainnya|lain-lain|lain lain|other|others)$/i
     const target = match || opts.find(b => !WILDCARD.test(b.textContent.trim())) || opts[0]
 
-    if (!target) { await closePanels(); return false }
+    if (!target) { await closePanels(); return 'no_options' }
     target.click()
     await sleep(120)
     await closePanels()
@@ -1397,9 +1412,13 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
 
     const picked = await fillPanel(trigger, value, BRANCH_SELECTS.test(name || ''))
 
+    if (picked === true) return 'ok'
     if (picked === 'no_option') return 'no_matching_option'
 
-    return picked ? 'ok' : 'not_found'
+    /* 🔴 `=== true`, NOT a truthiness test. `fillPanel` now answers with a REASON
+       string, and every one of those is truthy — so `picked ? 'ok' : …` would
+       report a failed select as SUCCESS. */
+    return picked || 'not_found'
   }
 
   if (type === 'multiselect') {
@@ -1411,7 +1430,12 @@ async function v2FillField(name, value, delayMs, ignoreDisabled, skipFilled, ski
     const seed = String(value == null ? '' : value).trim().slice(0, 1) || 'a'
     setNative(box, seed)
     await sleep(300)
-    return (await fillPanel(box, value)) ? 'ok' : 'not_found'
+    const picked = await fillPanel(box, value)
+
+    if (picked === true) return 'ok'
+    if (picked === 'no_option') return 'no_matching_option'
+
+    return picked || 'not_found'
   }
 
   if (type === 'toggle' || type === 'pills' || type === 'radio') {

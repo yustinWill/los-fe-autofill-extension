@@ -2140,7 +2140,18 @@ async function runAllWizardSteps({ onStep } = {}) {
          only while the unfilled count is DROPPING, so a stable residue of
          permanent not_founds converges to a break rather than burning all five
          passes. The 5-cap is the backstop. */
-      const unfilled = lastDetectedFields.filter(f => lastResults[f.name] === 'not_found').length
+      /* 🔴 A SET, since 2026-09-21, because `fillPanel` now says WHY it failed.
+         Before, every select failure reported `not_found` and was retried. The
+         three reasons that replaced it split cleanly:
+           · `no_panel` / `no_options` / `no_box` are TRANSIENT — the panel may
+             open on a later pass, so they stay retryable exactly as before;
+           · `skipped_disabled` is NOT. Retrying a disabled control cannot ever
+             succeed, and counting it kept `unfilled` from dropping, which is the
+             very thing `prevUnfilled` exists to converge.
+         So this preserves the old behaviour where retrying helps, and stops
+         burning passes where it never could. */
+      const RETRYABLE = ['not_found', 'no_panel', 'no_options', 'no_box']
+      const unfilled = lastDetectedFields.filter(f => RETRYABLE.includes(lastResults[f.name])).length
       const progressing = unfilled < prevUnfilled
 
       if (!newFields.length && !progressing) break

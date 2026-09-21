@@ -1959,7 +1959,17 @@ if (!S) {
       const src = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
       const loop = src.slice(src.indexOf('for (let pass = 1; pass <= 5'), src.indexOf('for (let pass = 1; pass <= 5') + 900)
 
-      const countsUnfilled = /const unfilled = lastDetectedFields\.filter\(f => lastResults\[f\.name\] === 'not_found'\)\.length/.test(loop)
+      /* ⚠️ Was pinned to `=== 'not_found'` until 2026-09-21. `fillPanel` now
+         returns a REASON, so the loop counts a set — and the assertion has to
+         follow the behaviour rather than the old spelling, or it fails on a
+         change that improved the thing it guards. It still pins the two halves
+         that matter: the count is taken from `lastResults`, and `skipped_disabled`
+         is NOT in the retry set (retrying a disabled control can never succeed,
+         and counting it would stop `unfilled` from ever dropping). */
+      const countsUnfilled =
+        /const unfilled = lastDetectedFields\.filter\(f => RETRYABLE\.includes\(lastResults\[f\.name\]\)\)\.length/.test(loop) &&
+        /const RETRYABLE = \[[^\]]*'not_found'[^\]]*\]/.test(loop) &&
+        !/const RETRYABLE = \[[^\]]*'skipped_disabled'[^\]]*\]/.test(loop)
       const guardsProgress = /const progressing = unfilled < prevUnfilled/.test(loop)
       const breaksOnBoth = /if \(!newFields\.length && !progressing\) break/.test(loop)
 
@@ -2893,6 +2903,64 @@ if (!S) {
       ? pass('and the failure says how long it waited, so a fast failure reads differently from a slow one')
       : fail(`the reason does not carry the elapsed seconds: ${JSON.stringify(large.reason)}`)
   }
+  {
+    console.log('\na failed select says WHY, and a reason is not a success')
+
+    /**
+     * 🔴 THREE PROBLEMS USED TO SHARE ONE WORD. `fillPanel` returned a bare
+     * `false` for a DISABLED control, for a panel that never opened, and for an
+     * empty option list — and the caller turned all of them into `not_found`,
+     * which is ALSO what a field absent from the page reports. Settling which had
+     * happened meant reading the source; it cost a real investigation on
+     * 2026-09-21 over Kode Kantor, a disabled Select on the debtor form.
+     */
+    const driverSrc = fs.readFileSync(path.join(dir, 'driver-v2.js'), 'utf8')
+
+    const reasons = ['skipped_disabled', 'no_box', 'no_panel', 'no_options']
+    const missing = reasons.filter(r => !driverSrc.includes(`return '${r}'`) && !driverSrc.includes(`return '${r}' }`))
+
+    missing.length === 0
+      ? pass('fillPanel answers with a reason for each distinct failure, not a bare false')
+      : fail(`fillPanel still collapses these: ${missing.join(', ')}`)
+
+    /**
+     * 🔴 THE HAZARD THE CHANGE CREATED, and the one worth guarding hardest.
+     * Every reason above is a TRUTHY STRING. A caller left on `picked ? 'ok' : …`
+     * would report a FAILED select as SUCCESS — strictly worse than the vague
+     * `not_found` it replaced. Both call sites must compare to `true`.
+     */
+    const driverLines = driverSrc.split('\n')
+
+    /* ⚠️ WINDOWED, not single-line — and that correction is the whole reason this
+       assertion works. The first version tested each LINE for both `await
+       fillPanel(` and `? 'ok'`, which only matches the one-line multiselect form.
+       Sabotage-verified afterwards: reverting the SELECT caller (where the call
+       and the test sit on different lines) left this GREEN, and the only failure
+       was the bundle-freshness check. An assertion narrower than its own
+       description is the exact failure this repo keeps paying for. */
+    const truthyTests = driverLines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /await fillPanel\(/.test(l))
+      .filter(({ i }) => {
+        const window = driverLines.slice(i, i + 8).join('\n')
+
+        return /\?\s*'ok'/.test(window) && !/picked === true/.test(window)
+      })
+      .map(({ l, i }) => `driver-v2.js:${i + 1} ${l.trim()}`)
+
+    truthyTests.length === 0
+      ? pass('neither caller truthiness-tests the result, so a reason cannot read as ok')
+      : fail(`a caller still treats any truthy value as success: ${truthyTests.join(' | ')}`)
+
+    /* Vacuity guard: if the call shape changes, the filter above empties and the
+       assertion passes while measuring nothing. Prove the callers are still there. */
+    const callers = (driverSrc.match(/await fillPanel\(/g) || []).length
+
+    callers >= 2
+      ? pass('and both fillPanel call sites are still present to be checked')
+      : fail(`expected at least 2 fillPanel call sites, found ${callers}`)
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nall checks passed')
   process.exit(failures ? 1 : 0)
 })()
