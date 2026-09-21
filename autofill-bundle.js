@@ -6074,7 +6074,11 @@ window.SIM = (() => {
        at all — while underlying's order RELATIVE to the other generic tables
        (shareholder, boardMember, slik …) is unchanged. `fillPlannedFinancialReports`
        looks its two up by KEY, never by position. */
-    { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5 },
+    /* 🔴 `gate` — the section is ABSENT from the DOM until this toggle is Ya,
+       so both its opener AND the row the form seeds depend on it. Declared on
+       the TABLE rather than special-cased in the pass, because the next gated
+       table should need data, not code. */
+    { key: 'underlying', label: 'Underlying', opener: 'Tambah Underlying', def: 1, max: 5, gate: 'CREDIT_APPLICATION_UNDERLYING_DATA_HAS_UNDERLYING' },
 
     /* 🔴 "Neraca" and "Laba Rugi", NOT "Laporan keuangan — …". A cell is 170px
        (body 380 − panel padding 28 − column gap 12, halved) and the input plus
@@ -6296,6 +6300,8 @@ window.SIM = (() => {
           opener: t.opener,
           count: state.rows[t.key],
           seeded: t.seeded ?? 1,
+          /* Only present on a gated table; the pass feature-tests it. */
+          gate: t.gate,
           isOwnCapability: Boolean(t.isOwnCapability)
         })),
       collaterals: state.collaterals.map(item => ({

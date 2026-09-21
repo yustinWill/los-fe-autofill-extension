@@ -2577,6 +2577,31 @@ async function fillPlannedRows() {
    * rather than what was asked of the driver — the two differ by exactly this
    * assumption, and hiding that is how "Done" got printed over a short table.
    */
+  /**
+   * 🔴 GATES FIRST, AND BEFORE THE COUNT FILTER BELOW CAN DROP THEM.
+   *
+   * A gated section is ABSENT from the DOM until its toggle is Ya, so the row
+   * the FORM seeds does not exist either — and `count − seeded` then drops the
+   * spec, so a plan of 1 Underlying asked for 0 extra rows and got 0 total,
+   * silently and with no error anywhere. Measured 2026-09-21: the table simply
+   * never appeared in the run's `rows` results.
+   *
+   * ⚠️ So this cannot live inside the loop below, which only ever sees tables
+   * that want EXTRA rows. The whole point is the table that wants none.
+   *
+   * 🔑 Declared as data on the table (`gate`), not special-cased here, so the
+   * next gated table is a one-line change in `simulation.js`. Agunan keeps its
+   * own call because collaterals are not a TABLES entry at all.
+   */
+  const gateTab = await getActiveTab()
+  const gates = []
+
+  for (const table of activePlan.tables.filter(t => t.gate)) {
+    gates.push({ table: table.key, gate: await openGate(driver, gateTab.id, table.gate) })
+  }
+
+  if (gates.length) logEvent('gates-opened', gates)
+
   const specs = activePlan.tables
     /* Tables with their own driver capability are handled elsewhere — the
        facility modal needs a ~3s wait for its product's find-one, which a

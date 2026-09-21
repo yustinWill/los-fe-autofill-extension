@@ -2054,6 +2054,42 @@ if (!S) {
       ? pass('an already-open gate counts as open, not as a failure')
       : fail('openGate does not accept skipped_filled, so a gate already on reads as unreachable')
 
+    /**
+     * 🔴 A GATED TABLE'S GATE MUST OPEN EVEN WHEN IT WANTS NO EXTRA ROWS.
+     *
+     * Underlying asks for 1 and the form seeds 1, so `count − seeded` is 0 and
+     * `.filter(t => t.count > 0)` drops the spec entirely — measured 2026-09-21,
+     * where the table never appeared in the run's `rows` results at all. But the
+     * seeded row only exists once the SECTION renders, which needs the gate. So
+     * the gate loop must sit ABOVE that filter, reading `activePlan.tables`
+     * rather than the filtered specs, or the one table that needs it is exactly
+     * the one skipped. Asserted by index for the same reason as above.
+     */
+    const rowsBody = popupSrc.slice(popupSrc.indexOf('async function fillPlannedRows'))
+    /* ⚠️ The SOURCE, not just the word: an earlier version keyed on 't.gate'
+       alone and still passed when the loop was made to iterate an empty array,
+       so it pinned the ordering and nothing else. */
+    const iGates = rowsBody.indexOf('activePlan.tables.filter(t => t.gate)')
+    const iFilter = rowsBody.indexOf('.filter(t => t.count > 0)')
+
+    iGates > -1 && iFilter > -1 && iGates < iFilter
+      ? pass('gated tables are opened BEFORE the count filter can drop them')
+      : fail(`the gate loop is not above the count filter (gate at ${iGates}, filter at ${iFilter}) — a table that wants no extra rows never opens its gate`)
+
+    /* Data, not a special case: the next gated table should be one line. */
+    const simSrc2 = fs.readFileSync(path.join(dir, 'simulation.js'), 'utf8')
+
+    /* ⚠️ Assigned, not written inline: this file omits semicolons, so a line
+       STARTING with a regex literal is parsed as division against the previous
+       statement. It fails loudly, which is the system working, but it is a
+       needless way to spend a run. */
+    const declaresGate =
+      /CREDIT_APPLICATION_UNDERLYING_DATA_HAS_UNDERLYING/.test(simSrc2) && /gate: t\.gate/.test(simSrc2)
+
+    declaresGate
+      ? pass('underlying declares its gate on the table, and plan() carries it through')
+      : fail('the underlying gate is not declared on the table or not carried into the plan')
+
     const navFindsTile = /div:Unggah Template \(Excel\)/.test(popupSrc) && /label\.startsWith\('div:'\)/.test(popupSrc)
 
     navFindsTile
