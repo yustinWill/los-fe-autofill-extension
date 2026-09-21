@@ -812,6 +812,104 @@ if (!S) {
       : fail(`scenario tables — BU-P all: ${buHasAll}, I-K none: ${ikHasNone}, I-P reports-only: ${ipSplit}`)
 
     /**
+     * 🔴 `/debtor/create` PLANS THE LAPKEU PAIR AND NOTHING ELSE.
+     * Both forms render the SAME Analisa Laporan Keuangan card, so those two
+     * openers match on either. Every OTHER opener in simulation.js is
+     * credit-application wording — `visit` is measured as differing by module —
+     * and `goToOpener` answers a wrong one by walking all ten rail steps at
+     * 700ms each and parking the wizard on the LAST one. A table leaking onto
+     * this route is not a no-op; it moves the user's form.
+     *
+     * The scenario is deliberately I-K: `appliesTo` drops the pair on the
+     * credit-application route, and the debtor form has no sifat kredit field at
+     * all, so the bypass is the thing under test rather than incidental.
+     *
+     * Sabotage, verified each ALONE: drop the DEBTOR_TABLE_KEYS filter in
+     * `tablesForRoute` → "nothing else" fails; drop the `onDebtorRoute()`
+     * bypass in plan()'s filter → the pair vanishes and the same one fails;
+     * drop the collaterals ternary → the agunan assertion fails.
+     */
+    at('I', 'K')
+    S.state.rows.financialReportNeraca = 2
+    S.state.rows.financialReportLabaRugi = 1
+    S.state.collaterals = [{ type: 'property', name: null }]
+
+    S.setRoute('debtor')
+    const debtorPlan = S.plan()
+    const debtorKeys = debtorPlan.tables.map(t => t.key)
+
+    S.setRoute('creditApplication')
+    const caPlan = S.plan()
+    const caKeys = caPlan.tables.map(t => t.key)
+
+    const pairOnly = LK_KEYS.every(k => debtorKeys.includes(k)) && debtorKeys.length === LK_KEYS.length
+
+    pairOnly
+      ? pass('debtor route plans the lapkeu pair and nothing else, whatever the sifat')
+      : fail(`debtor route tables: ${debtorKeys.join(', ') || '(none)'} — wanted exactly ${LK_KEYS.join(', ')}`)
+
+    /* 🔑 The control. Same state, same counts, only the route differs — so this
+       is what proves the bypass above is doing the work, rather than the I-K
+       branch having quietly stopped filtering. */
+    !caKeys.some(k => LK_KEYS.includes(k))
+      ? pass('the same I-K state still drops the pair on the credit-application route')
+      : fail('I-K keeps the lapkeu pair on the credit-application route — appliesTo is no longer filtering')
+
+    /* The debtor form has no Agunan section, so a collateral planned there would
+       be collected and then silently never run. */
+    debtorPlan.collaterals.length === 0 && caPlan.collaterals.length === 1
+      ? pass('a planned collateral is dropped on the debtor route and kept on the credit-application one')
+      : fail(`collaterals — debtor: ${debtorPlan.collaterals.length}, credit-application: ${caPlan.collaterals.length}`)
+
+    /**
+     * 🔴 THE MATCHER MUST STAY NARROWER THAN THE MODULE, exactly like
+     * `isCreditApplication`. A panel on `/debtor/list` or `/debtor/detail/{id}`
+     * would offer a run the page cannot serve.
+     */
+    const ROUTE_CASES = [
+      ['/debtor/create', true],
+      ['https://los-fe-staging.example/debtor/create', true],
+      ['/v2/debtor/create', true],
+      ['/debtor/list', false],
+      ['/debtor/detail/abc-123', false],
+      ['/debtor/update/abc-123', false],
+      ['/credit-application/create', false],
+      ['', false]
+    ]
+
+    const routesAgree = ROUTE_CASES.every(([url, want]) => S.isDebtorCreate(url) === want)
+
+    routesAgree
+      ? pass('isDebtorCreate matches only the debtor CREATE route')
+      : fail(`isDebtorCreate disagrees on: ${ROUTE_CASES.filter(([u, w]) => S.isDebtorCreate(u) !== w).map(([u]) => u || '(empty)').join(', ')}`)
+
+    /**
+     * 🔴 THE GUARD HAS TO BE A SHORT-CIRCUIT, not zeroed counts.
+     * Zeroing switches off `facilities`, `mutations` and `qualitative` — but NOT
+     * `documents`, which deliberately ignores a zero count so a Minimal fixture
+     * still satisfies validation. Returning before them is therefore the only
+     * honest way to keep the credit-application passes off the debtor form.
+     *
+     * Asserted on SOURCE because the alternative is driving a whole popup run,
+     * and the thing that can regress is the ORDER, which is readable here.
+     */
+    const extrasSrc = fs.readFileSync(path.join(dir, 'popup.js'), 'utf8')
+    const extrasBody = (extrasSrc.split('async function runPlannedExtras() {')[1] || '').slice(0, 1200)
+    const guardAt = extrasBody.indexOf('SIM.onDebtorRoute()')
+    const facilitiesAt = extrasBody.indexOf('fillPlannedFacilities()')
+
+    const bothRoutes = /SIM\.isCreditApplication\(tab\.url\)[\s\S]{0,240}SIM\.isDebtorCreate\(tab\.url\)/
+    const mountsBothRoutes = bothRoutes.test(extrasSrc) && /SIM\.setRoute\(kind\)/.test(extrasSrc)
+
+    guardAt > -1 && facilitiesAt > -1 && guardAt < facilitiesAt
+      ? pass('runPlannedExtras returns on the debtor route BEFORE any credit-application pass')
+      : fail(`the debtor guard is at ${guardAt} and fillPlannedFacilities at ${facilitiesAt} — documents would still hunt a credit-application opener`)
+
+    mountsBothRoutes
+      ? pass('mountSimulation resolves both routes and pushes the kind into the model')
+      : fail('mountSimulation no longer resolves the debtor route, or never calls SIM.setRoute — the panel would plan for the wrong form')
+
+    /**
      * 🔴 "COMPLETE DATA" OFF MUST SHRINK VALUES WITHOUT BREAKING FORMATS.
      * The whole point of the short tier is that validation still passes:
      * NPWP keeps its 20 digits in BOTH modes (a format IS its own minimum),

@@ -276,7 +276,13 @@ window.SIMUI = (() => {
     const grid = el('div', { class: 'sim-grid' })
     const more = el('div', { class: 'sim-grid sim-more hidden' })
 
-    SIM.TABLES.forEach(table => {
+    /* Route-scoped: `/debtor/create` gets the lapkeu pair only. A stepper for a
+       table the route cannot drive is worse than a missing one — it reads as a
+       promise the run will not keep. */
+    const tables = SIM.tablesForRoute()
+    const moreTables = tables.filter(t => t.more)
+
+    tables.forEach(table => {
       const row = el('div', { class: 'sim-count' }, [
         el('span', { class: 'sim-count-label', text: table.label }),
         stepper(table)
@@ -287,19 +293,26 @@ window.SIMUI = (() => {
 
     root.appendChild(grid)
 
-    const toggle = el('button', {
-      class: 'sim-more-toggle',
-      type: 'button',
-      text: `▾ ${SIM.TABLES.filter(t => t.more).length} tabel lainnya`,
-      onclick: () => {
-        const hidden = more.classList.toggle('hidden')
+    if (moreTables.length) {
+      const toggle = el('button', {
+        class: 'sim-more-toggle',
+        type: 'button',
+        text: `▾ ${moreTables.length} tabel lainnya`,
+        onclick: () => {
+          const hidden = more.classList.toggle('hidden')
 
-        toggle.textContent = `${hidden ? '▾' : '▴'} ${SIM.TABLES.filter(t => t.more).length} tabel lainnya`
-      }
-    })
+          toggle.textContent = `${hidden ? '▾' : '▴'} ${moreTables.length} tabel lainnya`
+        }
+      })
 
-    root.appendChild(toggle)
-    root.appendChild(more)
+      root.appendChild(toggle)
+      root.appendChild(more)
+    }
+
+    /* 🔴 The debtor form has no Agunan section at all, and a planned collateral
+       there is not merely useless — `plan()` drops them on this route, so the
+       list would collect entries that silently never run. */
+    if (SIM.onDebtorRoute()) return
 
     // ── Collateral list ───────────────────────────────────────────────────
     root.appendChild(el('div', { class: 'sim-legend', text: 'Agunan' }))

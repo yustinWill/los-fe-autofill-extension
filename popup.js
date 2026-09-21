@@ -2254,8 +2254,9 @@ async function runQuickFill() {
 
   setStatus('Starting…')
 
-  /* Mounted only on the credit-application create route, so everywhere else
-     this stays false and Quick Fill behaves exactly as it always did. */
+  /* Mounted only on the two create routes (credit-application and debtor), so
+     everywhere else this stays false and Quick Fill behaves exactly as it always
+     did. */
   const planned = isSimulationMounted()
 
   if (planned) activePlan = SIM.plan()
@@ -2845,7 +2846,20 @@ async function readProjectName() {
 async function mountSimulation() {
   const tab = await getActiveTab()
 
-  if (!tab || !SIM.isCreditApplication(tab.url)) return false
+  /* 🔴 TWO routes since 2026-09-21. The route is resolved HERE and pushed into
+     the model before `mount` reads it, because `SIMUI.mount` calls `SIM.load()`
+     — which `Object.assign`s the stored state — and then renders immediately.
+     A route kept in `state` would be overwritten by whatever the last session
+     saved. */
+  const kind = tab && SIM.isCreditApplication(tab.url)
+    ? 'creditApplication'
+    : tab && SIM.isDebtorCreate(tab.url)
+      ? 'debtor'
+      : null
+
+  if (!kind) return false
+
+  SIM.setRoute(kind)
 
   /* `mount` applies this only when the stored name is empty, so a name the user
      typed themselves always wins over the session's. */
@@ -3083,7 +3097,50 @@ async function fillPlannedQualitative() {
   }
 }
 
+/**
+ * The lapkeu pass's own shortfall rule, shared by both routes' reports.
+ * `ok: false` is a block; a `saved` under `wanted` is a partial import. Both are
+ * things the user must finish by hand, so neither may hide under a green "Done".
+ */
+function lapkeuProblems(financialReports) {
+  if (!financialReports) return []
+
+  if (financialReports.ok === false) return [`laporan keuangan: ${financialReports.reason || 'gagal'}`]
+
+  if (typeof financialReports.wanted === 'number' && financialReports.saved < financialReports.wanted) {
+    return [`${financialReports.saved}/${financialReports.wanted} laporan keuangan`]
+  }
+
+  return []
+}
+
+/**
+ * 🔴 `/debtor/create` RUNS ONE PASS, and the guard has to be here rather than in
+ * the plan's numbers. Zeroing a count switches off `facilities`, `mutations` and
+ * `qualitative`, but NOT `documents`: it deliberately ignores a zero count so a
+ * Minimal fixture still satisfies validation (see its note). So the only honest
+ * way to keep the credit-application passes off the debtor form is to name the
+ * one pass that belongs there. Each unwanted pass would otherwise hunt a
+ * credit-application opener through all ten rail steps at 700ms each and leave
+ * the wizard parked on the last one.
+ */
+async function runDebtorExtras() {
+  throwIfCancelled(); setStatus('Laporan keuangan…')
+  const financialReports = await fillPlannedFinancialReports()
+
+  logEvent('extras', { financialReports })
+
+  const problems = lapkeuProblems(financialReports)
+
+  setStatus(
+    problems.length ? 'Done, ' + problems.join(' · ') : 'Done — laporan keuangan',
+    problems.length ? 'error' : 'done'
+  )
+}
+
 async function runPlannedExtras() {
+  if (SIM.onDebtorRoute()) return runDebtorExtras()
+
   /* 🔑 THE CANCEL CHECKPOINTS.
      Between passes, never inside one. A pass is a chain of injected functions
      that cannot be interrupted, and stopping halfway through (say, collaterals)
@@ -3160,13 +3217,7 @@ async function runPlannedExtras() {
   }
 
   /* Same rule for the financial-report pass — produced AND consumed. */
-  if (financialReports) {
-    if (financialReports.ok === false) {
-      problems.push(`laporan keuangan: ${financialReports.reason || 'gagal'}`)
-    } else if (typeof financialReports.wanted === 'number' && financialReports.saved < financialReports.wanted) {
-      problems.push(`${financialReports.saved}/${financialReports.wanted} laporan keuangan`)
-    }
-  }
+  problems.push(...lapkeuProblems(financialReports))
 
   /* Same rule for the document pass. Its report is a SHAPE, not a count —
      `{required: [...], optional: [...], slik: {...}}` — and every entry whose

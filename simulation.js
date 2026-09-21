@@ -304,6 +304,25 @@ window.SIM = (() => {
     return `Agunan ${state.debtorName || '{debitur}'} ${type ? type.label : item.type} - ${shortStamp(at)}`
   }
 
+  /* 🔴 THE PANEL MOUNTS ON TWO ROUTES since 2026-09-21, and the route decides
+     which tables are plannable. Held HERE rather than in `state` because it is a
+     property of the tab, not of the fixture: `save()` stores `state` whole, so a
+     persisted route would outlive the tab it described and hand the next mount a
+     plan built for the other form. */
+  let route = 'creditApplication'
+  const setRoute = kind => { route = kind }
+  const onDebtorRoute = () => route === 'debtor'
+
+  /* 🔑 ONLY the lapkeu pair is drivable on `/debtor/create`, and the reason is
+     the OPENER. Both forms render the SAME Analisa Laporan Keuangan card, so
+     `Unggah Template (Excel)` / `Pilih Ulang Sumber` match on either — every
+     other opener in this file is credit-application wording, and `visit` is
+     measured as differing by module (see its note below). A wrong opener is not
+     a cheap miss: `goToOpener` walks all ten rail steps at 700ms each and parks
+     the wizard on the LAST one. */
+  const DEBTOR_TABLE_KEYS = ['financialReportNeraca', 'financialReportLabaRugi']
+  const tablesForRoute = () => (onDebtorRoute() ? TABLES.filter(t => DEBTOR_TABLE_KEYS.includes(t.key)) : TABLES)
+
   /** Everything the run needs, resolved at one instant so every generated name
    *  in a single run carries the SAME timestamp. Resolving per-name would stamp
    *  a five-minute run with five different minutes. */
@@ -323,8 +342,12 @@ window.SIM = (() => {
       /* Shaped for the driver: it needs the opener label, not our key. Zero-count
          tables are dropped here rather than in the driver, so "do nothing" is
          expressed once. */
-      tables: TABLES
-        .filter(t => (state.rows[t.key] ?? 0) > 0 && (!t.appliesTo || t.appliesTo(state)))
+      /* ⚠️ `appliesTo` is skipped on the debtor route: the lapkeu pair keys on
+         `sifat === 'P'`, and the debtor form has no sifat kredit at all — the
+         card is rendered for every debtor type (`debtor/create/page.tsx:1116`
+         gates its tiles on `!rawDebtorType` and nothing else). */
+      tables: tablesForRoute()
+        .filter(t => (state.rows[t.key] ?? 0) > 0 && (onDebtorRoute() || !t.appliesTo || t.appliesTo(state)))
         /* `seeded` rides along because only the TABLE knows whether the form
            mounts a first row for it — see the note on `visit`. Defaulting here
            rather than at the consumer keeps the assumption in the model. */
@@ -337,7 +360,7 @@ window.SIM = (() => {
           gate: t.gate,
           isOwnCapability: Boolean(t.isOwnCapability)
         })),
-      collaterals: state.collaterals.map(item => ({
+      collaterals: onDebtorRoute() ? [] : state.collaterals.map(item => ({
         type: item.type,
         jenis: (COLLATERAL_TYPES.find(t => t.key === item.type) || {}).jenis,
         name: collateralName(item, at)
@@ -450,8 +473,17 @@ window.SIM = (() => {
 
      ⚠️ It must stay NARROWER than the module: the wording in this file hardcodes
      credit-application copy, so the panel must never mount on `/credit-application/list`,
-     `/detail/{id}`, `/update/{id}` or the debtor form. None contains this substring. */
+     `/detail/{id}` or `/update/{id}`. None contains this substring.
+     ⚠️ Amended 2026-09-21: this also said "or the debtor form", which is no longer
+     true — `/debtor/create` mounts the panel in the REDUCED shape `tablesForRoute`
+     defines. The hardcoded-copy worry is exactly why that shape is two tables and
+     not all fourteen. */
   const isCreditApplication = url => /\/credit-application\/create/.test(String(url || ''))
+
+  /* The debtor form's own create route. Same loose, unanchored match as above,
+     and equally narrow: `/debtor/list`, `/debtor/detail/{id}` and
+     `/debtor/update/{id}` do not contain this substring. */
+  const isDebtorCreate = url => /\/debtor\/create/.test(String(url || ''))
 
   return {
     COLLATERAL_TYPES,
@@ -468,6 +500,10 @@ window.SIM = (() => {
     save,
     load,
     isCreditApplication,
+    isDebtorCreate,
+    setRoute,
+    onDebtorRoute,
+    tablesForRoute,
     stamp,
     shortStamp
   }
