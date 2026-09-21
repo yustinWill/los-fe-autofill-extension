@@ -195,59 +195,81 @@ window.SIMUI = (() => {
     root.textContent = ''
 
     // ── Scenario ──────────────────────────────────────────────────────────
+    /**
+     * 🔴 ONLY `Debitur` EXISTS ON THE DEBTOR FORM.
+     *
+     * Measured 2026-09-21 against `page/debtor.json`: "Jenis Calon Debitur"
+     * appears 3 times, while "Jenis Pengajuan" (jenis), "Jenis Kredit" (sifat)
+     * and "Nama Proyek Kredit" appear ZERO times. Their seed-map entries
+     * (`popup.js`) therefore match nothing on that route, so offering the pills
+     * invites a choice the run cannot act on — the panel would be promising a
+     * Restruk/Produktif fixture on a form with no such fields.
+     *
+     * User, 2026-09-21, having run the panel there: *"I think we have 'Jenis
+     * Debitur' in debtor form, but no restruk / produktif"*.
+     */
+    const onDebtor = SIM.onDebtorRoute()
+
     root.appendChild(el('div', { class: 'sim-legend', text: 'Skenario' }))
-    root.appendChild(labelled('Jenis', pills('jenis', SIM.SCENARIO.jenis, SIM.state.jenis)))
+    if (!onDebtor) root.appendChild(labelled('Jenis', pills('jenis', SIM.SCENARIO.jenis, SIM.state.jenis)))
     root.appendChild(labelled('Debitur', pills('debitur', SIM.SCENARIO.debitur, SIM.state.debitur)))
-    root.appendChild(labelled('Sifat', pills('sifat', SIM.SCENARIO.sifat, SIM.state.sifat)))
+    if (!onDebtor) root.appendChild(labelled('Sifat', pills('sifat', SIM.SCENARIO.sifat, SIM.state.sifat)))
 
-    /* save + refresh, NOT commit — see `refreshDerived`. A re-render here costs
-       the caret on every keystroke. */
-    root.appendChild(
-      labelled(
-        'Nama Anda',
-        textField(SIM.state.userName, 'Yusti', v => {
-          SIM.state.userName = v
-          SIM.save()
-          refreshDerived()
-        })
+    /* 🔴 All three are inert on the debtor route, so they are not rendered there.
+       `userName` feeds ONLY `projectName()`, and `debtorName` feeds ONLY
+       `collateralName()` — and collaterals are dropped from the plan on this
+       route. Nothing in `popup.js` reads either one. A control that cannot
+       change the run is worse than a missing one: it reads as a promise. */
+    if (!onDebtor) {
+      /* save + refresh, NOT commit — see `refreshDerived`. A re-render here costs
+         the caret on every keystroke. */
+      root.appendChild(
+        labelled(
+          'Nama Anda',
+          textField(SIM.state.userName, 'Yusti', v => {
+            SIM.state.userName = v
+            SIM.save()
+            refreshDerived()
+          })
+        )
       )
-    )
 
-    /* Editable, and blank is legitimate: the debtor is picked DURING the fill,
-       so at popup time there may be no name yet. The collateral placeholder
-       shows `{debitur}` in that case rather than a hole. */
-    root.appendChild(
-      labelled(
-        'Nama debitur',
-        textField(SIM.state.debtorName, 'diisi saat pengisian', v => {
-          SIM.state.debtorName = v
-          SIM.save()
-          refreshDerived()
-        })
+      /* Editable, and blank is legitimate: the debtor is picked DURING the fill,
+         so at popup time there may be no name yet. The collateral placeholder
+         shows `{debitur}` in that case rather than a hole. */
+      root.appendChild(
+        labelled(
+          'Nama debitur',
+          textField(SIM.state.debtorName, 'diisi saat pengisian', v => {
+            SIM.state.debtorName = v
+            SIM.save()
+            refreshDerived()
+          })
+        )
       )
-    )
 
-    // ── The derived name ──────────────────────────────────────────────────
-    const preview = el('div', { class: 'sim-preview' })
-    const previewText = el('input', { class: 'sim-preview-input', type: 'text' })
+      // ── The derived name ──────────────────────────────────────────────────
+      const preview = el('div', { class: 'sim-preview' })
+      const previewText = el('input', { class: 'sim-preview-input', type: 'text' })
 
-    previewText.value = SIM.projectName()
-    previewText.title = previewText.value
-    previewText.addEventListener('input', () => {
-      const typed = previewText.value.trim()
+      previewText.value = SIM.projectName()
+      previewText.title = previewText.value
+      previewText.addEventListener('input', () => {
+        const typed = previewText.value.trim()
 
-      /* Typing an override pins it; clearing the box hands the name back to the
-         pills rather than leaving an empty project name. */
-      SIM.state.projectOverride = typed || null
-      SIM.save()
-      previewText.classList.toggle('is-custom', Boolean(SIM.state.projectOverride))
-    })
+        /* Typing an override pins it; clearing the box hands the name back to the
+           pills rather than leaving an empty project name. */
+        SIM.state.projectOverride = typed || null
+        SIM.save()
+        previewText.classList.toggle('is-custom', Boolean(SIM.state.projectOverride))
+      })
 
-    if (SIM.state.projectOverride) previewText.classList.add('is-custom')
+      if (SIM.state.projectOverride) previewText.classList.add('is-custom')
 
-    preview.appendChild(el('span', { class: 'sim-preview-label', text: 'Nama proyek' }))
-    preview.appendChild(previewText)
-    root.appendChild(preview)
+      preview.appendChild(el('span', { class: 'sim-preview-label', text: 'Nama proyek' }))
+      preview.appendChild(previewText)
+      root.appendChild(preview)
+    }
 
     // ── Rows per table ────────────────────────────────────────────────────
     /* One tick instead of three adjustments: 'Minimal' sizes the fixture for

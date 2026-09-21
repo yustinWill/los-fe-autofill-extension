@@ -250,6 +250,63 @@ if (!S) {
     const container = stubEl()
 
     /**
+     * 🔴 THE PANEL MUST NOT OFFER A CHOICE THE ROUTE CANNOT ACT ON.
+     *
+     * `/debtor/create` has "Jenis Calon Debitur" (3 hits in `page/debtor.json`)
+     * and has NO "Jenis Pengajuan", "Jenis Kredit" or "Nama Proyek Kredit" — 0
+     * hits each — so the seed-map entries for jenis / sifat / projectName match
+     * nothing there. `userName` feeds only `projectName()`, and `debtorName`
+     * only `collateralName()`, whose collaterals the plan drops on this route.
+     *
+     * Shipped in v1.0.112 offering all five anyway, and the user caught it on the
+     * first real run: *"I think we have 'Jenis Debitur' in debtor form, but no
+     * restruk / produktif"*. A control that cannot change the run reads as a
+     * promise the run will not keep.
+     *
+     * ⚠️ BEHAVIOURAL, and it mounts BOTH routes on purpose. The
+     * credit-application half is the control: without it, deleting the pills
+     * outright would also pass.
+     */
+    {
+      const labelsFor = async kind => {
+        S.setRoute(kind)
+
+        const from = created.length
+
+        await SU.mount(container, {})
+
+        return created
+          .slice(from)
+          .filter(n => n.className === 'sim-row-label' || n.className === 'sim-preview-label')
+          .map(n => String(n.textContent || '').trim())
+      }
+
+      const HIDDEN = ['Jenis', 'Sifat', 'Nama Anda', 'Nama debitur', 'Nama proyek']
+
+      const caLabels = await labelsFor('creditApplication')
+      const debtorLabels = await labelsFor('debtor')
+
+      S.setRoute('creditApplication')
+
+      const leaked = HIDDEN.filter(l => debtorLabels.includes(l))
+      const lostOnCA = HIDDEN.filter(l => !caLabels.includes(l))
+
+      leaked.length === 0
+        ? pass('the debtor route hides every control its form has no field for')
+        : fail(`the debtor panel still offers: ${leaked.join(', ')}`)
+
+      debtorLabels.includes('Debitur')
+        ? pass('and still offers Debitur, which IS a field on that form')
+        : fail(`the debtor panel lost its Debitur pills — labels: ${debtorLabels.join(', ') || '(none)'}`)
+
+      /* The control. If these vanished from the credit-application route too,
+         the rule above would pass for the wrong reason. */
+      lostOnCA.length === 0
+        ? pass('while the credit-application route keeps all five')
+        : fail(`the credit-application panel lost: ${lostOnCA.join(', ')}`)
+    }
+
+    /**
      * Fire the recorded handler that provably causes `changed()`, found by
      * BEHAVIOUR rather than by position — the panel's append order is not a
      * contract, and keying on it would fail for the wrong reason the next time
