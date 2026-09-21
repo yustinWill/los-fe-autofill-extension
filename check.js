@@ -919,6 +919,43 @@ if (!S) {
       : fail(`collaterals — debtor: ${debtorPlan.collaterals.length}, credit-application: ${caPlan.collaterals.length}`)
 
     /**
+     * 🔴 AND THE PLAN MUST NOT DESCRIBE A FIXTURE THE ROUTE CANNOT BUILD.
+     *
+     * Hiding the panel's controls was only half of it — the VALUES stayed in
+     * state. The user's run on 2026-09-21 logged `applicationType:
+     * "Restrukturisasi"` and a projectName carrying `R BU-P`, on a form with no
+     * Jenis Pengajuan, no Jenis Kredit and no project. Nothing consumed them, so
+     * the run was correct; the LOG was describing the wrong form.
+     *
+     * `debtorType` is the exception and must survive: it is the one scenario
+     * value the debtor form has a field for, and the lapkeu import resolves its
+     * template from it — a workbook built for the wrong debtor type is refused
+     * outright as `wrong-template`.
+     */
+    const CA_ONLY = ['creditType', 'applicationType', 'projectName', 'debtorName']
+
+    const leakedKeys = CA_ONLY.filter(k => debtorPlan[k] !== undefined)
+
+    leakedKeys.length === 0
+      ? pass('the debtor plan carries no credit-application values')
+      : fail(`the debtor plan still carries: ${leakedKeys.map(k => `${k}=${JSON.stringify(debtorPlan[k])}`).join(', ')}`)
+
+    debtorPlan.debtorType === 'Perorangan' && Object.keys(debtorPlan.scenario || {}).join() === 'debitur'
+      ? pass('but keeps debtorType and the one scenario value that form HAS')
+      : fail(`debtorType=${debtorPlan.debtorType}, scenario keys=${Object.keys(debtorPlan.scenario || {}).join(', ')}`)
+
+    /* `rows` must agree with `tables`, or a reader concludes the wrong thing
+       about why a table with a count did not run. */
+    Object.keys(debtorPlan.rows || {}).sort().join() === LK_KEYS.slice().sort().join()
+      ? pass('and its rows report only the tables this route can plan')
+      : fail(`debtor rows keys: ${Object.keys(debtorPlan.rows || {}).join(', ')}`)
+
+    /* The control — without it, deleting these from BOTH routes would pass. */
+    CA_ONLY.every(k => caPlan[k] !== undefined)
+      ? pass('while the credit-application plan keeps all four')
+      : fail(`the credit-application plan lost: ${CA_ONLY.filter(k => caPlan[k] === undefined).join(', ')}`)
+
+    /**
      * 🔴 THE MATCHER MUST STAY NARROWER THAN THE MODULE, exactly like
      * `isCreditApplication`. A panel on `/debtor/list` or `/debtor/detail/{id}`
      * would offer a run the page cannot serve.

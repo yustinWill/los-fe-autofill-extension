@@ -6322,13 +6322,41 @@ window.SIM = (() => {
 
     return {
       at: at.toISOString(),
-      scenario: { jenis: state.jenis, debitur: state.debitur, sifat: state.sifat },
-      creditType: creditTypeLabel(),
-      applicationType: applicationTypeLabel(),
+      /**
+       * 🔴 THE PLAN MUST NOT DESCRIBE A FIXTURE THE ROUTE CANNOT BUILD.
+       *
+       * Hiding the controls (see `simulation-ui.js`) was only half the fix: the
+       * VALUES stayed in state, so a `/debtor/create` run logged
+       * `applicationType: "Restrukturisasi"` and a `projectName` carrying
+       * `R BU-P` — on a form with no Jenis Pengajuan, no Jenis Kredit and no
+       * project at all. Measured on the user's run 2026-09-21. Nothing consumes
+       * them there (the seed map matches no label, and `runPlannedExtras`
+       * returns before the report that reads `projectName`), so this was never a
+       * behaviour bug — it was the run log telling a story about the wrong form,
+       * which is the kind of small untruth that costs someone an afternoon.
+       *
+       * `debtorType` stays on BOTH routes: it is the one scenario value the
+       * debtor form HAS a field for, and the lapkeu import needs it to pick the
+       * right template.
+       */
+      ...(onDebtorRoute()
+        ? { scenario: { debitur: state.debitur } }
+        : {
+            scenario: { jenis: state.jenis, debitur: state.debitur, sifat: state.sifat },
+            creditType: creditTypeLabel(),
+            applicationType: applicationTypeLabel(),
+            debtorName: state.debtorName || '',
+            projectName: projectName(at)
+          }),
       debtorType: state.debitur === 'BU' ? 'Badan Usaha' : 'Perorangan',
-      debtorName: state.debtorName || '',
-      projectName: projectName(at),
-      rows: { ...state.rows },
+
+      /* Same rule for the counts: on the debtor route report only the tables
+         this route can actually plan, so `rows` and `tables` agree. A log
+         showing `facility: 1` beside a `tables` array that contains no facility
+         invites exactly the wrong conclusion about why it did not run. */
+      rows: onDebtorRoute()
+        ? Object.fromEntries(tablesForRoute().map(t => [t.key, state.rows[t.key] ?? 0]))
+        : { ...state.rows },
 
       /* Shaped for the driver: it needs the opener label, not our key. Zero-count
          tables are dropped here rather than in the driver, so "do nothing" is
