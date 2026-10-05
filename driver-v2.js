@@ -3178,7 +3178,8 @@ function v2AdvanceStep() {
  *      no `sharedStrings.xml`. ~90 lines and no dependency.
  *   3. drop every workbook in ONE change event — the input is `multiple`, which
  *      is how six files become three periods in a single parse — then poll for
- *      "Masukkan Angka" to enable and press it.
+ *      the confirm button ("Konfirmasi Unggah", formerly "Masukkan Angka") to
+ *      enable and press it.
  *
  * 🔴 CAPTURING THE CARD'S OWN DOWNLOAD IS NOT ENOUGH, which is why this builds
  * a workbook instead: `parseTemplateWorkbook` refuses `filled === 0` as
@@ -3333,6 +3334,7 @@ async function v2AddFinancialReports(plan, openWait = 900) {
      `.click()` does open it. `children.length <= 3` keeps this off the ancestor
      containers that also contain the text; `.pop()` takes the innermost. */
   const UPLOAD_TILE = 'Unggah Template (Excel)'
+  const UPLOAD_CONFIRM_LABELS = ['Konfirmasi Unggah', 'Masukkan Angka']
 
   const tile = () => {
     const wanted = new RegExp('^' + UPLOAD_TILE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
@@ -3690,8 +3692,12 @@ async function v2AddFinancialReports(plan, openWait = 900) {
 
       const live = dialog()
 
+      /* 🔴 BOTH labels. los-fe renamed this button "Konfirmasi Unggah" on
+         2026-10-05 so the three upload modals (Data Keuangan, SLIK, Mutasi) read
+         the same. A build still deployed somewhere says "Masukkan Angka", and an
+         exact match on one of them silently stopped pressing it on the other. */
       confirm = live && [...live.querySelectorAll('button')]
-        .find(b => (b.textContent || '').trim() === 'Masukkan Angka' && !b.disabled)
+        .find(b => UPLOAD_CONFIRM_LABELS.includes((b.textContent || '').trim()) && !b.disabled)
 
       if (confirm) break
     }
